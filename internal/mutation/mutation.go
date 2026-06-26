@@ -111,13 +111,23 @@ func EngineFor(language string) (Engine, bool) {
 // stringReader avoids importing strings in every engine file.
 func stringReader(s string) *strings.Reader { return strings.NewReader(s) }
 
+// reportFreshnessSlack is how far a report's modtime may precede `after` and
+// still count as fresh — enough to absorb filesystem timestamp granularity/skew,
+// far less than the age of a report left by a previous run.
+const reportFreshnessSlack = 2 * time.Second
+
 // readReport returns the contents of the report at path, ignoring any report
 // older than `after` (a stale report from a previous run is treated as absent).
 // When the exact path is missing or stale, it returns the newest fresh file of
 // the same basename anywhere under path's directory (timestamped-subdir
 // fallback). Errors when no fresh report exists.
 func readReport(path string, after time.Time) (string, error) {
-	if info, err := os.Stat(path); err == nil && !info.ModTime().Before(after) {
+	// Tolerate filesystems whose modtime granularity is coarser than time.Now():
+	// a report written during the run can be stamped a hair before `after`. The
+	// slack absorbs that skew while still rejecting prior-run reports (seconds to
+	// minutes older).
+	cutoff := after.Add(-reportFreshnessSlack)
+	if info, err := os.Stat(path); err == nil && !info.ModTime().Before(cutoff) {
 		if data, rerr := os.ReadFile(path); rerr == nil {
 			return string(data), nil
 		}
@@ -130,7 +140,7 @@ func readReport(path string, after time.Time) (string, error) {
 			return nil
 		}
 		info, ierr := d.Info()
-		if ierr != nil || info.ModTime().Before(after) {
+		if ierr != nil || info.ModTime().Before(cutoff) {
 			return nil
 		}
 		if newest == "" || info.ModTime().After(newestMod) {
