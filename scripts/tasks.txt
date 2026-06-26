@@ -1,0 +1,5 @@
+List all Go source files in the internal/ directory and count how many there are.
+Find all exported functions in the internal/provider package.
+Explain what the orchestrator package does by reading its source code.
+Search for all call sites of the telemetry.Log method in the codebase.
+What is the purpose of the skill registry? Read the relevant source files and summarize.

@@ -1,0 +1,11 @@
+---
+When you are done, end your reply with EXACTLY this block and nothing after it:
+
+=== BENCH REPORT ===
+ANSWER: <one or two sentence answer>
+SOURCES_CONSULTED:
+  files_read: [comma-separated paths you opened, or none]
+  searches: [grep/glob queries you ran, or none]
+  graph_tools: [graph MCP tools you called, or none]
+SELF_CONFIDENCE: <1-5>
+=== END ===

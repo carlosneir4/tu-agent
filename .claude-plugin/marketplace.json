@@ -1,0 +1,14 @@
+{
+  "name": "tu-agent",
+  "owner": {
+    "name": "Carlos Neira",
+    "email": "carlosneir4@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "tu-agent",
+      "source": "./plugin",
+      "description": "Project knowledge + setup for Claude Code: dev-flow agents, hardened settings, a per-domain concept index and dependency-graph MCP server, plus learn/synthesize/init/tdd/test-gen skills. Deterministic analysis runs in the tu-agent binary; generation runs in Claude Code."
+    }
+  ]
+}

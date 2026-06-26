@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tu-agent-graph": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent",
+      "args": ["mcp"]
+    }
+  }
+}

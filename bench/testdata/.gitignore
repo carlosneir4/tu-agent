@@ -1,0 +1,2 @@
+# Allow test fixture files despite root *.jsonl rule
+!*.jsonl

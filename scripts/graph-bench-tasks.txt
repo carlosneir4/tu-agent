@@ -1,0 +1,6 @@
+# target | task prompt
+# One task per line. `target` is fed to `tu-agent graph context`; the same
+# prompt runs with and without that context block prepended.
+PaymentService | Summarize what PaymentService does and list every caller that would break if its public API changed.
+InvoiceMapper | I need to add a currency field to InvoiceMapper. Which files and tests must change?
+CacheFilter | Explain the request flow through CacheFilter and which conventions apply when editing it.

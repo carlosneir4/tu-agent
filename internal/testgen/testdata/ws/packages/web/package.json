@@ -1,0 +1,1 @@
+{ "name": "@acme/web", "devDependencies": { "vitest": "3.2.4" } }

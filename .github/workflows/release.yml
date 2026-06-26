@@ -1,0 +1,87 @@
+name: release
+
+# Build native binaries and publish them as GitHub Release assets.
+#
+# tu-agent links mattn/go-sqlite3 (CGO) and compiles SQLite's FTS5 module via the
+# `sqlite_fts5` build tag, so we build on a NATIVE runner per target platform
+# (each uses its own C toolchain) instead of cross-compiling CGO.
+#
+# Trigger: push a tag like `v0.4.0`. `workflow_dispatch` builds the matrix too
+# (for a dry run) but only a tag publishes a Release.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14 # Apple Silicon
+            goos: darwin
+            goarch: arm64
+          - runner: macos-13 # Intel
+            goos: darwin
+            goarch: amd64
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod # pin to the version in go.mod
+          cache: true
+
+      - name: Build (CGO + sqlite_fts5)
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          mkdir -p dist
+          go build -tags sqlite_fts5 -trimpath -ldflags "-s -w" \
+            -o dist/tu-agent ./cmd/tu-agent
+          ./dist/tu-agent version # smoke test: the binary runs on this platform
+          tar -C dist -czf "tu-agent-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" tu-agent
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tu-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: tu-agent-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload assets
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true

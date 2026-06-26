@@ -1,0 +1,3 @@
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{}},{"type":"tool_use","name":"Grep","input":{}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__plugin_tu-agent_tu-agent-graph__get_impact","input":{}},{"type":"text","text":"thinking"}]}}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":4200,"num_turns":3,"result":"=== BENCH REPORT ===\nANSWER: x\n=== END ===","total_cost_usd":0.12,"usage":{"input_tokens":1000,"output_tokens":200,"cache_creation_input_tokens":500,"cache_read_input_tokens":8000}}

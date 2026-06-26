@@ -1,0 +1,4 @@
+# tu-agent artifacts produced by java_ready_check.sh when run in place
+.tu-agent/
+.claude/
+CLAUDE.md

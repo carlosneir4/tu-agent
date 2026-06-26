@@ -1,0 +1,22 @@
+# {{.ProjectName}}
+
+Project language: {{.Language}}. Build tool: {{.BuildTool}}.
+Run tests with: `{{.TestCommand}}`.
+
+## Project Structure
+
+{{.Structure}}
+
+## Working agreement
+
+- Make the minimum change that solves the task; no scope creep.
+- Run `{{.TestCommand}}` before and after changes.
+- Dev-flow agents live in `.claude/agents/` (architect, developer, qa, pr-reviewer, security-reviewer).
+
+<!-- tu-agent:project-context -->
+<!-- Run `tu-agent learn` to fill in Coding Conventions and Key Entry Points. -->
+<!-- /tu-agent:project-context -->
+
+<!-- tu-agent:knowledge -->
+<!-- Run `tu-agent learn` to capture project knowledge as skills in .claude/skills/. -->
+<!-- /tu-agent:knowledge -->

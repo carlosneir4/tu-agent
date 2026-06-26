@@ -1,0 +1,49 @@
+bin/
+!plugin/bin/
+!plugin/bin/tu-agent
+out/
+.claire/
+scripts/demo-results/
+# docs kept local-only; commit selectively with `git add -f docs/<file>`
+docs/
+# .tu-agent/memory/chunks/ is intentionally versioned (shared team memory)
+.tu-agent/memory.json
+.tu-agent/telemetry.jsonl
+.tu-agent/config.yaml
+.tu-agent/*.db
+.tu-agent/learn-progress.json
+.mcp.json
+cmd/tu-agent/.tu-agent/
+cmd/tu-agent/.mcp.json
+*.jsonl
+!bench/tasks.jsonl
+cover*.out
+coverage.out
+*.test
+.DS_Store
+.idea/
+.vscode/
+/tu-agent
+
+# learn benchmark runtime artifacts
+bench/*.local.*
+bench/results.jsonl
+bench/scoring.csv
+bench/runs/
+
+# fixture runtime artifacts (graph store, telemetry, etc.)
+scripts/fixtures/**/.tu-agent/
+scripts/fixtures/**/node_modules/
+scripts/fixtures/**/package-lock.json
+
+# >>> tu-agent >>>
+.tu-agent/graph.db
+.tu-agent/graph.db-wal
+.tu-agent/graph.db-shm
+.tu-agent/telemetry.jsonl
+.tu-agent/memory.db
+.tu-agent/memory.db-wal
+.tu-agent/memory.db-shm
+.claude/settings.json.bak
+# .tu-agent/memory/chunks/ is intentionally versioned (shared team memory)
+# <<< tu-agent <<<

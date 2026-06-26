@@ -1,0 +1,151 @@
+{
+  "cleanupPeriodDays": 30,
+  "enabledMcpjsonServers": [
+    "tu-agent-graph"
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "go vet ./... 2\u003e\u00261 | head -20 \u0026\u0026 golangci-lint run --fast 2\u003e\u00261 | head -20",
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "go test ./... -count=1 -timeout 60s 2\u003e\u00261",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash(git commit*)"
+      },
+      {
+        "hooks": [
+          {
+            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; exec tu-agent guard-path",
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit|Bash|Read"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; tu-agent memory export --quiet",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; tu-agent graph update --quiet",
+            "type": "command"
+          },
+          {
+            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; tu-agent memory import --quiet",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; tu-agent memory export --quiet",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "includeCoAuthoredBy": true,
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go generate *)",
+      "Bash(go mod *)",
+      "Bash(golangci-lint run *)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git status*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git checkout*)",
+      "Bash(git branch*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
+      "WebSearch",
+      "Bash(go build*)",
+      "Bash(go test*)",
+      "Bash(go vet*)",
+      "Bash(go fmt*)",
+      "Bash(go run*)",
+      "Bash(gofmt *)",
+      "Bash(golangci-lint run*)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(gh pr *)",
+      "Bash(gh release *)",
+      "Bash(docker push *)",
+      "Bash(kubectl *)",
+      "Bash(terraform apply*)",
+      "WebFetch"
+    ],
+    "defaultMode": "default",
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(DROP TABLE*)",
+      "Bash(curl * | bash*)",
+      "Bash(git push -f*)",
+      "Bash(curl *| bash*)",
+      "Bash(curl *|bash*)",
+      "Bash(wget * | sh*)",
+      "Bash(wget *| sh*)",
+      "Bash(wget *|sh*)",
+      "Bash(sudo *)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/id_rsa*)",
+      "Read(./secrets/**)",
+      "Write(./.env)",
+      "Write(./.env.*)",
+      "Write(**/*.pem)",
+      "Write(**/id_rsa*)",
+      "Write(./secrets/**)",
+      "Read(**/*.key)",
+      "Read(**/id_ed25519*)",
+      "Read(**/.ssh/**)",
+      "Read(**/.aws/**)",
+      "Write(**/*.key)",
+      "Write(**/id_ed25519*)",
+      "Write(**/.ssh/**)",
+      "Write(**/.aws/**)",
+      "Bash(cat *id_rsa*)",
+      "Bash(cat *id_ed25519*)",
+      "Bash(cat *.ssh/*)",
+      "Bash(cat *.pem)",
+      "Bash(cat *.key)",
+      "Bash(cat *.env*)"
+    ]
+  }
+}
