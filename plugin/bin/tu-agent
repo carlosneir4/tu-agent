@@ -1,112 +1,167 @@
 #!/usr/bin/env bash
 # tu-agent shim: resolves the real binary, auto-installing it from GitHub Releases
-# on first use if it is missing. The plugin never ships a compiled binary, so this
-# is the single chokepoint every plugin call (MCP server + hooks) goes through.
+# on first use and keeping it fresh (best-effort, throttled). The plugin never
+# ships a compiled binary, so this is the single chokepoint every plugin call
+# (MCP server + hooks) goes through.
 #
 # Resolution order:
-#   1. `tu-agent` already on PATH (excluding this shim's own dir)
-#   2. a previously auto-installed binary at ~/.tu-agent/bin/tu-agent
+#   1. `tu-agent` already on PATH (excluding this shim's dir) — used as-is
+#   2. a previously auto-installed binary at ~/.tu-agent/bin/tu-agent — refreshed
+#      from the latest Release at most once per TU_AGENT_UPDATE_INTERVAL
 #   3. download the matching binary from the latest GitHub Release and install it
+#
+# Auto-update has no pinned version: the latest published SHA256SUMS is the
+# freshness signal, so every new release is picked up. The check is throttled and
+# best-effort — a slow or unreachable network never blocks the actual command.
 #
 # Env knobs:
 #   TU_AGENT_RELEASE_REPO       owner/repo to fetch releases from (default below)
-#   TU_AGENT_NO_AUTO_INSTALL=1  never download; error out instead
+#   TU_AGENT_RELEASE_BASE       base URL for assets (default: that repo's latest)
+#   TU_AGENT_UPDATE_INTERVAL    seconds between update checks (default 86400; 0 = every run)
+#   TU_AGENT_NO_AUTO_INSTALL=1  never download a missing binary; error out instead
+#   TU_AGENT_NO_AUTO_UPDATE=1   never refresh an already-installed binary
 set -euo pipefail
 
 RELEASE_REPO="${TU_AGENT_RELEASE_REPO:-carlosneir4/tu-agent}"
+RELEASE_BASE="${TU_AGENT_RELEASE_BASE:-https://github.com/${RELEASE_REPO}/releases/latest/download}"
 INSTALL_DIR="${HOME}/.tu-agent/bin"
 INSTALL_BIN="${INSTALL_DIR}/tu-agent"
+STAMP="${INSTALL_DIR}/.update-stamp"
+UPDATE_INTERVAL="${TU_AGENT_UPDATE_INTERVAL:-86400}"
 
 # Exclude this shim's own directory from PATH to prevent circular execution when
 # the plugin host adds plugin/bin to PATH.
 SHIM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLEAN_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$SHIM_DIR" | tr '\n' ':' | sed 's/:$//')"
 
-# 1. real tu-agent already on PATH
-if PATH="$CLEAN_PATH" command -v tu-agent >/dev/null 2>&1; then
-  exec env PATH="$CLEAN_PATH" tu-agent "$@"
-fi
-# 2. previously auto-installed
-if [ -x "$INSTALL_BIN" ]; then
-  exec "$INSTALL_BIN" "$@"
-fi
+sha_of() { # file -> sha256 hex
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+asset_name() { # echo the release asset for this platform, or return 1
+  local goos goarch
+  case "$(uname -s)" in
+    Darwin) goos=darwin ;;
+    Linux) goos=linux ;;
+    *) return 1 ;;
+  esac
+  case "$(uname -m)" in
+    arm64 | aarch64) goarch=arm64 ;;
+    x86_64 | amd64) goarch=amd64 ;;
+    *) return 1 ;;
+  esac
+  printf 'tu-agent-%s-%s.tar.gz' "$goos" "$goarch"
+}
 
 manual_help() {
   cat >&2 <<EOF
 tu-agent binary not found and could not be auto-installed.
-Install it manually, either:
-  go install -tags sqlite_fts5 github.com/tu/tu-agent/cmd/tu-agent@latest
-or download the asset for your platform from
+Install it manually: download the asset for your platform from
   https://github.com/${RELEASE_REPO}/releases
-and place it at ${INSTALL_BIN} (chmod +x).
+and place it at ${INSTALL_BIN} (chmod +x), or build from a clone (make build).
 EOF
   exit 127
 }
 
-# 3. auto-install (unless opted out)
+remote_sha() { # asset -> published sha256 for it (empty on any failure)
+  local asset="$1" tmp want=""
+  tmp="$(mktemp)"
+  if curl -fsSL "${RELEASE_BASE}/SHA256SUMS" -o "$tmp" 2>/dev/null; then
+    want="$(grep " ${asset}\$" "$tmp" 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  rm -f "$tmp"
+  printf '%s' "$want"
+}
+
+install_binary() { # asset -> download + verify + install, record stamp. nonzero on failure.
+  local asset="$1" tmp want got
+  command -v curl >/dev/null 2>&1 || return 1
+  tmp="$(mktemp -d)"
+  if ! curl -fsSL "${RELEASE_BASE}/${asset}" -o "${tmp}/${asset}" 2>/dev/null; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  want="$(remote_sha "$asset")"
+  if [ -n "$want" ]; then
+    got="$(sha_of "${tmp}/${asset}")"
+    if [ "$want" != "$got" ]; then
+      rm -rf "$tmp"
+      return 1
+    fi
+  fi
+  if ! tar -C "$tmp" -xzf "${tmp}/${asset}" tu-agent 2>/dev/null; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  mkdir -p "$INSTALL_DIR"
+  mv "${tmp}/tu-agent" "$INSTALL_BIN"
+  chmod +x "$INSTALL_BIN"
+  rm -rf "$tmp"
+  printf '%s %s\n' "$(date +%s)" "$want" >"$STAMP" 2>/dev/null || true
+  return 0
+}
+
+record_check() { # now sha — remember that we checked, without re-downloading
+  printf '%s %s\n' "$1" "$2" >"$STAMP" 2>/dev/null || true
+}
+
+maybe_update() { # best-effort, throttled refresh of an existing INSTALL_BIN
+  [ "${TU_AGENT_NO_AUTO_UPDATE:-0}" = "1" ] && return 0
+  local asset now last have want
+  asset="$(asset_name)" || return 0
+  now="$(date +%s)"
+  last=0
+  have=""
+  if [ -f "$STAMP" ]; then
+    last="$(awk '{print $1+0}' "$STAMP" 2>/dev/null || echo 0)"
+    have="$(awk '{print $2}' "$STAMP" 2>/dev/null || true)"
+  fi
+  # Throttle: skip if we checked within the interval (0 = check every run).
+  if [ "${UPDATE_INTERVAL}" -gt 0 ] && [ "${last}" -gt 0 ] && [ "$((now - last))" -lt "${UPDATE_INTERVAL}" ]; then
+    return 0
+  fi
+  want="$(remote_sha "$asset")"
+  if [ -z "$want" ] || [ "$want" = "$have" ]; then
+    record_check "$now" "${want:-$have}" # unreachable or already current
+    return 0
+  fi
+  echo "tu-agent: refreshing to the latest release..." >&2
+  install_binary "$asset" || record_check "$now" "$have"
+  return 0
+}
+
+# 1. real tu-agent already on PATH (a user/dev install) — used as-is, never touched.
+if PATH="$CLEAN_PATH" command -v tu-agent >/dev/null 2>&1; then
+  exec env PATH="$CLEAN_PATH" tu-agent "$@"
+fi
+
+# 2. previously auto-installed — keep it fresh, then run.
+if [ -x "$INSTALL_BIN" ]; then
+  maybe_update || true
+  exec "$INSTALL_BIN" "$@"
+fi
+
+# 3. not installed anywhere — install from the latest Release (unless opted out).
 if [ "${TU_AGENT_NO_AUTO_INSTALL:-0}" = "1" ]; then
   echo "tu-agent: binary not found and auto-install is disabled (TU_AGENT_NO_AUTO_INSTALL=1)." >&2
   manual_help
 fi
-
-os="$(uname -s)"
-arch="$(uname -m)"
-case "$os" in
-  Darwin) goos="darwin" ;;
-  Linux) goos="linux" ;;
-  *)
-    echo "tu-agent: unsupported OS for auto-install: $os" >&2
-    manual_help
-    ;;
-esac
-case "$arch" in
-  arm64 | aarch64) goarch="arm64" ;;
-  x86_64 | amd64) goarch="amd64" ;;
-  *)
-    echo "tu-agent: unsupported architecture for auto-install: $arch" >&2
-    manual_help
-    ;;
-esac
-
-asset="tu-agent-${goos}-${goarch}.tar.gz"
-base="https://github.com/${RELEASE_REPO}/releases/latest/download"
-
+if ! asset="$(asset_name)"; then
+  echo "tu-agent: unsupported platform for auto-install: $(uname -s)/$(uname -m)" >&2
+  manual_help
+fi
 command -v curl >/dev/null 2>&1 || {
   echo "tu-agent: curl is required for auto-install" >&2
   manual_help
 }
-
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 echo "tu-agent: first run — installing ${asset} from ${RELEASE_REPO}..." >&2
-
-if ! curl -fsSL "${base}/${asset}" -o "${tmp}/${asset}"; then
-  echo "tu-agent: download failed: ${base}/${asset}" >&2
+install_binary "$asset" || {
+  echo "tu-agent: download/verify failed for ${asset} from ${RELEASE_BASE}" >&2
   manual_help
-fi
-
-# Verify the checksum against the release SHA256SUMS when available.
-if curl -fsSL "${base}/SHA256SUMS" -o "${tmp}/SHA256SUMS" 2>/dev/null; then
-  want="$(grep " ${asset}\$" "${tmp}/SHA256SUMS" | awk '{print $1}' || true)"
-  if [ -n "$want" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      got="$(sha256sum "${tmp}/${asset}" | awk '{print $1}')"
-    else
-      got="$(shasum -a 256 "${tmp}/${asset}" | awk '{print $1}')"
-    fi
-    if [ "$want" != "$got" ]; then
-      echo "tu-agent: checksum mismatch for ${asset} (want ${want}, got ${got})" >&2
-      manual_help
-    fi
-  fi
-fi
-
-if ! tar -C "$tmp" -xzf "${tmp}/${asset}" tu-agent 2>/dev/null; then
-  echo "tu-agent: failed to extract ${asset}" >&2
-  manual_help
-fi
-mkdir -p "$INSTALL_DIR"
-mv "${tmp}/tu-agent" "$INSTALL_BIN"
-chmod +x "$INSTALL_BIN"
+}
 echo "tu-agent: installed at ${INSTALL_BIN}" >&2
 exec "$INSTALL_BIN" "$@"

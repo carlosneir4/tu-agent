@@ -1,15 +1,16 @@
 # tu-agent
 
-A code-intelligence and multi-agent coding harness written in Go. It gives an AI
-coding assistant a **durable, queryable model of your codebase** instead of making
-it re-read files every session — and it runs either as a standalone CLI or as a
-[Claude Code](https://claude.com/claude-code) plugin.
+A code-intelligence and multi-agent coding harness for
+[Claude Code](https://claude.com/claude-code). It gives your AI coding assistant
+a **durable, queryable model of your codebase** instead of making it re-read
+files every session.
 
-The deterministic core needs **no API key**: graph queries, the concept index,
-memory, and test-gap analysis all run locally. Only the generative steps
-(one-line concept definitions, architecture synthesis, test bodies) call a model —
-and those can run through your existing Claude Code subscription via the plugin,
-so you never need an Anthropic API key to get the full structural value.
+Install it as a Claude Code plugin and it runs on your existing subscription —
+**no API key needed**. The deterministic core (graph queries, the concept index,
+memory, and test-gap analysis) runs locally in a bundled binary; only the
+generative steps (one-line concept definitions, architecture synthesis, test
+bodies) call a model, and those run in Claude Code on your subscription. A
+standalone CLI is also available for scripts and CI.
 
 ---
 
@@ -59,243 +60,102 @@ the grep-only agent can't reconstruct it and gets the ranking wrong.
 
 ---
 
-## Two ways to run it
+## Install (Claude Code plugin)
 
-### A. As a CLI (the binary)
+From a Claude Code session:
 
-Everything deterministic is a `tu-agent` subcommand you run in a terminal.
-Generative subcommands call a configured provider (`claude` or a self-hosted
-OpenAI-compatible `local` model).
+```
+/plugin marketplace add carlosneir4/tu-agent
+/plugin install tu-agent@tools
+```
 
-### B. As a Claude Code plugin (recommended — no API key needed)
+That's the whole setup. On first use the bundled shim downloads the matching
+binary (`tu-agent-<os>-<arch>`) from the latest GitHub Release, verifies its
+checksum, and caches it at `~/.tu-agent/bin/` — **no API key, no Go toolchain, no
+manual build**. It then keeps that binary up to date automatically: a throttled,
+best-effort check (the published `SHA256SUMS` is the freshness signal, so there's
+no pinned version) refreshes it when a newer release ships. Opt out with
+`TU_AGENT_NO_AUTO_UPDATE=1`; tune the cadence with `TU_AGENT_UPDATE_INTERVAL`
+(seconds, default 86400). The `tu-agent-graph` MCP server and the `/tu-agent:*`
+skills register automatically.
 
-The plugin bundles the same binary plus an MCP server. Claude Code does the
-generative work on your subscription; the binary does all the structural work.
-You get:
-
-- **Skills** you invoke in a session: `/tu-agent:learn`, `/tu-agent:synthesize`,
-  `/tu-agent:status`, and a test-generation skill.
-- **An MCP server** (`tu-agent-graph`) that exposes the graph/memory/test tools
-  live, so the agent answers "what breaks if I change this?" by querying the
-  graph instead of re-reading your repo.
-
-The **dual-availability rule** holds across the project: every feature is both a
-CLI subcommand and (where it's a query) an MCP tool, so both paths produce the
-same output.
+> **Single-step install is the next step.** The shim already auto-fetches the
+> binary; what remains is publishing the per-platform release assets so the
+> marketplace install is the only thing you ever run. Until the first release is
+> published, install the binary yourself (see *Standalone CLI*) or point the shim
+> at a local build via `TU_AGENT_RELEASE_REPO` / `~/.tu-agent/bin/tu-agent`.
 
 ---
 
-## Requirements
+## Use it (from Claude Code)
 
-- **Go 1.22+**
-- **`sqlite3`** and **`jq`** on your PATH (for the Java-readiness check and JSON
-  workflows)
-- An API key **only** for generative steps run via the CLI:
-  - `ANTHROPIC_API_KEY` for the `claude` provider
-  - `LOCAL_API_KEY` for a self-hosted OpenAI-compatible endpoint (any non-empty
-    value for LM Studio)
-- The plugin path needs **no API key** — generation runs on your Claude Code
-  subscription.
+In a session opened on your repo:
 
----
+1. **Build the knowledge index** — run `/tu-agent:init` to set up the repo
+   (dev-flow agents, `CLAUDE.md`, a hardened `settings.json`) and build the
+   index, or `/tu-agent:learn` for just the index. Generation runs in-session on
+   your subscription — no API key.
+2. **Ask structural questions** — the agent calls the `tu-agent-graph` MCP tools
+   automatically: *what breaks if I change this? who calls it? what's the flow?*
+   — querying the graph instead of re-reading your repo.
 
-## Installation
-
-### Binary
-
-```bash
-go install -tags sqlite_fts5 github.com/tu/tu-agent/cmd/tu-agent@latest
-```
-
-This installs to `$(go env GOPATH)/bin` (typically `~/go/bin`). Put it on your PATH:
-
-```bash
-# ~/.zshenv runs for all zsh shells, including non-interactive ones (Claude Code)
-echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.zshenv
-source ~/.zshenv
-tu-agent version
-```
-
-> **The `sqlite_fts5` build tag** compiles SQLite's FTS5 module into the binary so
-> ranked `memory search` works. Binaries built without it still run — search
-> degrades to substring matching with a logged warning.
-
-**Local build without installing:**
-
-```bash
-go build -tags sqlite_fts5 -o bin/tu-agent ./cmd/tu-agent
-# run as ./bin/tu-agent <command>, or: make build
-```
-
-### Claude Code plugin
-
-```bash
-claude --plugin-dir /path/to/tu-agent/plugin
-```
-
-The plugin ships a `.mcp.json`, so the `tu-agent-graph` MCP server registers
-automatically. It expects the binary at `~/.tu-agent/bin/tu-agent` (install it
-there with `go install` as above, or point the shim at your build).
-
----
-
-## Quick start (deterministic, no API key)
-
-From the root of any Go / Java / Python / TypeScript repo:
-
-```bash
-# 1. Build the concept index + graph + knowledge block — zero model calls
-tu-agent learn --skip-llm
-
-# 2. Ask structural questions (exact, instant)
-tu-agent graph context  com.acme.shop.orders.OrderService   # blast radius + skills + tests
-tu-agent graph impact   com.acme.shop.orders.BaseService.describe
-tu-agent graph flow     com.acme.shop.orders.OrderService.total
-tu-agent graph bridges  --top 10                            # architectural chokepoints
-tu-agent concepts                                           # the concept cards
-
-# 3. Record and recall durable facts
-tu-agent memory save --topic architecture/auth --content "sessions are signed, not encrypted"
-tu-agent memory search auth
-
-# 4. Track work across restarts
-tu-agent session start        # prints last session's summary
-tu-agent session end --summary "wired up session injection"
-```
-
-To validate the whole no-API-key path on a fresh Java repo, run the readiness
-gauntlet (see [docs/java-quickstart.md](docs/java-quickstart.md)):
-
-```bash
-scripts/java_ready_check.sh          # PASS/exit 0 when the pipeline is healthy
-```
-
----
-
-## Command reference
-
-### Knowledge: build and query
-
-| Command | What it does |
-|---------|--------------|
-| `learn [path]` | Build the concept index: graph build → one card per concept under `.claude/skills/` → register a knowledge-pointer block in `CLAUDE.md`. `--skip-llm` keeps it 100% deterministic; otherwise it also writes a one-line definition per card and synthesizes an architecture overview. |
-| `concepts [path]` | Print the concept index cards (deterministic, no model calls). |
-| `map [path]` | Print the domain map — how files cluster into domains, exactly as `learn` derives them. `--json` includes per-domain dependency context for external orchestrators. |
-
-`learn` flags: `--skip-llm` (no model calls), `--concept-root <pkg>` (the package
-whose direct subpackages define concepts), `--cluster leiden` (fallback clustering
-when no concept root is set), `--depth`, `--min-files`, `--min-standalone-files`,
-`--max-files-per-domain`, `--patterns`, `--provider claude|local`.
-
-### Graph: exact structure (no model calls)
-
-```bash
-tu-agent graph build [path]     # build or incrementally refresh (alias: update)
-tu-agent graph status           # size, failed files, extractor version
-tu-agent graph context <sym>    # blast radius + relevant skills + conventions + tests
-tu-agent graph impact  <sym>    # who is affected if you change <sym>
-tu-agent graph find    <sym>    # where a symbol is defined
-tu-agent graph flow    <sym>    # execution call tree with boundary + dispatch annotations
-tu-agent graph traits  <type>   # shared interfaces, where logic lives, blast radius
-tu-agent graph bridges          # architectural chokepoints (betweenness over the call graph)
-```
-
-- `impact` surfaces a **surprising cross-domain dependencies** section
-  (`--surprising-only`, `--surprise-threshold`, `--domain-depth`, `--min-domain-edges`).
-- `bridges` ranks chokepoints by approximate betweenness (`--top`, `--samples`, `--json`).
-
-### Memory: durable facts
-
-```bash
-tu-agent memory save --topic architecture/auth --content "..."   # upsert by topic key (bumps revision)
-tu-agent memory search <query>                                   # ranked (FTS5) or substring fallback
-tu-agent memory list                                             # all observations, with IDs
-tu-agent memory link  --from <obs-id> --to <node-id> --type documents
-tu-agent memory links --of <id>                                  # relations for an id
-```
-
-Relation types: `related | supersedes | documents | conflicts_with`. Linking an
-observation to a graph node makes it surface in `graph impact` as **"Related
-knowledge."**
-
-### Sessions: continuity across restarts
-
-```bash
-tu-agent session start          # opens a session, prints the previous summary
-tu-agent session end            # composes a deterministic summary from this session's observations
-tu-agent session end --summary "explicit text"
-tu-agent session list
-```
-
-At most one session is active per project; `start` auto-closes any open one. The
-previous summary is injected into the next `chat` session ahead of recent memory.
-
-### Tests: coverage analysis and generation
-
-```bash
-tu-agent test gaps              # rank untested public functions by risk (fan-in × blast radius)
-tu-agent test gaps --json --top 20 --domain <skill>
-tu-agent test gen --symbol <sym>    # generate a verified unit test (Go/Java/Python/TS)
-```
-
-`test gen` is hybrid: the binary supplies graph context + a scoped run command,
-the provider writes the body, and the result is verified (`--max-repair`,
-`--dry-run`, `--force`, `--discard-failing`).
-
-### Agent loops
-
-```bash
-tu-agent chat                   # interactive agent in the current repo (/exit or Ctrl+D)
-tu-agent chat --provider local  # use the self-hosted model
-tu-agent run --task "..."       # single non-interactive task (for scripted benchmarks)
-```
-
-The chat agent gets bash/read/write/grep/find/load_skill/memory tools, the
-sub-agent dispatcher, the concept index, recent memory, and the previous session
-summary.
-
-### Setup, inventory, MCP, cost
-
-```bash
-tu-agent init [path]            # generate 5 dev-flow agents + CLAUDE.md (--lang, --no-llm, --force)
-tu-agent setup                  # interactive ~/.tu-agent/config.yaml (once per machine)
-tu-agent scan                   # read-only inventory of skills/agents/config/plugins (--json)
-tu-agent skill prune            # remove empty skill dirs left by an interrupted run
-tu-agent mcp                    # run the stdio MCP server (--list to print the tools)
-tu-agent stats                  # token usage and cost from telemetry.jsonl
-tu-agent bench --baseline a.jsonl --compare b.jsonl   # compare two telemetry runs
-tu-agent version
-```
-
----
-
-## Using it from Claude Code
-
-Once the plugin is installed, in a Claude Code session opened on your repo:
-
-**Skills (you invoke them):**
+**Skills you invoke:**
 
 | Skill | What it does |
 |-------|--------------|
-| `/tu-agent:learn [path]` | Full pipeline: graph build → concept index (deterministic) → one-line definitions (in-session, no API key) → architecture synthesis → `CLAUDE.md` registration |
+| `/tu-agent:init` | Set up a repo: dev-flow agents, `CLAUDE.md`, hardened `settings.json`, enriched agents |
+| `/tu-agent:learn` | Build the graph + per-domain concept index + architecture overview |
 | `/tu-agent:synthesize` | Regenerate the architecture overview from existing concept cards |
 | `/tu-agent:status` | Progress, card staleness, and graph health |
+| `/tu-agent:tdd` | End-to-end TDD dev-flow (interrogation → spec → strict TDD → review) |
+| `/tu-agent:test-gen` | Generate a verified unit test for a function, or for the riskiest untested code |
 
-**MCP tools (the agent calls them automatically):** `get_impact`, `get_context`,
-`find_symbol`, `get_flow`, `get_traits`, `get_concept`, `get_bridges`,
-`mem_save`, `mem_search`, `mem_recent`, `mem_relate`, `mem_related`,
-`mem_session_start|end|list`, `test_gaps`, `test_scaffold`. Run
-`tu-agent mcp --list` to see the live set.
+**MCP tools the agent calls automatically:** `get_impact`, `get_context`,
+`find_symbol`, `get_flow`, `get_traits`, `get_concept`, `get_bridges`, the
+`mem_*` memory tools, and `test_gaps` / `test_scaffold`. They read
+`./.tu-agent/graph.db` and `./.tu-agent/memory.db`; the server rebuilds on hash
+drift at session start.
 
-These read `./.tu-agent/graph.db` and `./.tu-agent/memory.db`. Build the graph
-first with `/tu-agent:learn` (or `tu-agent graph build`); the MCP server also
-rebuilds on hash drift at session start.
+---
+
+## Standalone CLI (optional)
+
+Everything deterministic is also a `tu-agent` subcommand, handy for scripts and
+CI. Get the binary (download the release asset for your platform, or `make build`
+from a clone), put it on your PATH, then:
+
+```bash
+tu-agent learn --skip-llm           # build graph + concept index, zero model calls
+tu-agent graph context <symbol>     # blast radius + relevant skills + tests
+tu-agent graph impact|flow|bridges  # structure queries (no model calls)
+tu-agent memory save|search         # durable, topic-keyed facts
+tu-agent test gaps                  # rank untested code by risk (fan-in × blast radius)
+```
+
+| Group | Commands |
+|-------|----------|
+| Knowledge | `learn`, `concepts`, `map` |
+| Graph | `graph build \| status \| context \| impact \| find \| flow \| traits \| bridges` |
+| Memory | `memory save \| search \| list \| link \| links` |
+| Sessions | `session start \| end \| list` |
+| Tests | `test gaps \| gen` |
+| Setup / misc | `init`, `setup`, `scan`, `mcp`, `stats`, `bench`, `version` |
+
+Run `tu-agent <command> --help` for flags. The deterministic commands need no API
+key. Generative subcommands (`learn` without `--skip-llm`, `test gen`, `chat`)
+call a configured provider and need a key — `ANTHROPIC_API_KEY` for `claude`, or
+`LOCAL_API_KEY` for a self-hosted OpenAI-compatible endpoint; the plugin path
+needs neither. `sqlite3` and `jq` on PATH are used by the Java-readiness check
+(`scripts/java_ready_check.sh`). The `sqlite_fts5` build tag compiles SQLite's
+FTS5 module so ranked `memory search` works; without it, search degrades to
+substring matching.
 
 ---
 
 ## Configuration
 
-tu-agent merges config from three layers (later wins):
+The plugin needs no configuration. The CLI / generative path merges config from
+three layers (later wins):
 
 | Layer | Path | Purpose |
 |-------|------|---------|
@@ -326,14 +186,9 @@ providers:
 
 > **`context_size` must match the model loaded in your local server.** Too low and
 > tu-agent underuses the context; too high and you get `n_keep > n_ctx` HTTP 400s.
-> Reload the model after changing `n_ctx`.
 
-API keys are never stored in config — set them as environment variables:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export LOCAL_API_KEY="any-value"     # any non-empty value for LM Studio
-```
+API keys are never stored in config — set them as environment variables
+(`ANTHROPIC_API_KEY`, `LOCAL_API_KEY`).
 
 ---
 
@@ -366,8 +221,7 @@ Every model call is logged to `.tu-agent/telemetry.jsonl` (gitignored).
 `tu-agent stats` summarizes token usage, cost, and latency by provider;
 `tu-agent bench --baseline a.jsonl --compare b.jsonl` compares two runs to measure
 routing savings. Deterministic commands (`--skip-llm`, all graph/memory queries)
-log **zero** model-call rows — which is exactly how the readiness check proves the
-no-API-key path stays free.
+log **zero** model-call rows.
 
 ---
 
@@ -405,6 +259,6 @@ internal/
 ├── bench/             ← telemetry comparison
 └── telemetry/         ← JSONL token/latency logger
 plugin/                ← Claude Code plugin: skills, agents, hooks, MCP, binary shim
-docs/                  ← quickstarts, format extensions, superpowers specs + plans
+docs/                  ← quickstarts, format extensions
 scripts/               ← java_ready_check.sh, fixtures, parity/demo scripts
 ```
