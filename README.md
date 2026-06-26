@@ -22,7 +22,7 @@ with three complementary stores, each good at a different kind of question:
 | Organ | What it is | Always accurate? | Answers |
 |-------|-----------|------------------|---------|
 | **Graph** | The live code structure — symbols and the `calls` / `implements` / `extends` / `imports` / `overrides` edges between them, in SQLite. Rebuilt incrementally from a SHA-256 diff. | Yes — derived from source | *What breaks if I change X? Who calls this? Where is it defined? What's the call flow? Which symbol is a chokepoint?* |
-| **Concept index** | One thin **card** per concept (usually a package): a vocabulary → landmarks map. Near-static, ≤1 KB each, stored as `.claude/skills/<concept>/SKILL.md`. | Structurally yes; the one-line *definition* is generated | *What does this part of the system mean? What are its landmark types? Which concepts exist?* |
+| **Concept index** | One thin **card** per concept (usually a package): a vocabulary → landmarks map. Near-static, ≤1 KB each, stored in the graph store (`graph.db`, the `concepts` table) and read via `get_concept`. | Structurally yes; the one-line *definition* is generated | *What does this part of the system mean? What are its landmark types? Which concepts exist?* |
 | **Memory** | Durable, topic-keyed facts with provenance and revisions, in SQLite. Survives across sessions; can be linked to graph nodes. | It's curated truth, not derived | *What did we decide / learn here? What's fragile? What relates to this node?* |
 
 The split is deliberate: **structure questions go to the graph (exact, cheap,
@@ -31,11 +31,8 @@ memory.** An agent loads a compact index up front and pulls detail only when it
 needs it, keeping context small.
 
 ```
-            ┌─────────────┐   exact structure, zero model calls
-   graph ──►│  graph.db   │   impact · context · flow · traits · bridges
-            └─────────────┘
-            ┌─────────────┐   thin meaning cards, vocabulary → landmarks
- concepts ─►│ SKILL.md ×N │   one card per concept (package)
+  graph &   ┌─────────────┐   structure + concept index, zero model calls
+ concepts ─►│  graph.db   │   impact · context · flow · traits · bridges · get_concept
             └─────────────┘
             ┌─────────────┐   durable facts, provenance, links to nodes
   memory ──►│  memory.db  │   save · search · link · sessions
@@ -105,7 +102,7 @@ In a session opened on your repo:
 |-------|--------------|
 | `/tu-agent:init` | Set up a repo: dev-flow agents, `CLAUDE.md`, hardened `settings.json`, enriched agents |
 | `/tu-agent:learn` | Build the graph + per-domain concept index + architecture overview |
-| `/tu-agent:synthesize` | Regenerate the architecture overview from existing concept cards |
+| `/tu-agent:synthesize` | Regenerate the architecture overview from the concept index in the graph store |
 | `/tu-agent:status` | Progress, card staleness, and graph health |
 | `/tu-agent:tdd` | End-to-end TDD dev-flow (interrogation → spec → strict TDD → review) |
 | `/tu-agent:test-gen` | Generate a verified unit test for a function, or for the riskiest untested code |
@@ -196,32 +193,33 @@ API keys are never stored in config — set them as environment variables
 
 ```
 .tu-agent/
-├── graph.db                 ← the code knowledge graph (derived; safe to delete + rebuild)
+├── graph.db                 ← code graph + concept index (derived; safe to delete + rebuild)
 ├── memory.db                ← durable observations + relations + sessions (NOT derived — never delete)
-└── telemetry.jsonl          ← one row per model call (gitignored)
-.claude/skills/<concept>/SKILL.md   ← one thin concept card per concept
+└── telemetry.jsonl          ← one row per model call (gitignored; CLI only)
+.claude/skills/architecture/SKILL.md   ← the synthesized architecture overview
 CLAUDE.md                    ← includes a tu-agent:knowledge pointer block
 ```
 
-**Concept cards** are `SKILL.md` files with YAML frontmatter (`name`,
-`description`, landmarks/traits in the body). At session start the agent receives
-a compact index (`- name: description` per card); full content loads on demand —
-keeping the initial prompt small. Commit `.claude/skills/` to share the captured
-knowledge with your team.
-
-Skills are discovered from four layers (later shadows earlier):
-`~/.claude/skills/` < `~/.tu-agent/skills/` < `./.claude/skills/` <
-`./.tu-agent/skills/`.
+**Concept cards** are rows in `graph.db` (the `concepts` table), read with
+`get_concept` and rebuilt by `learn` — they are not files. The only generated
+on-disk skill is the **architecture overview** (`.claude/skills/architecture/SKILL.md`);
+commit it to share the synthesized overview with your team. Because `graph.db` is
+derived (and gitignored), teammates rebuild the graph + concept index by running
+`learn` rather than pulling card files.
 
 ---
 
-## Telemetry and cost
+## Telemetry and cost (CLI only)
 
-Every model call is logged to `.tu-agent/telemetry.jsonl` (gitignored).
-`tu-agent stats` summarizes token usage, cost, and latency by provider;
+This applies only to the standalone CLI. When the **binary** calls a provider it
+logs each model call to `.tu-agent/telemetry.jsonl` (gitignored): `tu-agent stats`
+summarizes token usage, cost, and latency by provider, and
 `tu-agent bench --baseline a.jsonl --compare b.jsonl` compares two runs to measure
 routing savings. Deterministic commands (`--skip-llm`, all graph/memory queries)
 log **zero** model-call rows.
+
+The **plugin path** does its generation inside Claude Code, on your subscription —
+those calls are not logged here; cost shows up in your Claude Code usage instead.
 
 ---
 
@@ -247,12 +245,16 @@ cmd/tu-agent/          ← main entrypoint, cobra commands, MCP server
 internal/
 ├── config/            ← 3-layer config loader
 ├── provider/          ← provider interface + claude and local adapters
-├── graph/             ← code knowledge graph: build, store, query (impact/context/flow/traits/bridges/surprise)
+├── graph/             ← code knowledge graph + concept index: build, store, query (impact/context/flow/traits/bridges/surprise)
 ├── memory/            ← durable SQLite store: observations, relations, sessions, FTS5 search
-├── skill/             ← concept-card index + SKILL.md frontmatter scanner
+├── autolink/          ← link memory observations to graph nodes
+├── skill/             ← skill registry + SKILL.md frontmatter scanner (architecture overview, user skills)
 ├── subagent/          ← sub-agent dispatcher + codebase-explorer
 ├── tool/              ← bash, read/write_file, grep, find, load_skill, memory tools
 ├── testgen/           ← test-gap ranking + verified test generation
+├── coverage/          ← coverage parsing (Go, JaCoCo, coverage.py, Istanbul)
+├── mutation/          ← mutation-testing engines (go-mutesting, PIT, mutmut, Stryker)
+├── tdd/               ← TDD dev-flow state machine
 ├── codegen/           ← scanner/sampler/prompt builders (used by init)
 ├── orchestrator/      ← agent loop (tool execution, conversation history)
 ├── stats/             ← telemetry summarization

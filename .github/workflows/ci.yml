@@ -15,7 +15,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v5
         with:
@@ -40,4 +40,9 @@ jobs:
       - name: lint
         uses: golangci/golangci-lint-action@v6
         with:
+          version: v1.64.8
+          # Build golangci-lint with the runner's Go (matching go.mod) instead of
+          # downloading the prebuilt binary — the prebuilt lags behind new Go
+          # releases and refuses to lint a module that targets a newer Go.
+          install-mode: goinstall
           args: --build-tags sqlite_fts5

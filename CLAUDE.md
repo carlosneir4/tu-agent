@@ -23,7 +23,7 @@ If a request seems to expand the scope, ask Carlos whether the scope is changing
 ## 3. Stack and conventions
 
 ### Language
-- **Go 1.22+**.
+- **Go 1.25+** (set by the `go.mod` directive).
 - Prefer the standard library over third-party dependencies. Each new dependency must have a clear justification.
 - Approved external dependencies (others require discussion):
   - `github.com/spf13/cobra` for CLI command structure
@@ -177,7 +177,7 @@ The split follows the existing architecture:
 - [ ] Both paths produce the same output format (so they are comparable and testable)
 
 ## Stack
-- Go 1.22+
+- Go 1.25+ (go.mod directive; the `modelcontextprotocol/go-sdk` dependency sets the floor)
 - Linter: golangci-lint
 
 ## Build & Commands

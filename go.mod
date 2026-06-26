@@ -1,6 +1,6 @@
 module github.com/tu/tu-agent
 
-go 1.26.3
+go 1.25.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.46.0
