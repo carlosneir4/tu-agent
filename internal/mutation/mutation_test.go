@@ -177,6 +177,26 @@ func TestReadReport_rejectsStale(t *testing.T) {
 	}
 }
 
+func TestReadReport_acceptsWithinSlack(t *testing.T) {
+	// A report written during the run can get a modtime slightly BEFORE `after`
+	// when the filesystem's timestamp granularity is coarser than time.Now()
+	// (common on Linux/tmpfs; not on macOS APFS). It must still count as fresh.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "mutations.xml")
+	if err := os.WriteFile(p, []byte("FRESH"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now()
+	skew := after.Add(-500 * time.Millisecond) // truncated just below `after`
+	if err := os.Chtimes(p, skew, skew); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readReport(p, after)
+	if err != nil || got != "FRESH" {
+		t.Fatalf("readReport within slack = %q,%v want FRESH,nil", got, err)
+	}
+}
+
 func TestRunReadsReportFile(t *testing.T) {
 	dir := t.TempDir()
 	report := filepath.Join(dir, "mutations.xml")
