@@ -36,9 +36,9 @@ jobs:
             goos: linux
             goarch: amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod # pin to the version in go.mod
           cache: true
@@ -53,7 +53,7 @@ jobs:
           ./dist/tu-agent version # smoke test: the binary runs on this platform
           tar -C dist -czf "tu-agent-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" tu-agent
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tu-agent-${{ matrix.goos }}-${{ matrix.goarch }}
           path: tu-agent-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
@@ -67,7 +67,7 @@ jobs:
     permissions:
       contents: write # create the release and upload assets
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
