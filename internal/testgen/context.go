@@ -22,13 +22,15 @@ type CallSite struct {
 
 // GenContext is everything the generation prompt knows about the target.
 type GenContext struct {
-	Target        Target     `json:"target"`
-	PackageClause string     `json:"package_clause"`
-	Body          string     `json:"body"`
-	CallSites     []CallSite `json:"call_sites,omitempty"`
-	Callees       []string   `json:"callees,omitempty"`
-	SkillExcerpt  string     `json:"skill_excerpt,omitempty"`
-	BlastRadius   int        `json:"blast_radius"`
+	Target        Target                     `json:"target"`
+	PackageClause string                     `json:"package_clause"`
+	Body          string                     `json:"body"`
+	CallSites     []CallSite                 `json:"call_sites,omitempty"`
+	Callees       []string                   `json:"callees,omitempty"`
+	SkillExcerpt  string                     `json:"skill_excerpt,omitempty"`
+	BlastRadius   int                        `json:"blast_radius"`
+	Capabilities  []string                   `json:"capabilities,omitempty"`
+	Conventions   *query.TestStructureResult `json:"conventions,omitempty"`
 }
 
 const (
@@ -97,6 +99,12 @@ func BuildContext(g *query.Graph, repoRoot string, t Target, budget int) (*GenCo
 		}
 		gc.SkillExcerpt += excerpt
 		used += len(excerpt)
+	}
+	if caps := DetectCapabilities(repoRoot, t.Language); len(caps) > 0 {
+		gc.Capabilities = caps
+	}
+	if ts := g.TestStructure(t.NodeID); ts.Grouping != "none" {
+		gc.Conventions = &ts
 	}
 	return gc, nil
 }

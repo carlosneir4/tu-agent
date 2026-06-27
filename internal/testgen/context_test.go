@@ -133,3 +133,46 @@ func TestBuildContextUnlocatableCallSite(t *testing.T) {
 		t.Errorf("unlocatable call site must be omitted, got %+v", gc.CallSites)
 	}
 }
+
+func TestBuildContextConventionsAndCapabilities(t *testing.T) {
+	root := t.TempDir()
+
+	// Write a minimal Java source file so BuildContext can read the body.
+	javaSource := "package com.example;\n\npublic class Foo {\n    public String bar() {\n        return \"hello\";\n    }\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "Foo.java"), []byte(javaSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed the mockito-inline mock-maker registration file (capability detection).
+	writeFiles(t, root, filepath.Join("src", "test", "resources", "mockito-extensions", "org.mockito.plugins.MockMaker"))
+
+	// Build a graph: Foo class with a bar method, two test classes sharing FooTestBase.
+	nodes := []graph.Node{
+		{ID: "Foo", Kind: graph.KindClass, Name: "Foo", Path: "Foo.java", Language: "java"},
+		{ID: "Foo.bar", Kind: graph.KindFunction, Name: "bar", Path: "Foo.java", Language: "java",
+			Line: 4, EndLine: 6, Exported: true},
+		{ID: "FooTest", Kind: graph.KindTest, Name: "FooTest", Path: "FooTest.java", Language: "java"},
+		{ID: "FooCustomTest", Kind: graph.KindTest, Name: "FooCustomTest", Path: "FooCustomTest.java", Language: "java"},
+		{ID: "FooTestBase", Kind: graph.KindClass, Name: "FooTestBase", Path: "FooTestBase.java", Language: "java"},
+	}
+	edges := []graph.Edge{
+		{From: "Foo", To: "Foo.bar", Kind: graph.EdgeContains, Confidence: graph.ConfExact},
+		{From: "Foo", To: "FooTest", Kind: graph.EdgeTestedBy, Confidence: graph.ConfHigh},
+		{From: "Foo", To: "FooCustomTest", Kind: graph.EdgeTestedBy, Confidence: graph.ConfHigh},
+		{From: "FooTest", To: "FooTestBase", Kind: graph.EdgeExtends, Confidence: graph.ConfHigh},
+		{From: "FooCustomTest", To: "FooTestBase", Kind: graph.EdgeExtends, Confidence: graph.ConfHigh},
+	}
+	g := query.NewGraph(nodes, edges)
+	tgt := TargetFromNode(nodes[1]) // Foo.bar
+
+	gc, err := BuildContext(g, root, tgt, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gc.Conventions == nil || gc.Conventions.SharedBase != "FooTestBase" {
+		t.Fatalf("Conventions = %+v, want SharedBase FooTestBase", gc.Conventions)
+	}
+	if len(gc.Capabilities) == 0 {
+		t.Fatalf("Capabilities empty, want the mockito-inline hint")
+	}
+}
