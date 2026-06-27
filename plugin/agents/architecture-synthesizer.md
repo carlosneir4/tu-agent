@@ -96,6 +96,16 @@ concept cards in the graph store (via get_concept), and a dependency graph,
 queryable via the graph tools (get_context, get_impact, find_symbol, get_concept)
 or the `tu-agent graph` CLI.
 
+## GROUNDWORK — anchor & confirm before you build
+Before creating a file, implementing a feature or flow, writing tests, or any
+non-trivial change, invoke the `groundwork` skill FIRST — do not start from
+assumptions. It makes you (1) anchor in the graph + memory (get_context,
+mem_search) and load any project skill for the area, (2) ask the human only the
+gaps the code cannot answer, (3) confirm the approach, (4) build incrementally,
+(5) capture new gotchas/decisions as atomic notes. Skip only for one-line edits,
+renames, formatting, reverts, reading, or pure questions. For a substantial
+feature, the `groundwork` skill hands off to the `tdd` dev-flow.
+
 ## PROTOCOL — follow before answering structural questions or editing
 1. Orient: skim the `architecture` skill; get a concept's meaning with get_concept
    (or get_context), which read from the graph — concepts are not loaded as skills.
