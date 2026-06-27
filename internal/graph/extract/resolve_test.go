@@ -374,3 +374,178 @@ func TestResolve_tsSiblingTestedBy(t *testing.T) {
 		}
 	}
 }
+
+func TestStripTestSuffix(t *testing.T) {
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"OrderServiceShippingTest", "OrderServiceShipping", true},
+		{"OrderServiceTests", "OrderService", true},
+		{"OrderServiceIT", "OrderService", true},
+		{"OrderService", "OrderService", false},
+		{"TestOrderService", "TestOrderService", false}, // prefix form is the exact §3 case, not a split
+	}
+	for _, c := range cases {
+		got, ok := stripTestSuffix(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("stripTestSuffix(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestResolve_splitTestClassFallback(t *testing.T) {
+	// mk builds a one-class file; if methods are given they become KindFunction
+	// nodes named "Class.method". A class is KindTest when its name looks like a
+	// test class.
+	mk := func(path, pkg, name string, methods ...string) ([]graph.Node, graph.FileMeta) {
+		kind := graph.KindClass
+		if isTestClassName(name) {
+			kind = graph.KindTest
+		}
+		nodes := []graph.Node{
+			{ID: path, Kind: graph.KindFile, Name: path, Path: path},
+			{ID: path + "::" + name, Kind: kind, Name: name, Path: path},
+		}
+		for _, m := range methods {
+			nodes = append(nodes, graph.Node{
+				ID: path + "::" + name + "." + m, Kind: graph.KindFunction,
+				Name: name + "." + m, Path: path,
+			})
+		}
+		return nodes, graph.FileMeta{Path: path, Language: "java", Package: pkg}
+	}
+
+	hasEdge := func(edges []graph.Edge, from, to string, conf graph.Confidence) bool {
+		for _, e := range edges {
+			if e.Kind == graph.EdgeTestedBy && e.From == from && e.To == to && e.Confidence == conf {
+				return true
+			}
+		}
+		return false
+	}
+	anyTestedBy := func(edges []graph.Edge, to string) bool {
+		for _, e := range edges {
+			if e.Kind == graph.EdgeTestedBy && e.To == to {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("import evidence links at medium", func(t *testing.T) {
+		var nodes []graph.Node
+		var metas []graph.FileMeta
+		addw := func(n []graph.Node, m graph.FileMeta) { nodes = append(nodes, n...); metas = append(metas, m) }
+		addw(mk("svc/OrderService.java", "com.acme.svc", "OrderService", "ship"))
+		tn, tm := mk("svc/OrderServiceShippingTest.java", "com.acme.svc", "OrderServiceShippingTest", "shipsOrder")
+		tm.Imports = []string{"com.acme.svc.OrderService"}
+		addw(tn, tm)
+
+		edges, _ := ResolveWithNodes(nodes, metas, nil, "")
+
+		if !hasEdge(edges, "svc/OrderService.java::OrderService",
+			"svc/OrderServiceShippingTest.java::OrderServiceShippingTest", graph.ConfMedium) {
+			t.Fatalf("want medium tested_by OrderService->OrderServiceShippingTest; edges: %+v", edges)
+		}
+	})
+
+	t.Run("call evidence links at medium", func(t *testing.T) {
+		var nodes []graph.Node
+		var metas []graph.FileMeta
+		addw := func(n []graph.Node, m graph.FileMeta) { nodes = append(nodes, n...); metas = append(metas, m) }
+		addw(mk("svc/OrderService.java", "com.acme.svc", "OrderService", "ship"))
+		addw(mk("svc/OrderServiceShippingTest.java", "com.acme.svc", "OrderServiceShippingTest", "shipsOrder"))
+		refs := []graph.Ref{{
+			FromID: "svc/OrderServiceShippingTest.java::OrderServiceShippingTest.shipsOrder",
+			Kind:   graph.EdgeCalls, Name: "ship",
+		}}
+
+		edges, _ := ResolveWithNodes(nodes, metas, refs, "")
+
+		if !hasEdge(edges, "svc/OrderService.java::OrderService",
+			"svc/OrderServiceShippingTest.java::OrderServiceShippingTest", graph.ConfMedium) {
+			t.Fatalf("want medium tested_by via call evidence; edges: %+v", edges)
+		}
+	})
+
+	t.Run("no evidence does not link", func(t *testing.T) {
+		var nodes []graph.Node
+		var metas []graph.FileMeta
+		addw := func(n []graph.Node, m graph.FileMeta) { nodes = append(nodes, n...); metas = append(metas, m) }
+		addw(mk("svc/OrderService.java", "com.acme.svc", "OrderService", "ship"))
+		addw(mk("svc/OrderServiceShippingTest.java", "com.acme.svc", "OrderServiceShippingTest", "shipsOrder"))
+
+		edges, _ := ResolveWithNodes(nodes, metas, nil, "")
+
+		if anyTestedBy(edges, "svc/OrderServiceShippingTest.java::OrderServiceShippingTest") {
+			t.Fatalf("no reference => no tested_by edge; edges: %+v", edges)
+		}
+	})
+
+	t.Run("longest prefix wins over shorter class", func(t *testing.T) {
+		var nodes []graph.Node
+		var metas []graph.FileMeta
+		addw := func(n []graph.Node, m graph.FileMeta) { nodes = append(nodes, n...); metas = append(metas, m) }
+		addw(mk("svc/Order.java", "com.acme.svc", "Order"))
+		addw(mk("svc/OrderService.java", "com.acme.svc", "OrderService", "ship"))
+		tn, tm := mk("svc/OrderServiceShippingTest.java", "com.acme.svc", "OrderServiceShippingTest", "shipsOrder")
+		tm.Imports = []string{"com.acme.svc.Order", "com.acme.svc.OrderService"}
+		addw(tn, tm)
+
+		edges, _ := ResolveWithNodes(nodes, metas, nil, "")
+
+		if !hasEdge(edges, "svc/OrderService.java::OrderService",
+			"svc/OrderServiceShippingTest.java::OrderServiceShippingTest", graph.ConfMedium) {
+			t.Fatalf("want link to OrderService; edges: %+v", edges)
+		}
+		if hasEdge(edges, "svc/Order.java::Order",
+			"svc/OrderServiceShippingTest.java::OrderServiceShippingTest", graph.ConfMedium) {
+			t.Fatalf("must not link to shorter prefix Order; edges: %+v", edges)
+		}
+	})
+
+	t.Run("exact source class takes §3, no medium duplicate", func(t *testing.T) {
+		var nodes []graph.Node
+		var metas []graph.FileMeta
+		addw := func(n []graph.Node, m graph.FileMeta) { nodes = append(nodes, n...); metas = append(metas, m) }
+		// The exact source class OrderServiceShipping exists, so the test is its
+		// exact-convention test (§3 at high), not a split of OrderService.
+		addw(mk("svc/OrderService.java", "com.acme.svc", "OrderService", "ship"))
+		addw(mk("svc/OrderServiceShipping.java", "com.acme.svc", "OrderServiceShipping"))
+		tn, tm := mk("svc/OrderServiceShippingTest.java", "com.acme.svc", "OrderServiceShippingTest", "shipsOrder")
+		tm.Imports = []string{"com.acme.svc.OrderService", "com.acme.svc.OrderServiceShipping"}
+		addw(tn, tm)
+
+		edges, _ := ResolveWithNodes(nodes, metas, nil, "")
+
+		if !hasEdge(edges, "svc/OrderServiceShipping.java::OrderServiceShipping",
+			"svc/OrderServiceShippingTest.java::OrderServiceShippingTest", graph.ConfHigh) {
+			t.Fatalf("want exact §3 high edge to OrderServiceShipping; edges: %+v", edges)
+		}
+		if hasEdge(edges, "svc/OrderService.java::OrderService",
+			"svc/OrderServiceShippingTest.java::OrderServiceShippingTest", graph.ConfMedium) {
+			t.Fatalf("must not also emit a medium split edge to OrderService; edges: %+v", edges)
+		}
+	})
+}
+
+func TestLongestPrefixClass(t *testing.T) {
+	cases := []struct {
+		name    string
+		base    string
+		classes []string
+		want    string
+	}{
+		{"longest wins", "OrderServiceShipping", []string{"Order", "OrderService"}, "OrderService"},
+		{"shorter when only it qualifies", "OrderShipping", []string{"Order", "OrderService"}, "Order"},
+		{"camelcase boundary required", "OrderServicexyz", []string{"OrderService"}, ""},
+		{"equal length excluded", "OrderService", []string{"OrderService"}, ""},
+		{"no prefix", "Standalone", []string{"Order", "OrderService"}, ""},
+	}
+	for _, c := range cases {
+		if got := longestPrefixClass(c.base, c.classes); got != c.want {
+			t.Errorf("%s: longestPrefixClass(%q) = %q, want %q", c.name, c.base, got, c.want)
+		}
+	}
+}
