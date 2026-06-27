@@ -199,6 +199,37 @@ func TestRunGraphBuildQuiet_SilentUpdateWithExistingGraph(t *testing.T) {
 	}
 }
 
+func TestGraphBuild_MCPOptIn(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	// Default: the plugin provides the MCP server, so the binary must NOT write
+	// .mcp.json (avoids a duplicate server and a hardcoded binary path).
+	if _, err := captureStdout(t, func() error { return runGraphBuild("") }); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if _, err := os.Stat(".mcp.json"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("default build must not write .mcp.json, stat err=%v", err)
+	}
+
+	// Opt-in: --write-mcp writes it (for CLI-only users without the plugin).
+	writeMCPOptIn = true
+	t.Cleanup(func() { writeMCPOptIn = false })
+	if _, err := captureStdout(t, func() error { return runGraphBuild("") }); err != nil {
+		t.Fatalf("build --write-mcp: %v", err)
+	}
+	if _, err := os.Stat(".mcp.json"); err != nil {
+		t.Errorf("--write-mcp must write .mcp.json: %v", err)
+	}
+}
+
 func TestRunGraphImpactSurprisingOnly(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")

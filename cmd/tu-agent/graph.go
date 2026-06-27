@@ -67,11 +67,22 @@ func runGraphBuildQuiet(subpath string, quiet bool) error {
 	}
 	fmt.Printf("graph: parsed=%d unchanged=%d deleted=%d failed=%d\n",
 		res.Parsed, res.Unchanged, res.Deleted, res.Failed)
-	if err := writeMCPConfig(repoRoot()); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not write .mcp.json: %v\n", err)
+	// Off by default: the plugin (marketplace) already provides the tu-agent-graph
+	// MCP server via its shim, which auto-updates. Writing .mcp.json here would
+	// add a duplicate server pinned to this binary's path (no auto-update). CLI-only
+	// users without the plugin opt in with --write-mcp.
+	if writeMCPOptIn {
+		if err := writeMCPConfig(repoRoot()); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not write .mcp.json: %v\n", err)
+		}
 	}
 	return nil
 }
+
+// writeMCPOptIn gates writing a repo-local .mcp.json during a graph build. The
+// `graph build --write-mcp` flag sets it; default off (the plugin provides the
+// MCP server).
+var writeMCPOptIn bool
 
 func writeMCPConfig(root string) error {
 	exe, err := os.Executable()
@@ -563,6 +574,8 @@ var graphStatusCmd = &cobra.Command{
 }
 
 func init() {
+	graphBuildCmd.Flags().BoolVar(&writeMCPOptIn, "write-mcp", false,
+		"write a repo-local .mcp.json registering tu-agent-graph (for CLI-only use without the plugin; off by default since the plugin already provides the server)")
 	graphImpactCmd.Flags().IntVar(&graphDepth, "depth", 2, "BFS depth")
 	graphImpactCmd.Flags().IntVar(&graphMaxResults, "max-results", 50, "cap on returned nodes")
 	graphImpactCmd.Flags().BoolVar(&graphSurprisingOnly, "surprising-only", false, "print only the surprising cross-domain dependencies section")
