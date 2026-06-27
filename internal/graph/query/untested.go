@@ -21,6 +21,24 @@ type SymbolCoverer interface {
 // the filter is high-precision and does not drop short methods with real logic.
 const trivialMaxSpan = 4
 
+// spanComplexityCap is the line span at/above which a method counts as
+// maximally complex for ranking; beyond it, extra length adds no weight.
+const spanComplexityCap = 60
+
+// complexityFactor maps a method's line span to a (1, 2] multiplier so that,
+// among gaps with comparable connectivity, longer (typically branchier)
+// methods outrank trivially short ones. It MODULATES the topology score, it
+// does not replace it: value × connectivity, not connectivity alone.
+func complexityFactor(span int) float64 {
+	if span > spanComplexityCap {
+		span = spanComplexityCap
+	}
+	if span < 0 {
+		span = 0
+	}
+	return 1.0 + float64(span)/float64(spanComplexityCap)
+}
+
 // hasCallee reports whether id makes any outgoing call edge (to a project or an
 // external stub node) — a coarse "has logic" signal for the triviality filter.
 func (g *Graph) hasCallee(id string) bool {
@@ -53,7 +71,9 @@ type Gap struct {
 }
 
 // UntestedGaps returns exported functions with no test linkage, ranked by
-// (fan_in+1) × blast_radius × criticality descending, ties broken by node ID.
+// (fan_in+1) × blast_radius × criticality × complexity descending, ties broken
+// by node ID. complexity (complexityFactor) lifts longer/branchier methods over
+// trivially-connected short ones — value × connectivity, not connectivity alone.
 func (g *Graph) UntestedGaps(opts GapOptions) ([]Gap, error) {
 	if opts.MinLines <= 0 {
 		opts.MinLines = 4
@@ -133,7 +153,7 @@ func (g *Graph) UntestedGaps(opts GapOptions) ([]Gap, error) {
 
 		gaps = append(gaps, Gap{
 			Node: n, FanIn: fanIn, BlastRadius: len(imp.Hits), Span: span, Covered: covered,
-			Score: uncovered * float64(fanIn+1) * float64(len(imp.Hits)) * crit,
+			Score: uncovered * float64(fanIn+1) * float64(len(imp.Hits)) * crit * complexityFactor(span),
 		})
 	}
 	sort.Slice(gaps, func(i, j int) bool {

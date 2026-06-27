@@ -66,6 +66,11 @@ func TestJavaAdapterRunCommand(t *testing.T) {
 		{"maven wrapper", []string{"pom.xml", "mvnw"}, "./mvnw -q test -Dtest=FooTest#barGen*"},
 		{"gradle", []string{"build.gradle"}, "gradle test --tests com.acme.FooTest.barGen*"},
 		{"gradle wrapper", []string{"build.gradle.kts", "gradlew"}, "./gradlew test --tests com.acme.FooTest.barGen*"},
+		// Dual-build repos carry both a pom.xml and a build.gradle.
+		// A committed wrapper is the strongest signal of the team's real tool and
+		// must win over a bare build file of the other ecosystem.
+		{"dual build: gradlew wins over pom.xml", []string{"pom.xml", "build.gradle", "gradlew"}, "./gradlew test --tests com.acme.FooTest.barGen*"},
+		{"dual build: mvnw wins over build.gradle", []string{"build.gradle", "mvnw"}, "./mvnw -q test -Dtest=FooTest#barGen*"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -115,5 +120,13 @@ func TestJavaAdapterPromptFragment(t *testing.T) {
 		if !strings.Contains(frag, want) {
 			t.Errorf("PromptFragment missing %q:\n%s", want, frag)
 		}
+	}
+	for _, want := range []string{"branches", "spies", "mockStatic"} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("Java prompt should encourage real coverage; missing %q", want)
+		}
+	}
+	if strings.Contains(frag, "only when the context shows they cannot be constructed") {
+		t.Errorf("Java prompt still carries the anti-mock bias")
 	}
 }

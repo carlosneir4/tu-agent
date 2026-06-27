@@ -108,3 +108,13 @@ func TestPythonAdapterPromptFragment(t *testing.T) {
 		}
 	}
 }
+
+func TestPythonPromptFragment_coverage(t *testing.T) {
+	a := &PythonAdapter{}
+	frag := a.PromptFragment(Target{Name: "foo", Path: "pkg/foo.py", Language: "python"}, "pkg/test_foo.py")
+	for _, want := range []string{"branches", "monkeypatch"} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("Python prompt missing coverage guidance %q", want)
+		}
+	}
+}
