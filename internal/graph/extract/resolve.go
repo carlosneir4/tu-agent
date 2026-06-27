@@ -222,6 +222,53 @@ func ResolveWithNodes(nodes []graph.Node, metas []graph.FileMeta, refs []graph.R
 		}
 	}
 
+	// 3c. tested_by fallback for split test classes. A test class not matched by
+	// the exact-name convention (§3) but whose suffix-stripped name is a CamelCase
+	// prefix of an existing source class plus an aspect — OrderServiceShippingTest
+	// for OrderService — is linked when it also references that class (an import
+	// edge to its file, or a call edge into its methods). Lower confidence than §3.
+	linkedTests := map[string]bool{}
+	importPair := map[[2]string]bool{}
+	callPair := map[[2]string]bool{}
+	for _, e := range edges {
+		switch e.Kind {
+		case graph.EdgeTestedBy:
+			linkedTests[e.To] = true
+		case graph.EdgeImports:
+			importPair[[2]string{e.From, e.To}] = true
+		case graph.EdgeCalls:
+			callPair[[2]string{e.From, e.To}] = true
+		}
+	}
+	var classNames []string
+	classNodesByName := map[string][]graph.Node{}
+	for _, n := range nodes {
+		if n.Kind == graph.KindClass {
+			if _, seenName := classNodesByName[n.Name]; !seenName {
+				classNames = append(classNames, n.Name)
+			}
+			classNodesByName[n.Name] = append(classNodesByName[n.Name], n)
+		}
+	}
+	for _, tn := range nodes {
+		if tn.Kind != graph.KindTest || linkedTests[tn.ID] {
+			continue
+		}
+		base, ok := stripTestSuffix(tn.Name)
+		if !ok {
+			continue
+		}
+		name := longestPrefixClass(base, classNames)
+		if name == "" {
+			continue
+		}
+		for _, sn := range classNodesByName[name] {
+			if hasTestEvidence(tn, sn, st, importPair, callPair) {
+				add(graph.Edge{From: sn.ID, To: tn.ID, Kind: graph.EdgeTestedBy, Confidence: graph.ConfMedium})
+			}
+		}
+	}
+
 	// 4. Overrides: for each method of a child class, if a resolved direct parent
 	// has a method with the same bare name, link child method -> parent method.
 	// parentsOf was built in section 2b.
@@ -418,6 +465,57 @@ func lowAll(ids []string) []candidate {
 		out = append(out, candidate{id, graph.ConfLow})
 	}
 	return out
+}
+
+// stripTestSuffix removes a trailing Test/Tests/IT marker from a test class
+// name, returning the base name and whether a marker was present. The longest
+// marker is tried first so "FooTests" yields "Foo".
+func stripTestSuffix(name string) (string, bool) {
+	for _, suf := range []string{"Tests", "Test", "IT"} {
+		if base, ok := strings.CutSuffix(name, suf); ok && base != "" {
+			return base, true
+		}
+	}
+	return name, false
+}
+
+// hasTestEvidence reports whether test class tn references source class sn: an
+// import edge from tn's file to sn's file, or a call edge from a method of tn to
+// a method of sn. importPair is keyed {fromFile, toFile}; callPair {fromMethodID,
+// toMethodID}.
+func hasTestEvidence(tn, sn graph.Node, st *symbolTable, importPair, callPair map[[2]string]bool) bool {
+	if importPair[[2]string{tn.Path, sn.Path}] {
+		return true
+	}
+	for _, tm := range st.methodsOf[tn.ID] {
+		for _, sm := range st.methodsOf[sn.ID] {
+			if callPair[[2]string{tm, sm}] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// longestPrefixClass returns the longest name in classNames that is a CamelCase
+// prefix of base: base starts with the name, base is strictly longer, and the
+// next byte in base begins a new CamelCase word (ASCII A-Z). Returns "" when
+// none qualifies. The ASCII boundary check is deliberately conservative; a
+// non-ASCII boundary is treated as no match.
+func longestPrefixClass(base string, classNames []string) string {
+	best := ""
+	for _, c := range classNames {
+		if len(c) >= len(base) || !strings.HasPrefix(base, c) {
+			continue
+		}
+		if next := base[len(c)]; next < 'A' || next > 'Z' {
+			continue
+		}
+		if len(c) > len(best) {
+			best = c
+		}
+	}
+	return best
 }
 
 func pathOfID(id string) string {
