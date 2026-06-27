@@ -3,7 +3,6 @@ package mutation
 import (
 	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -19,38 +18,51 @@ func (pythonEngine) Available(string, string) bool {
 func (pythonEngine) WorkDir(repoRoot, _ string) string { return repoRoot }
 
 func (pythonEngine) Command(_, _ string) []string {
-	return []string{"mutmut", "results"}
+	// mutmut splits running from reporting: run the mutations, then list every
+	// mutant's status on stdout. One sh -c keeps the single-command Run model
+	// (sh -c is already used by the tdd test runner). Reads stdout, not a file.
+	return []string{"sh", "-c", "mutmut run; mutmut results --all true"}
 }
 
 func (pythonEngine) ReportPath(_, _ string) string { return "" }
 
-// categoryRe matches a mutmut category header: "Survived 🙁 (2)" → name, count.
-var categoryRe = regexp.MustCompile(`^(\w+)\s+\S+\s+\((\d+)\)`)
-
-// fileSectionRe matches a survivor file section: "---- src/foo.py (2) ----".
-var fileSectionRe = regexp.MustCompile(`^----\s+(.+?)\s+\(\d+\)\s+----`)
+// mutmutResultRe matches a mutmut 3.x `mutmut results --all` line, e.g.
+//
+//	"    calc.x_is_positive__mutmut_1: survived"
+//
+// group 1 = full mutant name, group 2 = status. Progress/spinner/summary lines
+// (e.g. "140.52 mutations/second") do not match and are ignored.
+var mutmutResultRe = regexp.MustCompile(`^\s+(\S+__mutmut_\d+):\s+(\w+)\s*$`)
 
 func (pythonEngine) Parse(output string) (Report, error) {
 	var rep Report
 	for _, raw := range strings.Split(output, "\n") {
-		ln := strings.TrimSpace(raw)
-		if m := categoryRe.FindStringSubmatch(ln); m != nil {
-			n, _ := strconv.Atoi(m[2])
-			rep.Total += n
-			switch m[1] {
-			case "Killed":
-				rep.Killed = n
-			case "Survived":
-				rep.Survived = n
-			}
+		m := mutmutResultRe.FindStringSubmatch(raw)
+		if m == nil {
 			continue
 		}
-		if m := fileSectionRe.FindStringSubmatch(ln); m != nil {
-			rep.Survivors = append(rep.Survivors, Survivor{File: m[1], Desc: "surviving mutant(s)"})
+		rep.Total++
+		if m[2] == "killed" {
+			rep.Killed++
+			continue
 		}
+		// Anything not killed (survived, no_tests, timeout, suspicious, …) is a
+		// gap — conservative and robust to unknown statuses.
+		rep.Survived++
+		rep.Survivors = append(rep.Survivors, Survivor{File: mutmutModule(m[1]), Desc: m[1]})
 	}
 	if rep.Total > 0 {
 		rep.Score = float64(rep.Killed) / float64(rep.Total)
 	}
 	return rep, nil
+}
+
+// mutmutModule returns the module prefix of a mutant name, dropping the trailing
+// `.x_<func>__mutmut_<n>` segment: "pkg.sub.x_f__mutmut_2" -> "pkg.sub",
+// "calc.x_add__mutmut_1" -> "calc". A name with no dot is returned unchanged.
+func mutmutModule(name string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return name[:i]
+	}
+	return name
 }
