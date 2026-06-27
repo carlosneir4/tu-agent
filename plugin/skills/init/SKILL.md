@@ -71,6 +71,20 @@ Call the `get_concept` MCP tool with no `name` to list concepts.
 
 ## Step 3: Enrich the dev-flow agents
 
+**Always run this step — even on an already-initialized repo.** The enricher
+OVERWRITES each agent, so re-running is how stale agents pick up template/format
+updates from a newer plugin. Do NOT skip enrichment because the agents "already
+look enriched": an agent written by an older plugin can be stale (old section
+layout) yet still appear complete. Deterministic staleness signal — a current
+dev-flow agent has a `## How to work` section, so any that lack it are stale:
+
+```
+grep -L "## How to work" .claude/agents/{architect,developer,qa,pr-reviewer,security-reviewer,analyst,scribe}.md 2>/dev/null
+```
+
+Re-enrich every role listed (and any whose Project Context is empty). When in
+doubt, re-enrich all seven — it is idempotent and cheap.
+
 The skeletons from Step 1 have an empty `## Project Context` and no graph tools.
 Dispatch the `agent-enricher` agent once per role to fix that. Roles:
 `architect`, `developer`, `qa`, `pr-reviewer`, `security-reviewer`, `analyst`,
@@ -81,16 +95,16 @@ concept cards via `get_concept`, then writes `.claude/agents/<role>.md` —
 replacing the bare CLI skeleton, filling its Project Context from the cards, and
 substituting `__PROJECT__`/`__TEST_COMMAND__`.
 
-After all enrichers finish, **validate the output**:
+After all enrichers finish, **validate and auto-fix the output**:
 
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/agent-templates/validate.py" --generated .claude/agents
+python3 "${CLAUDE_PLUGIN_ROOT}/agent-templates/validate.py" --generated .claude/agents --fix
 ```
 
-It fails if any agent still contains a template token (`__PROJECT__`,
-`__TEST_COMMAND__`, an `ENRICH` marker) or a stray wrapper tag (`</content>`).
-For each file it names, re-dispatch that role's enricher, then re-run the check
-until it prints `OK`.
+`--fix` deterministically strips stray wrapper tags (e.g. a leftover
+`</content>`) — those need no re-dispatch. It then reports any file that still
+has a real template token (`__PROJECT__`, `__TEST_COMMAND__`, an `ENRICH`
+marker): re-dispatch ONLY those roles' enrichers and re-run until it prints `OK`.
 
 ## Step 4: Make pre-existing custom agents graph-aware
 

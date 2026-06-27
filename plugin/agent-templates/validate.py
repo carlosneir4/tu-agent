@@ -61,9 +61,40 @@ def validate_generated(dir_path):
     return ok
 
 
+def fix_generated(dir_path):
+    """Deterministically strip stray wrapper tags from output agents.
+
+    A lone </content> is hallucinated garbage, safe to remove without a model.
+    Leftover TEMPLATE TOKENS (__PROJECT__, __TEST_COMMAND__, ENRICH) are NOT
+    fixable here — they need a value only the enricher can supply — so they are
+    left for validate_generated to report and the caller to re-enrich.
+    """
+    for path in sorted(glob.glob(os.path.join(dir_path, "*.md"))):
+        text = open(path).read()
+        out, changed = [], False
+        for ln in text.split("\n"):
+            s = ln.strip()
+            if s in ("<content>", "</content>") or s.startswith("<content "):
+                changed = True  # drop the whole wrapper-only line
+                continue
+            new_ln = ln
+            for tag in WRAPPER_TAGS:
+                if tag in new_ln:
+                    new_ln, changed = new_ln.replace(tag, ""), True
+            out.append(new_ln)
+        if changed:
+            with open(path, "w") as fh:
+                fh.write("\n".join(out))
+            print(f"{path}: stripped stray wrapper tag(s)")
+
+
 def main():
-    if len(sys.argv) >= 3 and sys.argv[1] == "--generated":
-        ok = validate_generated(sys.argv[2])
+    args = sys.argv[1:]
+    if args and args[0] == "--generated" and len(args) >= 2:
+        dir_path = args[1]
+        if "--fix" in args:
+            fix_generated(dir_path)  # auto-remove wrapper tags; tokens still fail below
+        ok = validate_generated(dir_path)
     else:
         ok = validate_templates()
     print("OK" if ok else "FAIL")
