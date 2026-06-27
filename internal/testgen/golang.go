@@ -27,6 +27,7 @@ func (a *GoAdapter) PromptFragment(t Target, testPath string) string {
 Rules:
 - Declare the same package as the source file (its package clause is in the context).
 - Use only the standard library "testing" package; table-driven where natural.
+- Cover real branches and error paths, not just the happy path: where the function takes an interface or function-typed dependency, pass a hand-written fake/stub to drive each path (the standard library needs no mocking framework).
 - Every test function name MUST start with %q (e.g. func %sHappyPath(t *testing.T)).
 - Output one complete compilable file: package clause, imports, tests. No explanations.`,
 		testPath, prefix, prefix)

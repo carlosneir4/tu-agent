@@ -116,6 +116,30 @@ func TestTSAdapterRunCommand(t *testing.T) {
 	})
 }
 
+func TestTSAdapterRunCommand_packageManager(t *testing.T) {
+	// The exec prefix must follow the repo's package manager, not a hardcoded
+	// npx — in a bun or pnpm repo `npx vitest` is non-idiomatic and can fail.
+	tgt := Target{Name: "slugify", Path: "src/slug.ts", Language: "typescript"}
+	cases := []struct{ name, lock, want string }{
+		{"bun", "bun.lockb", `bunx vitest run src/slug.test.ts -t slugify.*\(gen\)`},
+		{"pnpm", "pnpm-lock.yaml", `pnpm exec vitest run src/slug.test.ts -t slugify.*\(gen\)`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			writePkgJSON(t, root, `{"devDependencies":{"vitest":"^3.0.0"}}`)
+			writeFiles(t, root, c.lock)
+			argv, err := (&TSAdapter{}).RunCommand(root, "src/slug.test.ts", tgt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(argv, " "); got != c.want {
+				t.Fatalf("RunCommand = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestTSResolve_app_inheritsRootJestByConvention(t *testing.T) {
 	a := &TSAdapter{}
 	tgt := Target{Name: "widget", Path: "packages/app/src/widget.ts", Language: "typescript"}
@@ -221,4 +245,14 @@ func TestTSAdapterPromptFragment(t *testing.T) {
 			t.Errorf("PromptFragment missing vitest fallback:\n%s", frag)
 		}
 	})
+}
+
+func TestTSPromptFragment_coverage(t *testing.T) {
+	a := &TSAdapter{}
+	frag := a.PromptFragment(Target{Name: "foo", Path: "src/foo.ts", Language: "typescript"}, "src/foo.test.ts")
+	for _, want := range []string{"branches", "vi.mock", "jest.mock"} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("TS prompt missing coverage guidance %q", want)
+		}
+	}
 }

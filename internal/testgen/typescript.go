@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tu/tu-agent/internal/codegen"
 )
 
 // TSAdapter implements LanguageAdapter for TypeScript repos using vitest or
@@ -186,6 +188,7 @@ Rules:
 - Put ALL generated tests inside a single describe block titled exactly %q.
 - Wrap that describe block between a line "// tu-agent:gen:start" and a line "// tu-agent:gen:end".
 - Import the module under test by relative path, exactly as the call sites in the context do.
+- Cover real branches and error paths, not just the happy path: use the framework's mocking and spies (vi.mock/vi.fn for vitest, jest.mock/jest.fn for jest) to stub collaborators and drive each conditional.
 - Output one complete runnable file: imports first, then the wrapped describe. No explanations.`,
 		fw, testPath, importRule, tsGenTitle(t))
 }
@@ -196,13 +199,32 @@ func (a *TSAdapter) RunCommand(repoRoot, testPath string, t Target) ([]string, e
 		return nil, err
 	}
 	rel := pkgRelative(r.pkgDir, testPath)
+	prefix := tsExecPrefix(repoRoot)
 	switch r.framework {
 	case "vitest":
-		return []string{"npx", "vitest", "run", rel, "-t", tsGenRunPattern(t)}, nil
+		return append(prefix, "vitest", "run", rel, "-t", tsGenRunPattern(t)), nil
 	case "jest":
-		return []string{"npx", "jest", rel, "-t", tsGenRunPattern(t)}, nil
+		return append(prefix, "jest", rel, "-t", tsGenRunPattern(t)), nil
 	}
 	return nil, fmt.Errorf("TSAdapter.RunCommand: no framework resolved at %s", repoRoot)
+}
+
+// tsExecPrefix returns the argv prefix that runs a locally-installed binary
+// under the repo's package manager. Hardcoding npx fails or is non-idiomatic in
+// bun/pnpm repos, so it defers to codegen.DetectBuildTool (the single source of
+// truth for package-manager detection) — the same precedence the rest of
+// tu-agent uses. Anything that is not bun/pnpm/yarn (npm or unknown) gets npx.
+func tsExecPrefix(repoRoot string) []string {
+	switch codegen.DetectBuildTool(repoRoot) {
+	case "bun":
+		return []string{"bunx"}
+	case "pnpm":
+		return []string{"pnpm", "exec"}
+	case "yarn":
+		return []string{"yarn"}
+	default:
+		return []string{"npx"}
+	}
 }
 
 // runDir is the optional package-run-directory hook (Task 3): the pipeline runs

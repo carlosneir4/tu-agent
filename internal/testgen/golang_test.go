@@ -71,3 +71,13 @@ func TestGoAdapterPromptFragment(t *testing.T) {
 		}
 	}
 }
+
+func TestGoPromptFragment_coverage(t *testing.T) {
+	a := &GoAdapter{}
+	frag := a.PromptFragment(Target{Name: "Foo.Bar", Path: "x/foo.go", Language: "go"}, "x/foo_test.go")
+	for _, want := range []string{"branches", "fake"} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("Go prompt missing coverage guidance %q", want)
+		}
+	}
+}

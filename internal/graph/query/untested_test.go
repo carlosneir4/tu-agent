@@ -108,9 +108,9 @@ func TestUntestedGaps_scoringAndOrder(t *testing.T) {
 	if first.FanIn != 2 {
 		t.Errorf("Pay FanIn = %d, want 2", first.FanIn)
 	}
-	wantScore := float64(first.FanIn+1) * float64(first.BlastRadius)
+	wantScore := float64(first.FanIn+1) * float64(first.BlastRadius) * complexityFactor(first.Span)
 	if first.Score != wantScore {
-		t.Errorf("Pay Score = %v, want (fan_in+1)*blast = %v", first.Score, wantScore)
+		t.Errorf("Pay Score = %v, want (fan_in+1)*blast*complexity = %v", first.Score, wantScore)
 	}
 	for _, gp := range gaps {
 		if gp.Node.ID == "svc.go::Refund" && gp.FanIn != 0 {
@@ -177,6 +177,39 @@ func TestUntestedGaps_excludesTrivialAccessors(t *testing.T) {
 	}
 	if !got["b.go::Logic"] {
 		t.Errorf("b.go::Logic (span 4, delegates to a callee) should be a gap; got %v", gapIDs(gaps))
+	}
+}
+
+func TestUntestedGaps_complexityBreaksTies(t *testing.T) {
+	// Two exported functions with identical connectivity (equal fan-in and
+	// equal blast radius) but very different size. Today they tie on score and
+	// the ID tiebreak puts the short accessor first. After L1 the longer,
+	// branchier function must rank first: connection count alone must not
+	// surface a trivial method above complex logic.
+	shortAcc := fn("svc.go::Aaccessor", "svc.go", 10, 5)  // span 5
+	branchy := fn("svc.go::Zalgorithm", "svc.go", 30, 40) // span 40
+	nodes := []graph.Node{
+		{ID: "svc.go", Kind: graph.KindFile, Name: "svc.go", Path: "svc.go", Language: "go"},
+		shortAcc, branchy,
+		fn("a.go::A", "a.go", 1, 10),
+		fn("b.go::B", "b.go", 1, 10),
+		fn("c.go::C", "c.go", 1, 10),
+		fn("d.go::D", "d.go", 1, 10),
+	}
+	edges := []graph.Edge{
+		{From: "a.go::A", To: "svc.go::Aaccessor", Kind: graph.EdgeCalls, Confidence: graph.ConfHigh},
+		{From: "b.go::B", To: "svc.go::Aaccessor", Kind: graph.EdgeCalls, Confidence: graph.ConfHigh},
+		{From: "c.go::C", To: "svc.go::Zalgorithm", Kind: graph.EdgeCalls, Confidence: graph.ConfHigh},
+		{From: "d.go::D", To: "svc.go::Zalgorithm", Kind: graph.EdgeCalls, Confidence: graph.ConfHigh},
+	}
+	g := NewGraph(nodes, edges)
+	gaps, err := g.UntestedGaps(GapOptions{MinLines: 4, Depth: 2})
+	if err != nil {
+		t.Fatalf("UntestedGaps: %v", err)
+	}
+	ids := gapIDs(gaps)
+	if len(ids) < 2 || ids[0] != "svc.go::Zalgorithm" {
+		t.Fatalf("ranking = %v, want svc.go::Zalgorithm first (complexity breaks the tie)", ids)
 	}
 }
 

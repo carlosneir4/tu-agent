@@ -49,6 +49,7 @@ Rules:
 - Every test function name MUST start with %q (e.g. def %s_happy_path()).
 - Wrap ALL generated test functions between a line "# tu-agent:gen:start" and a line "# tu-agent:gen:end".
 - Use @pytest.mark.parametrize where a table of cases is natural.
+- Cover real branches and error paths, not just happy-path returns: use monkeypatch or unittest.mock (patch, MagicMock) to stub collaborators and reach conditionals and error handling.
 - Import the module under test the same way the call sites in the context do.
 - Output one complete runnable file: imports first, then the wrapped tests. No explanations.`,
 		testPath, prefix, prefix)
