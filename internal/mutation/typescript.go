@@ -44,10 +44,17 @@ func (tsEngine) WorkDir(repoRoot, pkgDir string) string {
 }
 
 func (tsEngine) Command(_, _ string) []string {
-	return []string{"npx", "stryker", "run"}
+	// The json reporter writes a machine-readable report to
+	// reports/mutation/mutation.json; stdout is only a human summary.
+	return []string{"npx", "stryker", "run", "--reporters", "json"}
 }
 
-func (tsEngine) ReportPath(_, _ string) string { return "" }
+// ReportPath points at Stryker's json reporter output so Run reads the report
+// FILE instead of stdout (which carries only the human summary).
+func (tsEngine) ReportPath(repoRoot, pkgDir string) string {
+	dir, _ := tsNearestPackage(repoRoot, pkgDir)
+	return filepath.Join(dir, "reports", "mutation", "mutation.json")
+}
 
 type strykerReport struct {
 	Files map[string]struct {

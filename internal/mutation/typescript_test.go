@@ -3,6 +3,7 @@ package mutation
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,31 @@ func TestTSEngine_WorkDirAndAvailable(t *testing.T) {
 	}
 	if got := e.WorkDir(repo, "src"); got != repo {
 		t.Errorf("WorkDir single-package = %q, want repo root %q", got, repo)
+	}
+}
+
+func TestTSEngineReportPath(t *testing.T) {
+	repo := t.TempDir()
+	pkg := filepath.Join(repo, "packages", "app")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Stryker's json reporter writes to <package>/reports/mutation/mutation.json;
+	// Run must read THAT file, not stdout (which is only a human summary).
+	got := tsEngine{}.ReportPath(repo, "packages/app")
+	want := filepath.Join(pkg, "reports", "mutation", "mutation.json")
+	if got != want {
+		t.Errorf("ReportPath = %q, want %q", got, want)
+	}
+}
+
+func TestTSEngineCommandEmitsJSONReport(t *testing.T) {
+	argv := strings.Join(tsEngine{}.Command("", ""), " ")
+	if !strings.Contains(argv, "--reporters json") {
+		t.Errorf("Command = %q, want it to enable the json reporter", argv)
 	}
 }
 
