@@ -25,6 +25,7 @@ var (
 	initProvider       string
 	initNoHarden       bool
 	initPrivate        bool
+	initPublic         bool
 	initAugmentAgents  bool
 	initAugmentExclude string
 )
@@ -335,8 +336,10 @@ var initCmd = &cobra.Command{
 	Long: `Detects the project language (or takes --lang for empty/new repos) and
 generates the 5 dev-flow agents (.claude/agents/) plus a CLAUDE.md at the repo
 root, all from templates (no API calls). It also writes a hardened
-.claude/settings.json (permissions, security/quality hooks, MCP allowlist) and
-adds tu-agent artifacts to .gitignore; pass --no-harden to skip that.
+.claude/settings.json (permissions, security/quality hooks, MCP allowlist) and,
+by default (private), keeps tu-agent/Claude artifacts out of commits via
+.git/info/exclude; pass --public to commit a .gitignore block instead, or
+--no-harden to skip hardening entirely.
 
 The dev-flow agents are skeletons until enriched. To fill them with project
 knowledge and capture domain concepts, run the /tu-agent:init plugin skill in
@@ -355,11 +358,19 @@ Claude Code, or run: tu-agent learn`,
 			Update:        initUpdate,
 			Provider:      initProvider,
 			NoHarden:      initNoHarden,
-			Private:       initPrivate,
+			Private:       resolvePrivate(initPrivate, initPublic),
 			AugmentAgents: initAugmentAgents,
 			Exclude:       initAugmentExclude,
 		})
 	},
+}
+
+// resolvePrivate maps the init flags to the effective private mode. Private is
+// the default (safe for company/shared repos): ignore rules go to
+// .git/info/exclude, never committed. --public opts into the committed .gitignore
+// block; an explicit --private still wins, even alongside --public.
+func resolvePrivate(private, public bool) bool {
+	return private || !public
 }
 
 // writeAgentFile writes content to path, creating parent directories as needed.
@@ -393,8 +404,11 @@ func init() {
 		"provider override (claude|local)")
 	initCmd.Flags().BoolVar(&initNoHarden, "no-harden", false,
 		"skip generating a hardened .claude/settings.json")
+	initCmd.Flags().BoolVar(&initPublic, "public", false,
+		"share mode: commit a tu-agent block to .gitignore so the team sees which artifacts are ignored. Default is private (local-only): ignore rules go to .git/info/exclude, never committed, so no tu-agent/Claude artifacts reach the repo (shared-memory chunks stay committable).")
 	initCmd.Flags().BoolVar(&initPrivate, "private", false,
-		"local-only mode: write ignore rules to .git/info/exclude (never committed) instead of .gitignore, so no tu-agent/Claude artifacts reach the repo (shared-memory chunks stay committable)")
+		"(deprecated: private is now the default; use --public to opt out)")
+	_ = initCmd.Flags().MarkDeprecated("private", "private is now the default; pass --public to share via .gitignore")
 	initCmd.Flags().BoolVar(&initAugmentAgents, "augment-agents", false,
 		"augment existing .claude/agents/*.md with graph MCP tools + protocol (additive, idempotent)")
 	initCmd.Flags().StringVar(&initAugmentExclude, "exclude", "",

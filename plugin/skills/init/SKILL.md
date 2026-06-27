@@ -24,8 +24,9 @@ Run: `"$TU" version`
 Run: `"$TU" init` (pass the path argument the user gave, if any).
 This writes the 5 skeleton dev-flow agents under `.claude/agents/`, a CLAUDE.md,
 a hardened `.claude/settings.json` (deny-wins permissions, secret-guard +
-formatter hooks, `enabledMcpjsonServers: ["tu-agent-graph"]`), and a tu-agent
-block in `.gitignore`. If it errors, STOP and show the error.
+formatter hooks, `enabledMcpjsonServers: ["tu-agent-graph"]`), and — **private by
+default** — keeps tu-agent/Claude artifacts out of commits via `.git/info/exclude`
+(never committed). If it errors, STOP and show the error.
 
 Report which files were created vs skipped. If `settings.json` already existed,
 note that the original was backed up to `.claude/settings.json.bak`.
@@ -34,13 +35,17 @@ note that the original was backed up to `.claude/settings.json.bak`.
 **Note the quoted test command** — you pass it to the enricher in Step 3. If it is
 empty (`test-command=""`), use `<your test command>` as the placeholder instead.
 
-If the user cannot commit tu-agent/Claude artifacts to this repo (company policy,
-shared repo), run `"$TU" init --private` instead. Private mode writes the ignore
-rules to `.git/info/exclude` (local per clone, never committed) covering `.claude/`,
-`CLAUDE.md`, `.mcp.json`, `.tu-agent/`, and `AGENTS.md` — so the harness works
-locally and nothing, not even the ignore rules, reaches the repo history. It
-skips the `.gitignore` block entirely. The one exception is
-`.tu-agent/memory/chunks/`, re-included so a team can still commit shared memory.
+**Private is the default** (the safe choice for company/shared repos): the ignore
+rules go to `.git/info/exclude` (local per clone, never committed) covering
+`.claude/`, `CLAUDE.md`, `.mcp.json`, `.tu-agent/`, and `AGENTS.md` — so the
+harness works locally and nothing, not even the ignore rules, reaches the repo
+history. The one exception is `.tu-agent/memory/chunks/`, re-included so a team
+can still commit shared memory.
+
+Only if the user explicitly wants to **share** these artifacts with the team
+(an OSS or knowledge-sharing repo), run `"$TU" init --public` — that commits a
+tu-agent block to `.gitignore` instead. (The old `--private` flag is now a
+deprecated no-op, since private is the default.)
 
 If `init` reports that `CLAUDE.md` or the agents already existed (an
 already-initialized repo), run `"$TU" init --update` (same path argument). This

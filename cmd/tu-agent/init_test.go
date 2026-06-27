@@ -8,6 +8,24 @@ import (
 	"testing"
 )
 
+func TestResolvePrivate(t *testing.T) {
+	cases := []struct {
+		name            string
+		private, public bool
+		want            bool
+	}{
+		{"default (no flags) is private", false, false, true},
+		{"--public opts into shared gitignore", false, true, false},
+		{"--private stays private", true, false, true},
+		{"--private wins over --public (safe)", true, true, true},
+	}
+	for _, tc := range cases {
+		if got := resolvePrivate(tc.private, tc.public); got != tc.want {
+			t.Errorf("%s: resolvePrivate(%v,%v) = %v, want %v", tc.name, tc.private, tc.public, got, tc.want)
+		}
+	}
+}
+
 func TestParseExtensions_LeadingDot(t *testing.T) {
 	got := parseExtensions(".go,.java,.py")
 	want := []string{".go", ".java", ".py"}
