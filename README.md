@@ -88,7 +88,7 @@ skills register automatically.
 
 In a session opened on your repo:
 
-1. **Build the knowledge index** — run `/tu-agent:init` to set up the repo
+1. **Build the knowledge index** — run `/tu-agent:prepare` to set up the repo
    (dev-flow agents, `CLAUDE.md`, a hardened `settings.json`) and build the
    index, or `/tu-agent:learn` for just the index. Generation runs in-session on
    your subscription — no API key.
@@ -100,7 +100,7 @@ In a session opened on your repo:
 
 | Skill | What it does |
 |-------|--------------|
-| `/tu-agent:init` | Set up a repo: dev-flow agents, `CLAUDE.md`, hardened `settings.json`, enriched agents |
+| `/tu-agent:prepare` | Set up a repo: dev-flow agents, `CLAUDE.md`, hardened `settings.json`, enriched agents |
 | `/tu-agent:learn` | Build the graph + per-domain concept index + architecture overview |
 | `/tu-agent:synthesize` | Regenerate the architecture overview from the concept index in the graph store |
 | `/tu-agent:status` | Progress, card staleness, and graph health |

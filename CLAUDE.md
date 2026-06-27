@@ -115,7 +115,7 @@ The harness extends with:
 
 For Phase 0:
 - Unit tests for: config loader, skill registry indexing, provider adapters (mocked HTTP), tool registry, memory operations.
-- Integration tests for: end-to-end `tu-agent chat` flow with a mock provider, `tu-agent init` on a small fixture repo.
+- Integration tests for: end-to-end `tu-agent chat` flow with a mock provider, `tu-agent prepare` on a small fixture repo.
 - Manual demo tests for: the key buy-in claims. These are scripted but executed manually with real APIs.
 
 Coverage target: **70%+ on `internal/` packages, no requirement on `cmd/`.**

@@ -18,7 +18,7 @@ Define `TU="${CLAUDE_PLUGIN_ROOT}/bin/tu-agent"` and use it for every binary cal
 Run: `"$TU" version` — if it fails, STOP and show the shim's install instructions.
 
 Run: `"$TU" tdd check`. If it exits non-zero, the project's dev-flow agents are
-not provisioned — tell the user to run `/tu-agent:init` (or `tu-agent init`) and
+not provisioned — tell the user to run `/tu-agent:prepare` (or `tu-agent prepare`) and
 STOP. This flow never generates agents; init owns that.
 
 Run `"$TU" tdd status`. If its JSON has `"resumable": true`, show the user the
@@ -37,7 +37,7 @@ with the composed stage prompt as its instructions. Fetch the prompt with
 (its knowledge) plus the generic TDD overlay (the contract). Prepend it to any
 runtime specifics (feature name, prior gate/judge feedback). This depends on NO
 agent being registered, so it works identically in a fresh session and right after
-`tu-agent init` (which is exactly when named agents are not yet dispatchable).
+`tu-agent prepare` (which is exactly when named agents are not yet dispatchable).
 
 Stages run this way: `architect`, `craftsman`, `judge`, `scribe`.
 

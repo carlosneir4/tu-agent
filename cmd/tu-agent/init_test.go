@@ -8,6 +8,24 @@ import (
 	"testing"
 )
 
+func TestResolvePrivate(t *testing.T) {
+	cases := []struct {
+		name            string
+		private, public bool
+		want            bool
+	}{
+		{"default (no flags) is private", false, false, true},
+		{"--public opts into shared gitignore", false, true, false},
+		{"--private stays private", true, false, true},
+		{"--private wins over --public (safe)", true, true, true},
+	}
+	for _, tc := range cases {
+		if got := resolvePrivate(tc.private, tc.public); got != tc.want {
+			t.Errorf("%s: resolvePrivate(%v,%v) = %v, want %v", tc.name, tc.private, tc.public, got, tc.want)
+		}
+	}
+}
+
 func TestParseExtensions_LeadingDot(t *testing.T) {
 	got := parseExtensions(".go,.java,.py")
 	want := []string{".go", ".java", ".py"}
@@ -222,9 +240,17 @@ func TestRunInitSetup_Deterministic(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(md)
-	for _, want := range []string{"go test ./...", "tu-agent:project-context", "Project Structure"} {
+	// Keep: the test-command one-liner and tu-agent's marked blocks.
+	for _, want := range []string{"go test ./...", "tu-agent:project-context", "tu-agent:knowledge"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("CLAUDE.md missing %q:\n%s", want, s)
+		}
+	}
+	// Slimmed: tu-agent no longer writes unmarked project prose that would clash
+	// with Claude's native /init (which owns the overview/structure/conventions).
+	for _, gone := range []string{"## Project Structure", "## Working agreement"} {
+		if strings.Contains(s, gone) {
+			t.Errorf("CLAUDE.md must not contain unmarked prose %q (it clashes with native /init):\n%s", gone, s)
 		}
 	}
 }

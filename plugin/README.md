@@ -27,7 +27,7 @@ claude --plugin-dir /path/to/tu-agent/plugin
 
 | Command | What it does |
 |---|---|
-| `/tu-agent:init [path]` | End-to-end repo setup: binary init (agents, CLAUDE.md, hardened settings.json) → learn pipeline (if needed) → per-role agent enrichment |
+| `/tu-agent:prepare [path]` | End-to-end repo setup: binary init (agents, CLAUDE.md, hardened settings.json) → learn pipeline (if needed) → per-role agent enrichment |
 | `/tu-agent:learn [path]` | Full pipeline: graph build → concept index (deterministic) → one-line definitions (in-session) → architecture synthesis → CLAUDE.md registration |
 | `/tu-agent:synthesize` | Regenerate the architecture skill from the existing concept index |
 | `/tu-agent:status` | Progress, skill staleness, and graph health |
@@ -67,7 +67,7 @@ starts.
 
 ## Dev-flow agents
 
-`/tu-agent:init` sets up the repo end-to-end:
+`/tu-agent:prepare` sets up the repo end-to-end:
 
 1. Runs the binary's deterministic setup — five skeleton dev-flow agents
    (`.claude/agents/`), a `CLAUDE.md`, a hardened `.claude/settings.json`
@@ -80,7 +80,7 @@ starts.
    MCP tools come baked into that skeleton) and filling its `## Project Context`
    from the concept cards.
 
-You can also run the pieces separately: `tu-agent init` (CLI) for the
+You can also run the pieces separately: `tu-agent prepare` (CLI) for the
 deterministic setup only, or `/tu-agent:learn` to (re)build the knowledge index.
 
 The base contract of each agent (tools, output format, definition-of-done) comes

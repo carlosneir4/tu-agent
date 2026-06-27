@@ -1,5 +1,5 @@
 {
   "name": "tu-agent",
-  "description": "Project knowledge + setup on your Claude subscription: /tu-agent:init sets up a repo (dev-flow agents, CLAUDE.md, hardened settings.json) and enriches the agents; /tu-agent:learn builds a per-domain concept index in the graph store; /tu-agent:synthesize builds the architecture overview; /tu-agent:status reports staleness. Bundles a graph MCP server (tu-agent-graph) exposing get_impact/get_context/find_symbol/get_concept over the project's dependency graph. Deterministic analysis (scanning, clustering, graph) runs in the tu-agent binary; all generation runs in Claude Code.",
+  "description": "Project knowledge + setup on your Claude subscription: /tu-agent:prepare sets up a repo (dev-flow agents, CLAUDE.md, hardened settings.json) and enriches the agents; /tu-agent:learn builds a per-domain concept index in the graph store; /tu-agent:synthesize builds the architecture overview; /tu-agent:status reports staleness. Bundles a graph MCP server (tu-agent-graph) exposing get_impact/get_context/find_symbol/get_concept over the project's dependency graph. Deterministic analysis (scanning, clustering, graph) runs in the tu-agent binary; all generation runs in Claude Code.",
   "hooks": "./hooks/hooks.json"
 }
