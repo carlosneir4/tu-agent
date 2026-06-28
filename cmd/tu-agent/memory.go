@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/tu/tu-agent/internal/crystallize"
 	"github.com/tu/tu-agent/internal/memory"
 )
 
@@ -42,6 +43,8 @@ var memImportQuiet bool
 var memExportQuiet bool
 
 var memRelinkQuiet bool
+
+var memCrystallizeMin int
 
 var memoryCmd = &cobra.Command{
 	Use:   "memory",
@@ -414,6 +417,29 @@ var memoryRelinkCmd = &cobra.Command{
 	},
 }
 
+var memoryCrystallizeCmd = &cobra.Command{
+	Use:   "crystallize",
+	Short: "List dense note clusters worth consolidating into a skill",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		s, err := memory.Open(memoryDBPath(repoRoot()))
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if cerr := s.Close(); cerr != nil {
+				slog.Warn("memory store close failed", "err", cerr)
+			}
+		}()
+		obs, err := s.List()
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(cmd.OutOrStdout(), crystallize.Format(crystallize.Detect(obs, memCrystallizeMin)))
+		return nil
+	},
+}
+
 func init() {
 	memorySaveCmd.Flags().StringVar(&memSaveTopic, "topic", "", "topic key for upsert, e.g. architecture/auth (required)")
 	memorySaveCmd.Flags().StringVar(&memSaveContent, "content", "", "observation content (required)")
@@ -446,5 +472,7 @@ func init() {
 	memoryCmd.AddCommand(memoryDeleteCmd)
 	memoryRelinkCmd.Flags().BoolVar(&memRelinkQuiet, "quiet", false, "suppress output (for hooks)")
 	memoryCmd.AddCommand(memoryRelinkCmd)
+	memoryCrystallizeCmd.Flags().IntVar(&memCrystallizeMin, "min", 5, "minimum notes for a cluster to be suggested")
+	memoryCmd.AddCommand(memoryCrystallizeCmd)
 	rootCmd.AddCommand(memoryCmd)
 }

@@ -24,6 +24,16 @@ const knowledgeBody = knowledgeOpen + "\n" +
 	"queryable via the graph tools (get_context, get_impact, find_symbol, get_concept)\n" +
 	"or the `tu-agent graph` CLI.\n" +
 	"\n" +
+	"## GROUNDWORK — anchor & confirm before you build\n" +
+	"Before creating a file, implementing a feature or flow, writing tests, or any\n" +
+	"non-trivial change, invoke the `groundwork` skill FIRST — do not start from\n" +
+	"assumptions. It makes you (1) anchor in the graph + memory (get_context,\n" +
+	"mem_search) and load any project skill for the area, (2) ask the human only the\n" +
+	"gaps the code cannot answer, (3) confirm the approach, (4) build incrementally,\n" +
+	"(5) capture new gotchas/decisions as atomic notes. Skip only for one-line edits,\n" +
+	"renames, formatting, reverts, reading, or pure questions. For a substantial\n" +
+	"feature, the `groundwork` skill hands off to the `tdd` dev-flow.\n" +
+	"\n" +
 	"## PROTOCOL — follow before answering structural questions or editing\n" +
 	"1. Orient: skim the `architecture` skill; get a concept's meaning with get_concept\n" +
 	"   (or get_context), which read from the graph — concepts are not loaded as skills.\n" +

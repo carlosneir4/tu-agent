@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
+	"github.com/tu/tu-agent/internal/crystallize"
 	"github.com/tu/tu-agent/internal/graph/extract"
 	"github.com/tu/tu-agent/internal/graph/query"
 	"github.com/tu/tu-agent/internal/memory"
@@ -53,6 +54,11 @@ type memSearchMCPInput struct {
 // memRecentMCPInput holds the parameters for the mem_recent tool.
 type memRecentMCPInput struct {
 	N int `json:"n" jsonschema:"number of recent observations (default 5)"`
+}
+
+// memClustersMCPInput holds the parameters for the mem_clusters tool.
+type memClustersMCPInput struct {
+	Min int `json:"min,omitempty" jsonschema:"minimum notes for a cluster to be suggested (default 5)"`
 }
 
 // memExportMCPInput is the (empty) parameter set for mem_export.
@@ -213,6 +219,27 @@ func handleMemRecent(_ context.Context, _ *mcp.CallToolRequest, in memRecentMCPI
 		return nil, queryOutput{}, err
 	}
 	return nil, queryOutput{Result: formatObservations(obs, recallStale(s, obs))}, nil
+}
+
+func handleMemClusters(_ context.Context, _ *mcp.CallToolRequest, in memClustersMCPInput) (*mcp.CallToolResult, queryOutput, error) {
+	min := in.Min
+	if min <= 0 {
+		min = 5
+	}
+	s, err := memory.Open(memoryDBPath(repoRoot()))
+	if err != nil {
+		return nil, queryOutput{}, err
+	}
+	defer func() {
+		if cerr := s.Close(); cerr != nil {
+			slog.Warn("mem_clusters: store close failed", "err", cerr)
+		}
+	}()
+	obs, err := s.List()
+	if err != nil {
+		return nil, queryOutput{}, err
+	}
+	return nil, queryOutput{Result: crystallize.Format(crystallize.Detect(obs, min))}, nil
 }
 
 func handleMemExport(_ context.Context, _ *mcp.CallToolRequest, _ memExportMCPInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -668,7 +695,7 @@ var mcpToolNames = []string{
 	"mem_export", "mem_import",
 	"test_gaps", "test_scaffold", "test_mutation",
 	"get_concept", "set_concept_definition", "get_traits", "get_flow", "get_bridges", "get_cycles",
-	"mem_relate", "mem_related",
+	"mem_relate", "mem_related", "mem_clusters",
 	"mem_session_start", "mem_session_end", "mem_session_list",
 }
 
@@ -725,6 +752,11 @@ func newMCPServer() *mcp.Server {
 		Name:        "mem_recent",
 		Description: "Return the most recent N observations from project memory (default 5).",
 	}, handleMemRecent)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "mem_clusters",
+		Description: "List dense clusters of related memory notes worth consolidating into a project skill. Deterministic — no LLM, no writes. Optional `min` (default 5) sets the cluster-size threshold.",
+	}, handleMemClusters)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "mem_export",

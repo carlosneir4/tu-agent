@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --quiet"
+            "command": "TU_AGENT_UPDATE_INTERVAL=0 ${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --quiet"
           },
           {
             "type": "command",

@@ -146,3 +146,16 @@ func TestKnowledgeBlockMatchesSynthesizer(t *testing.T) {
 		t.Errorf("synthesizer block differs from knowledgeBody const.\n--- const ---\n%s\n--- synthesizer ---\n%s", knowledgeBody, got)
 	}
 }
+
+func TestKnowledgeBody_HasGroundworkDirective(t *testing.T) {
+	for _, want := range []string{
+		"## GROUNDWORK",
+		"`groundwork` skill",
+		"anchor",
+		"`tdd` dev-flow",
+	} {
+		if !strings.Contains(knowledgeBody, want) {
+			t.Errorf("knowledgeBody missing groundwork directive substring %q", want)
+		}
+	}
+}
