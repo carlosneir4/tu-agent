@@ -116,3 +116,15 @@ func TestDetect_SlugTokenWinsOnDFTie(t *testing.T) {
 		t.Errorf("want slug token zebra to win the DF tie, got %q", got[0].Label)
 	}
 }
+
+func TestFormatWithStatus_ShowsMarkers(t *testing.T) {
+	cs := []Cluster{
+		{Label: "checkout", Size: 3, Members: []memory.Observation{{TopicKey: "testing/a"}}},
+		{Label: "payment", Size: 4, Members: []memory.Observation{{TopicKey: "testing/b"}}},
+	}
+	st := map[string]SkillStatus{"checkout": StatusStale, "payment": StatusNone}
+	out := FormatWithStatus(cs, st)
+	if !strings.Contains(out, "[stale]") || !strings.Contains(out, "[none]") {
+		t.Errorf("missing status markers:\n%s", out)
+	}
+}

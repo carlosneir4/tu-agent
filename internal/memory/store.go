@@ -222,7 +222,7 @@ func (s *Store) Upsert(topicKey, content string, opts UpsertOpts) (Observation, 
 		return Observation{}, fmt.Errorf("memory.Store.Upsert: topic key cannot be empty")
 	}
 	if opts.Type != "" && !validObservationTypes[opts.Type] {
-		return Observation{}, fmt.Errorf("memory.Store.Upsert: invalid observation type %q (valid: architecture, bug-pattern, decision, gotcha, reference, testing, or empty)", opts.Type)
+		return Observation{}, fmt.Errorf("memory.Store.Upsert: invalid observation type %q (valid: architecture, bug-pattern, decision, gotcha, reference, skill, testing, or empty)", opts.Type)
 	}
 	// An explicit type always wins; otherwise derive it from the topic key
 	// prefix so notes saved as "type/slug" stay reachable by --type filtering.
@@ -590,7 +590,7 @@ var validRelationTypes = map[string]bool{
 
 var validObservationTypes = map[string]bool{
 	"architecture": true, "bug-pattern": true, "decision": true,
-	"gotcha": true, "reference": true, "testing": true,
+	"gotcha": true, "reference": true, "skill": true, "testing": true,
 }
 
 // typeFromTopicKey returns the topic key prefix (the part before the first "/")
@@ -656,6 +656,28 @@ func (s *Store) relationsBy(col string, ids []string) ([]Relation, error) {
 		var created string
 		if err := rows.Scan(&r.ID, &r.FromID, &r.ToID, &r.Type, &created); err != nil {
 			return nil, fmt.Errorf("memory.Store.relationsBy: scan: %w", err)
+		}
+		r.CreatedAt, _ = time.Parse(timeParseFormat, created)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// RelationsByType returns all relations with the given relation_type, ordered
+// stably. Used to list, e.g., every conflicts_with edge.
+func (s *Store) RelationsByType(relType string) ([]Relation, error) {
+	rows, err := s.db.Query(`SELECT id, from_id, to_id, relation_type, created_at FROM memory_relations
+		WHERE relation_type = ? ORDER BY created_at, id`, relType)
+	if err != nil {
+		return nil, fmt.Errorf("memory.Store.RelationsByType: %w", err)
+	}
+	defer rows.Close()
+	var out []Relation
+	for rows.Next() {
+		var r Relation
+		var created string
+		if err := rows.Scan(&r.ID, &r.FromID, &r.ToID, &r.Type, &created); err != nil {
+			return nil, fmt.Errorf("memory.Store.RelationsByType: scan: %w", err)
 		}
 		r.CreatedAt, _ = time.Parse(timeParseFormat, created)
 		out = append(out, r)

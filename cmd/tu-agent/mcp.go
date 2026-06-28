@@ -42,13 +42,13 @@ type memSaveMCPInput struct {
 	Topic   string `json:"topic"   jsonschema:"topic key for upsert (slash/separated, e.g. architecture/auth)"`
 	Content string `json:"content" jsonschema:"the observation to save"`
 	Scope   string `json:"scope,omitempty" jsonschema:"optional scope: 'project' (default, shared with the team via the committed chunk) or 'personal' (kept local, never exported)"`
-	Type    string `json:"type,omitempty" jsonschema:"optional observation type: bug-pattern | decision | architecture | testing | reference | gotcha"`
+	Type    string `json:"type,omitempty" jsonschema:"optional observation type: bug-pattern | decision | architecture | testing | reference | gotcha | skill"`
 }
 
 // memSearchMCPInput holds the parameters for the mem_search tool.
 type memSearchMCPInput struct {
 	Query string `json:"query" jsonschema:"keyword to search in memory"`
-	Type  string `json:"type,omitempty" jsonschema:"restrict to one observation type: bug-pattern | decision | architecture | testing | reference | gotcha"`
+	Type  string `json:"type,omitempty" jsonschema:"restrict to one observation type: bug-pattern | decision | architecture | testing | reference | gotcha | skill"`
 }
 
 // memRecentMCPInput holds the parameters for the mem_recent tool.
@@ -61,11 +61,20 @@ type memClustersMCPInput struct {
 	Min int `json:"min,omitempty" jsonschema:"minimum notes for a cluster to be suggested (default 5)"`
 }
 
+// crystallizeSaveMCPInput holds the parameters for the crystallize_save tool.
+type crystallizeSaveMCPInput struct {
+	Label string `json:"label" jsonschema:"the cluster label to crystallize (from mem_clusters)"`
+	Body  string `json:"body"  jsonschema:"the generated SKILL.md body (frontmatter + standard; no provenance marker)"`
+}
+
 // memExportMCPInput is the (empty) parameter set for mem_export.
 type memExportMCPInput struct{}
 
 // memImportMCPInput is the (empty) parameter set for mem_import.
 type memImportMCPInput struct{}
+
+// memConflictsMCPInput is the (empty) parameter set for mem_conflicts.
+type memConflictsMCPInput struct{}
 
 // memRelateInput holds the parameters for the mem_relate tool.
 type memRelateInput struct {
@@ -240,6 +249,38 @@ func handleMemClusters(_ context.Context, _ *mcp.CallToolRequest, in memClusters
 		return nil, queryOutput{}, err
 	}
 	return nil, queryOutput{Result: crystallize.Format(crystallize.Detect(obs, min))}, nil
+}
+
+func handleMemConflicts(_ context.Context, _ *mcp.CallToolRequest, _ memConflictsMCPInput) (*mcp.CallToolResult, queryOutput, error) {
+	s, err := memory.Open(memoryDBPath(repoRoot()))
+	if err != nil {
+		return nil, queryOutput{}, err
+	}
+	defer func() {
+		if cerr := s.Close(); cerr != nil {
+			slog.Warn("mem_conflicts: store close failed", "err", cerr)
+		}
+	}()
+	rels, err := s.RelationsByType("conflicts_with")
+	if err != nil {
+		return nil, queryOutput{}, err
+	}
+	byID, err := conflictTopicMap(s, rels)
+	if err != nil {
+		return nil, queryOutput{}, err
+	}
+	return nil, queryOutput{Result: formatConflicts(rels, byID)}, nil
+}
+
+func handleCrystallizeSave(_ context.Context, _ *mcp.CallToolRequest, in crystallizeSaveMCPInput) (*mcp.CallToolResult, queryOutput, error) {
+	if in.Label == "" || in.Body == "" {
+		return nil, queryOutput{}, fmt.Errorf("crystallize_save: label and body are required")
+	}
+	path, err := saveCrystallizedSkill(in.Label, in.Body)
+	if err != nil {
+		return nil, queryOutput{}, err
+	}
+	return nil, queryOutput{Result: "crystallized " + in.Label + " -> " + path}, nil
 }
 
 func handleMemExport(_ context.Context, _ *mcp.CallToolRequest, _ memExportMCPInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -695,7 +736,7 @@ var mcpToolNames = []string{
 	"mem_export", "mem_import",
 	"test_gaps", "test_scaffold", "test_mutation",
 	"get_concept", "set_concept_definition", "get_traits", "get_flow", "get_bridges", "get_cycles",
-	"mem_relate", "mem_related", "mem_clusters",
+	"mem_relate", "mem_related", "mem_clusters", "mem_conflicts", "crystallize_save",
 	"mem_session_start", "mem_session_end", "mem_session_list",
 }
 
@@ -757,6 +798,16 @@ func newMCPServer() *mcp.Server {
 		Name:        "mem_clusters",
 		Description: "List dense clusters of related memory notes worth consolidating into a project skill. Deterministic — no LLM, no writes. Optional `min` (default 5) sets the cluster-size threshold.",
 	}, handleMemClusters)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "mem_conflicts",
+		Description: "List recorded contradictions between notes (conflicts_with edges), each resolved to both notes' topic keys. Record new ones with mem_relate type conflicts_with; resolution (delete/rescope/supersede) is the human's.",
+	}, handleMemConflicts)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "crystallize_save",
+		Description: "Store a generated skill body as the canonical skill/<label> record and materialize it locally. The binary adds provenance; pass the SKILL.md body without a provenance marker. Pair with mem_clusters (pick a cluster) and Claude Code generation.",
+	}, handleCrystallizeSave)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "mem_export",
