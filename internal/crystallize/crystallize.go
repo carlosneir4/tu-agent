@@ -36,10 +36,21 @@ var stopTokens = map[string]bool{
 // token (the valid token it shares with the most other notes). Token selection
 // ties are broken by source priority (slug before title before content);
 // cluster ranking ties are broken by label for determinism.
+//
+// Skill records (Type == "skill") are excluded from clustering: they are the
+// output of crystallization, not candidate input notes.
 func Detect(obs []memory.Observation, minSize int) []Cluster {
 	if minSize < 1 {
 		minSize = 1
 	}
+	// Filter out skill records — they are crystallization output, not input.
+	filtered := obs[:0:0]
+	for _, o := range obs {
+		if o.Type != "skill" {
+			filtered = append(filtered, o)
+		}
+	}
+	obs = filtered
 	tokensOf := make([][]string, len(obs))
 	df := map[string]int{}
 	for i, o := range obs {
@@ -140,6 +151,39 @@ func Format(clusters []Cluster) string {
 	fmt.Fprintf(&b, "%d crystallizable cluster(s):\n\n", len(clusters))
 	for _, c := range clusters {
 		fmt.Fprintf(&b, "[%d notes] %s\n", c.Size, c.Label)
+		for _, m := range c.Members {
+			key := m.TopicKey
+			if key == "" {
+				key = m.Title
+			}
+			fmt.Fprintf(&b, "  %s\n", key)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// FormatWithStatus renders clusters like Format but annotates each with its
+// crystallization status ([skill], [stale], or [none]) from the status map
+// (keyed by cluster label). Missing entries render as [none].
+func FormatWithStatus(clusters []Cluster, status map[string]SkillStatus) string {
+	if len(clusters) == 0 {
+		return "no crystallizable clusters (need more related notes on one topic)\n"
+	}
+	tag := func(s SkillStatus) string {
+		switch s {
+		case StatusCurrent:
+			return "[skill]"
+		case StatusStale:
+			return "[stale]"
+		default:
+			return "[none]"
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d crystallizable cluster(s):\n\n", len(clusters))
+	for _, c := range clusters {
+		fmt.Fprintf(&b, "%s [%d notes] %s\n", tag(status[c.Label]), c.Size, c.Label)
 		for _, m := range c.Members {
 			key := m.TopicKey
 			if key == "" {

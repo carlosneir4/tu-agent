@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tu/tu-agent/internal/crystallize"
 	"github.com/tu/tu-agent/internal/memory"
 )
 
@@ -141,5 +142,69 @@ func TestMemoryExportCmdRun(t *testing.T) {
 	entries2, _ := os.ReadDir(memoryChunksDir("."))
 	if len(entries2) != 1 {
 		t.Fatalf("second export must not create extra files, got %d", len(entries2))
+	}
+}
+
+// TestSkillRecordExportImportRoundTrip verifies that a skill record (type
+// "skill", content carrying the tu-agent:crystallize marker) survives an
+// export→chunk→import cycle into a fresh store with its content intact.
+func TestSkillRecordExportImportRoundTrip(t *testing.T) {
+	chunks := t.TempDir()
+
+	// Source store: create and export a skill record.
+	srcDB := filepath.Join(t.TempDir(), "memory.db")
+	src, err := memory.Open(srcDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillContent := crystallize.ProvenanceLine("checkout", nil) + "\n---\nname: checkout\n---\nSkill body.\n"
+	if _, err := src.Upsert("skill/checkout", skillContent, memory.UpsertOpts{
+		Author: "alice",
+		Type:   "skill",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := src.ExportRecords("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("want 1 exported record, got %d", len(recs))
+	}
+	if _, _, err := memory.WriteChunk(chunks, "alice", recs); err != nil {
+		t.Fatal(err)
+	}
+	_ = src.Close()
+
+	// Destination store: import from the chunk and verify the skill record.
+	back, err := memory.ReadAllChunks(chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dstDB := filepath.Join(t.TempDir(), "memory.db")
+	dst, err := memory.Open(dstDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	res, err := dst.ImportRecords(back)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Inserted != 1 {
+		t.Fatalf("want 1 inserted, got %+v", res)
+	}
+	got, err := dst.Search(crystallize.Marker, "skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("imported skill record not searchable: %+v", got)
+	}
+	if !strings.Contains(got[0].Content, crystallize.Marker) {
+		t.Errorf("skill record content missing marker after round-trip; got %q", got[0].Content)
+	}
+	if got[0].TopicKey != "skill/checkout" {
+		t.Errorf("skill record topic key = %q, want skill/checkout", got[0].TopicKey)
 	}
 }

@@ -365,3 +365,64 @@ func TestUpsertValidatesType(t *testing.T) {
 		t.Errorf("error should name the problem and list valids, got: %v", err)
 	}
 }
+
+func TestUpsert_SkillTypeValidAndDerived(t *testing.T) {
+	dir := t.TempDir()
+	s, err := memory.Open(filepath.Join(dir, "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Explicit type "skill" is accepted.
+	o, err := s.Upsert("skill/checkout", "body", memory.UpsertOpts{Type: "skill"})
+	if err != nil {
+		t.Fatalf("explicit skill type rejected: %v", err)
+	}
+	if o.Type != "skill" {
+		t.Errorf("want type skill, got %q", o.Type)
+	}
+	// A skill/ topic with no explicit type derives type "skill".
+	o2, err := s.Upsert("skill/payment", "body", memory.UpsertOpts{})
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if o2.Type != "skill" {
+		t.Errorf("want derived type skill, got %q", o2.Type)
+	}
+}
+
+func TestRelationsByType_FiltersByType(t *testing.T) {
+	dir := t.TempDir()
+	s, err := memory.Open(filepath.Join(dir, "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	a, _ := s.Upsert("testing/a", "x", memory.UpsertOpts{Type: "testing"})
+	b, _ := s.Upsert("decision/b", "y", memory.UpsertOpts{Type: "decision"})
+	c, _ := s.Upsert("gotcha/c", "z", memory.UpsertOpts{Type: "gotcha"})
+	if _, err := s.Relate(a.ID, b.ID, "conflicts_with"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Relate(b.ID, c.ID, "conflicts_with"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Relate(a.ID, c.ID, "related"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.RelationsByType("conflicts_with")
+	if err != nil {
+		t.Fatalf("RelationsByType: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 conflicts_with, got %d", len(got))
+	}
+	for _, r := range got {
+		if r.Type != "conflicts_with" {
+			t.Errorf("got relation of type %q", r.Type)
+		}
+	}
+}

@@ -162,16 +162,20 @@ func hardenHooks(lang string) map[string]any {
 		}
 	}
 	// On session start, refresh the graph (so structural queries are not stale
-	// after an external `git pull` that the PostToolUse edit hook never saw) and
-	// import teammates' shared memory. Both are incremental/idempotent and degrade
-	// to a no-op without the binary. One entry, two commands — keeps the single
-	// tu-agent-managed SessionStart entry the migration logic expects.
+	// after an external `git pull` that the PostToolUse edit hook never saw),
+	// import teammates' shared memory, materialize crystallized skills to local
+	// .claude/skills files, and surface the crystallize nudge. All are
+	// incremental/idempotent and degrade to a no-op without the binary. One entry,
+	// multiple commands — keeps the single tu-agent-managed SessionStart entry the
+	// migration logic expects.
 	hooks["SessionStart"] = []any{
 		map[string]any{
 			"hooks": []any{
 				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent graph update --quiet"},
 				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory import --quiet"},
 				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory relink --quiet"},
+				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory materialize --quiet"},
+				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory crystallize --nudge"},
 			},
 		},
 	}
@@ -333,8 +337,9 @@ func hookEntryKey(e any) string {
 // owns and re-generates:
 //   - the current secret-guard entry (command contains "tu-agent guard-path")
 //   - the legacy jq secret-guard (command contains the refusal text)
-//   - the memory import/export hooks (commands contain "tu-agent memory import"
-//     or "tu-agent memory export")
+//   - the memory import/export/materialize/crystallize hooks (commands contain
+//     "tu-agent memory import", "tu-agent memory export", "tu-agent memory
+//     materialize", or "tu-agent memory crystallize")
 //
 // Hooks installed by other tu-agent subcommands (e.g. "tu-agent graph update"
 // from "tu-agent setup --hooks") and language formatters are NOT matched, so
@@ -358,7 +363,9 @@ func isTuAgentManagedHook(e any) bool {
 			strings.Contains(cmd, "refusing to modify secret/credential files") ||
 			strings.Contains(cmd, "tu-agent memory import") ||
 			strings.Contains(cmd, "tu-agent memory export") ||
-			strings.Contains(cmd, "tu-agent memory relink") {
+			strings.Contains(cmd, "tu-agent memory relink") ||
+			strings.Contains(cmd, "tu-agent memory materialize") ||
+			strings.Contains(cmd, "tu-agent memory crystallize") {
 			return true
 		}
 	}

@@ -25,6 +25,14 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory relink --quiet"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory materialize --quiet"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory crystallize --nudge"
           }
         ]
       }

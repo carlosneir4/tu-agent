@@ -683,3 +683,27 @@ func TestGitignoreBlockKeepsChunksVersioned(t *testing.T) {
 		t.Fatal("block should mention memory/chunks are versioned")
 	}
 }
+
+func TestHardenSessionStartIncludesCrystallize(t *testing.T) {
+	s := HardenedSettings("go", "go")
+	hooks, ok := s["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("settings has no hooks map")
+	}
+	ss, ok := hooks["SessionStart"].([]any)
+	if !ok || len(ss) == 0 {
+		t.Fatal("no SessionStart hook")
+	}
+	entry := ss[0].(map[string]any)
+	inner := entry["hooks"].([]any)
+	var joined string
+	for _, h := range inner {
+		joined += h.(map[string]any)["command"].(string) + "\n"
+	}
+	if !strings.Contains(joined, "memory materialize") {
+		t.Errorf("SessionStart must materialize crystallized skills; got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "memory crystallize --nudge") {
+		t.Errorf("SessionStart must run the crystallize nudge; got:\n%s", joined)
+	}
+}
