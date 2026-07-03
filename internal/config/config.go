@@ -49,6 +49,9 @@ type TddConfig struct {
 	// Archive enables the scribe stage (FASE 3) on standard-path success.
 	// Pointer so absent => on; set `archive: false` to opt out.
 	Archive *bool `yaml:"archive"`
+	// Strict runs the sandwich one @s at a time (test->red->impl->green->next)
+	// instead of batching all of a sub-feature's tests. Default false.
+	Strict bool `yaml:"strict"`
 }
 
 func defaultConfig() Config {

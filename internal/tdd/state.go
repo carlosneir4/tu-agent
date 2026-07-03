@@ -11,10 +11,19 @@ import (
 // StateVersion is the on-disk schema version of the run state.
 const StateVersion = 1
 
+// ScenarioState tracks one @s scenario's progress within a feature's sandwich.
+type ScenarioState struct {
+	Tag   string `json:"tag"`
+	Phase string `json:"phase"` // red | green | done
+	Kind  string `json:"kind"`  // tdd | regression | refactor
+}
+
 // FeatureState tracks one feature's terminal status within a run.
 type FeatureState struct {
-	Name   string `json:"name"`
-	Status string `json:"status"` // pending | pass | blocked
+	Name      string          `json:"name"`
+	Status    string          `json:"status"` // pending | pass | blocked
+	Scenarios []ScenarioState `json:"scenarios,omitempty"`
+	Kind      string          `json:"kind,omitempty"` // "" = normal TDD feature; "refactor" = no RED, not TDD-credited
 }
 
 // State is the persisted state of one (possibly multi-feature) run.
@@ -26,12 +35,22 @@ type State struct {
 }
 
 // BeginRun builds a fresh State with every feature pending.
-func BeginRun(task, branch string, features []string) State {
+func BeginRun(task, branch string, features []FeaturePlan) State {
 	fs := make([]FeatureState, 0, len(features))
-	for _, n := range features {
-		fs = append(fs, FeatureState{Name: n, Status: "pending"})
+	for _, f := range features {
+		fs = append(fs, FeatureState{Name: f.Name, Status: "pending", Kind: f.Kind})
 	}
 	return State{Version: StateVersion, Task: task, Branch: branch, Features: fs}
+}
+
+// Feature returns the FeatureState for name, and whether it was found.
+func (s State) Feature(name string) (FeatureState, bool) {
+	for _, f := range s.Features {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return FeatureState{}, false
 }
 
 // NextPending returns the first pending feature name.
@@ -51,6 +70,23 @@ func (s *State) Mark(name, status string) {
 			s.Features[i].Status = status
 			return
 		}
+	}
+}
+
+// SetScenario upserts a scenario's state on the named feature (by tag).
+func (s *State) SetScenario(feature string, sc ScenarioState) {
+	for i := range s.Features {
+		if s.Features[i].Name != feature {
+			continue
+		}
+		for j := range s.Features[i].Scenarios {
+			if s.Features[i].Scenarios[j].Tag == sc.Tag {
+				s.Features[i].Scenarios[j] = sc
+				return
+			}
+		}
+		s.Features[i].Scenarios = append(s.Features[i].Scenarios, sc)
+		return
 	}
 }
 

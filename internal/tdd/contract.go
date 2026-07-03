@@ -49,6 +49,7 @@ type Verdict struct {
 type FeaturePlan struct {
 	Name      string   `json:"name"`
 	Scenarios []string `json:"scenarios"`
+	Kind      string   `json:"kind,omitempty"` // "" = normal TDD feature; "refactor" = no RED, keep suite green, not TDD-credited
 }
 
 // Contract is the routing envelope a stage returns. The orchestrator routes on

@@ -39,7 +39,13 @@ runtime specifics (feature name, prior gate/judge feedback). This depends on NO
 agent being registered, so it works identically in a fresh session and right after
 `tu-agent prepare` (which is exactly when named agents are not yet dispatchable).
 
-Stages run this way: `architect`, `craftsman`, `judge`, `scribe`.
+Stages run this way: `architect`, `craftsman`, `judge`, `scribe`, `test-writer`,
+`implementer`. `test-writer` and `implementer` are not flow stages the binary
+executes on their own — they exist only so `"$TU" tdd prompt <name>` can hand you
+their composed overlay (RED-phase "tests only, no production" / GREEN-phase
+"minimal production, never touch tests"). Together they form the RED->GREEN
+"sandwich" that Step 5's inner loop runs per sub-feature; the bare `craftsman`
+stage is used only by Step 4's trivial path.
 
 The **analyst** (Step 1) and the **human gate** (Step 3) are interactive — a
 dispatched agent cannot ask the user and wait — so YOU, the conductor, run them
@@ -128,25 +134,89 @@ budget 3). After the feature reaches a terminal state, call
 first blocked feature — remaining features stay `pending` and are resumable in
 the next session.
 
-**Inner standard loop for one feature (retry budget 3):**
+**Inner standard loop for one feature (retry budget 3):** each pass through the
+loop is a full RED->GREEN sandwich — the test-writer and implementer are always
+re-dispatched together; there is no partial resume mid-sandwich.
+
+**Language support:** the RED→GREEN gate currently supports Java (JUnit XML)
+and Go projects only — other languages lack a result-artifact parser and
+`isTestPath` recognition, so their test files would be mis-partitioned.
 
 Repeat up to 3 times:
 
-1. Run the craftsman stage (dispatch `general-purpose` with
-   `"$TU" tdd prompt craftsman`; pass any prior gate/judge feedback). It implements
-   by strict TDD and returns a contract listing the `@s` tags it covered.
-2. Run `"$TU" tdd gate --feature <name> --covered <the craftsman's scenarios>`.
+**RED phase — failing tests only, no production:**
+
+1. Run the test-writer stage (dispatch `general-purpose` with
+   `"$TU" tdd prompt test-writer`; pass any prior gate/judge feedback plus the
+   feature's `@s` scenarios). It must write ONLY test files.
+2. Compute the changed-or-new file set — **tracked and untracked**. A plain
+   `git diff --name-only` misses brand-new files (the normal RED-phase output:
+   a newly-created test file), which would silently empty out `--new-tests`
+   and make the gate below vacuously pass. Discover both:
+   ```
+   CHANGED="$( { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u )"
+   ```
+   Order-violation check: if any path in `$CHANGED` is not a test file (not
+   `*_test.go` and not under a `src/test/` path segment), that's an order
+   violation the gate below cannot see — feed that back to the test-writer
+   directly ("you wrote production code during the RED phase; tests only")
+   and loop (consume one budget) without calling the gate.
+3. Otherwise build the `--new-tests` argument from the TEST files in
+   `$CHANGED`. The gate flag splits on commas, but `git`'s output is
+   newline-separated, so comma-join it explicitly:
+   ```
+   NEW_TESTS="$( printf '%s\n' "$CHANGED" | grep -E '(_test\.go$|/src/test/|^src/test/)' | paste -sd, - )"
+   ```
+   Then run: `"$TU" tdd gate --feature <name> --expect red --new-tests "$NEW_TESTS"`.
+   - `"ok": false` with feedback `"tests green without production: ..."` naming
+     every new test file — the scenario already passed against existing code.
+     This is a **regression catch**, not a defect: note it for the archive and
+     skip straight to step 6 (judge) for this pass, with no GREEN phase.
+   - `"ok": false` otherwise (e.g. `"suite is green — no failing test drove the
+     change"`) — the new tests did not go red; feed the feedback to the
+     test-writer and loop (consume one budget).
+   - `"ok": true` — the new tests are confirmed red; continue to the GREEN
+     phase. Before dispatching the implementer, **remember this state as the
+     post-RED baseline**: keep `$CHANGED` (the full path set) and, for every
+     TEST file in it, its content hash (`git hash-object <file>`). Nothing is
+     committed or stashed between RED and GREEN, so this remembered baseline —
+     not a fresh diff — is what the GREEN guard compares against.
+
+**GREEN phase — minimal production, tests are frozen:**
+
+4. Run the implementer stage (dispatch `general-purpose` with
+   `"$TU" tdd prompt implementer`; pass any prior gate/judge feedback). It must
+   not modify, add, or delete any test file.
+5. Recompute the changed-or-new file set the same untracked-aware way
+   (`{ git diff --name-only; git ls-files --others --exclude-standard; } | sort -u`).
+   A plain re-diff after GREEN shows the *cumulative* RED+GREEN changes — the
+   RED test files always reappear in it — so presence alone can't tell you
+   whether the implementer touched them. Compare against the **remembered
+   post-RED baseline** instead: for every TEST file in the new set, if it
+   wasn't in the baseline's test-file list, or its `git hash-object` no longer
+   matches the hash recorded at the end of RED, that's a violation — the
+   implementer added or modified a test. Feed it back to the implementer ("you
+   modified a test; tests are frozen once red") and loop (consume one budget)
+   without calling the gate. Otherwise run
+   `"$TU" tdd gate --feature <name> --covered <the implementer's scenarios>`.
    - Non-zero exit / error: the gate could not run — show the error and stop.
-   - `"ok": false`: feed the `feedback` back to the craftsman and loop (consume one budget).
+   - `"ok": false`: feed the `feedback` back to the implementer and loop (consume one budget).
    - `"ok": true`: continue.
-3. Run the judge stage (dispatch `general-purpose` with `"$TU" tdd prompt judge`). On its verdict:
-   - `revise`: feed the feedback back to the craftsman and loop (consume one budget).
+6. Run the judge stage (dispatch `general-purpose` with `"$TU" tdd prompt judge`). On its verdict:
+   - `revise`: feed the feedback to the test-writer and restart the sandwich
+     from step 1 (consume one budget).
    - `fail`: call `"$TU" tdd state mark <slug> blocked` and stop the entire run.
-   - `pass`: continue to step 4.
-4. If `tdd.mutation` is enabled, run `"$TU" test mutation <primary source file or package>`.
-   If the score is below `tdd.mutation_threshold` (default 0.7), feed the surviving
-   mutants back to the craftsman and loop (consume one budget). Otherwise continue.
-5. The feature passed. If `tdd.archive` is enabled (default on), run the scribe
+   - `pass`: continue to step 7.
+7. **DEFERRED — not currently run.** Mutation hardening (`tdd.mutation`) is
+   deliberately skipped on this two-phase RED→GREEN sandwich path, matching the
+   CLI conductor (`internal/tdd/flow.go`), which only runs the mutation gate on
+   the non-sandwich loop. Do not run `"$TU" test mutation` here even if
+   `tdd.mutation` is enabled — this step is pending re-enablement for the
+   sandwich flow. (Historical description, not currently exercised: if enabled,
+   run `"$TU" test mutation <primary source file or package>`; if the score is
+   below `tdd.mutation_threshold` (default 0.7), feed the surviving mutants back
+   to the implementer and loop, consuming one budget.)
+8. The feature passed. If `tdd.archive` is enabled (default on), run the scribe
    stage (dispatch `general-purpose` with `"$TU" tdd prompt scribe`)
    to `mem_save` a `decision/<feature>` note. Call `"$TU" tdd state mark <slug> pass`.
 
@@ -160,3 +230,10 @@ feedback.
   in the binary — trust their output rather than re-judging tests yourself.
 - Keep the contract JSON shape the agents emit; route on `status` and (for the
   architect) `complexity`, exactly as the CLI conductor does.
+- `tdd gate --expect red` only checks whether the named files went red — it does
+  not check who wrote what. The RED-phase "wrote production" and GREEN-phase
+  "modified a test" order violations are guarded by you computing the
+  untracked-aware changed-file set and, for GREEN, hashing test files against
+  the remembered post-RED baseline (steps 2 and 5) — the same guard
+  `internal/tdd.RunSandwich` applies in the CLI conductor by staging into a
+  private temp index (`git add -A`) before diffing.

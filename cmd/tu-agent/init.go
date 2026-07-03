@@ -72,6 +72,11 @@ func runInitSetup(_ context.Context, opts initSetupOpts) error {
 	// Emit the detected facts so the plugin orchestrator can pass the real test
 	// command to the enricher (which fills __TEST_COMMAND__ in dev-flow agents).
 	fmt.Printf("Detected language=%s build-tool=%s test-command=%q\n", lang, buildTool, testCmd)
+	if changed, err := seedProjectTestCommand(".", testCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: seeding tdd.test_command: %v\n", err)
+	} else if changed {
+		fmt.Printf("Seeded tdd.test_command=%q into .tu-agent/config.yaml\n", testCmd)
+	}
 
 	if opts.Update {
 		if err := refreshArtifacts("."); err != nil {

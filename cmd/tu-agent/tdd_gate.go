@@ -7,16 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/tu/tu-agent/internal/config"
 	"github.com/tu/tu-agent/internal/tdd"
+	"github.com/tu/tu-agent/internal/testresult"
 )
 
 var (
-	tddGateFeature string
-	tddGateCovered string
+	tddGateFeature  string
+	tddGateCovered  string
+	tddGateExpect   string
+	tddGateNewTests string
 )
 
 // tddGateResult is the JSON the gate prints for the plugin skill to read.
@@ -40,25 +44,56 @@ func splitTags(s string) []string {
 	return out
 }
 
+// evalRed adapts tdd.NewTestsRed into the gate result shape.
+func evalRed(overallPassed bool, rep testresult.Report, newTests []string) tddGateResult {
+	r := tdd.NewTestsRed(overallPassed, rep, newTests)
+	return tddGateResult{OK: r.OK, Feedback: r.Feedback}
+}
+
 // runGate reads the feature's required @s tags, runs the deterministic gate
 // (coverage + green tests) via the same functions the CLI conductor uses, and
 // returns the structured result. A missing feature file or unresolved test
 // command is an error (the caller distinguishes "ran and failed" from "could
 // not run").
-func runGate(ctx context.Context, cfg config.Config, root, feature, coveredRaw string) (tddGateResult, error) {
+func runGate(ctx context.Context, cfg config.Config, root, feature, coveredRaw, expect, newTestsRaw string) (tddGateResult, error) {
 	if feature == "" {
 		return tddGateResult{}, fmt.Errorf("--feature is required")
 	}
+	// Validate expect: must be "red" or "green" (empty string defaults to "green")
+	if expect == "" {
+		expect = "green"
+	}
+	if expect != "red" && expect != "green" {
+		return tddGateResult{}, fmt.Errorf("--expect must be red or green, got %q", expect)
+	}
+
+	if expect == "red" {
+		runner, err := resolveTestRunner(cfg, root)
+		if err != nil {
+			return tddGateResult{}, err
+		}
+		since := time.Now()
+		passed, _, rerr := runner(ctx)
+		if rerr != nil {
+			return tddGateResult{}, fmt.Errorf("test runner error: %w", rerr)
+		}
+		rep, lerr := testresult.LoadReports(root, since)
+		if lerr != nil {
+			return tddGateResult{}, fmt.Errorf("loading reports: %w", lerr)
+		}
+		return evalRed(passed, rep, splitTags(newTestsRaw)), nil
+	}
+	// expect green: read feature file first, then resolve test runner
 	featPath := filepath.Join(root, ".tu-agent", "tdd", "features", feature+".feature")
 	data, err := os.ReadFile(featPath)
 	if err != nil {
 		return tddGateResult{}, fmt.Errorf("reading feature: %w", err)
 	}
-	required := tdd.ScenarioTags(string(data))
 	runner, err := resolveTestRunner(cfg, root)
 	if err != nil {
 		return tddGateResult{}, err
 	}
+	required := tdd.ScenarioTags(string(data))
 	det := tdd.DeterministicJudge(ctx, runner, required, splitTags(coveredRaw))
 	return tddGateResult{OK: det.OK, Feedback: det.Feedback}, nil
 }
@@ -67,7 +102,7 @@ var tddGateCmd = &cobra.Command{
 	Use:   "gate",
 	Short: "Run the deterministic gate (green tests + @s coverage) and print JSON",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		res, err := runGate(cmd.Context(), cfg, repoRoot(), tddGateFeature, tddGateCovered)
+		res, err := runGate(cmd.Context(), cfg, repoRoot(), tddGateFeature, tddGateCovered, tddGateExpect, tddGateNewTests)
 		if err != nil {
 			return fmt.Errorf("tdd gate: %w", err)
 		}
@@ -83,5 +118,7 @@ var tddGateCmd = &cobra.Command{
 func init() {
 	tddGateCmd.Flags().StringVar(&tddGateFeature, "feature", "", "feature name (reads .tu-agent/tdd/features/<name>.feature)")
 	tddGateCmd.Flags().StringVar(&tddGateCovered, "covered", "", "comma-separated @s tags the craftsman covered")
+	tddGateCmd.Flags().StringVar(&tddGateExpect, "expect", "green", "expected color: green | red")
+	tddGateCmd.Flags().StringVar(&tddGateNewTests, "new-tests", "", "comma-separated new test file paths (for --expect red)")
 	tddCmd.AddCommand(tddGateCmd)
 }

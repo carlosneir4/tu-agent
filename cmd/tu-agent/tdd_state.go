@@ -55,7 +55,11 @@ var tddStateBeginCmd = &cobra.Command{
 		if len(tddStateFeatures) == 0 {
 			return fmt.Errorf("tdd state begin: at least one --feature is required")
 		}
-		st := tdd.BeginRun(tddStateTask, tddStateBranch, tddStateFeatures)
+		feats := make([]tdd.FeaturePlan, 0, len(tddStateFeatures))
+		for _, name := range tddStateFeatures {
+			feats = append(feats, tdd.FeaturePlan{Name: name})
+		}
+		st := tdd.BeginRun(tddStateTask, tddStateBranch, feats)
 		if err := tdd.SaveState(tddStatePath(), st); err != nil {
 			return fmt.Errorf("tdd state begin: %w", err)
 		}

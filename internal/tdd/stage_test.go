@@ -96,3 +96,17 @@ func TestOverlaysAreGenericContractOnly(t *testing.T) {
 		t.Error("craftsman overlay must keep the red-green discipline")
 	}
 }
+
+func TestSandwichOverlays(t *testing.T) {
+	if !strings.Contains(TestWriterPrompt, "NO production") {
+		t.Error("TestWriterPrompt must forbid production code")
+	}
+	if !strings.Contains(ImplementerPrompt, "do NOT modify") {
+		t.Error("ImplementerPrompt must forbid touching tests")
+	}
+	for _, p := range []string{TestWriterPrompt, ImplementerPrompt} {
+		if !strings.Contains(p, "```json") {
+			t.Error("overlay missing contract instruction")
+		}
+	}
+}

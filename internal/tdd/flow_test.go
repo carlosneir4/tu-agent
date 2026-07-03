@@ -1,10 +1,14 @@
 package tdd
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/tu/tu-agent/internal/testresult"
 )
 
 // seqDispatcher returns replies keyed by agent name, in call order per agent.
@@ -392,6 +396,340 @@ func TestRunDesignBudgetExhausted(t *testing.T) {
 	}
 }
 
+// TestRunFeatureTDDRefactor proves kind:"refactor" skips RED entirely: the
+// scripted dispatcher provides only the refactor + judge dispatches (a
+// wrongly-run RED phase would exhaust the fixture and panic), the whole suite
+// is green from the first check, and the resulting scenarios/judge task carry
+// the refactor marking.
+func TestRunFeatureTDDRefactor(t *testing.T) {
+	disp := &scriptDispatcher{outs: []string{
+		contract("@s1"), // refactor dispatch only — NOT test-writer/implementer
+		// judge:
+		"done\n```json\n{\"stage\":\"judge\",\"status\":\"pass\",\"verdict\":{\"result\":\"pass\",\"feedback\":\"ok\",\"score\":9}}\n```",
+	}}
+	o := Options{
+		Dispatcher:  disp,
+		Runner:      func(context.Context) (bool, string, error) { return true, "", nil }, // suite green throughout
+		Out:         &bytes.Buffer{},
+		Budget:      2,
+		Snapshot:    func(context.Context) (string, error) { return "S", nil },
+		Diff:        func(context.Context, string, string) ([]string, error) { return nil, nil },
+		LoadReports: func(time.Time) (testresult.Report, error) { return testresult.Report{}, nil },
+		// A refactor feature must never invoke the mutator — no new tests to harden.
+		Mutator: func(context.Context, MutationTarget) MutationOutcome {
+			t.Fatal("mutation gate must not run for a refactor feature")
+			return MutationOutcome{}
+		},
+	}
+	runner := StageRunner{D: disp}
+	status, scenarios, err := runFeatureTDD(context.Background(), o, runner, "feat", "refactor", []string{"@s1"})
+	if err != nil || status != StatusPass {
+		t.Fatalf("status=%s err=%v, want pass/nil", status, err)
+	}
+	if len(scenarios) != 1 || scenarios[0].Tag != "@s1" || scenarios[0].Kind != "refactor" || scenarios[0].Phase != "done" {
+		t.Fatalf("scenarios = %+v, want [{Tag:@s1 Phase:done Kind:refactor}]", scenarios)
+	}
+	var judgeTask string
+	for _, task := range disp.tasks {
+		if strings.HasPrefix(task, "judge|") {
+			judgeTask = task
+			break
+		}
+	}
+	if !strings.Contains(judgeTask, "this is a refactor") {
+		t.Fatalf("judge task = %q, want it to note this is a refactor", judgeTask)
+	}
+	if len(disp.tasks) != 2 {
+		t.Fatalf("expected exactly 2 dispatches (refactor, judge), got %d: %v", len(disp.tasks), disp.tasks)
+	}
+}
+
+func TestRunFeatureTDDUsesSandwich(t *testing.T) {
+	disp := &scriptDispatcher{outs: []string{
+		contract("@s1"), // test-writer
+		contract("@s1"), // implementer
+		// judge:
+		"done\n```json\n{\"stage\":\"judge\",\"status\":\"pass\",\"verdict\":{\"result\":\"pass\",\"feedback\":\"ok\",\"score\":9}}\n```",
+	}}
+	snaps := []string{"S0", "S1", "S2"}
+	var si, runN int
+	o := Options{
+		Dispatcher: disp,
+		Runner:     func(context.Context) (bool, string, error) { runN++; return runN >= 2, "", nil },
+		Out:        &bytes.Buffer{},
+		Budget:     2,
+		Snapshot:   func(context.Context) (string, error) { s := snaps[si%len(snaps)]; si++; return s, nil },
+		Diff: func(_ context.Context, from, _ string) ([]string, error) {
+			if from == "S0" {
+				return []string{"src/test/java/com/acme/FooTest.java"}, nil
+			}
+			return []string{"src/main/java/com/acme/Foo.java"}, nil
+		},
+		LoadReports: func(time.Time) (testresult.Report, error) {
+			return testresult.Report{Cases: []testresult.Case{{Class: "com.acme.FooTest", Name: "x", Status: testresult.Fail}}}, nil
+		},
+	}
+	runner := StageRunner{D: disp}
+	status, _, err := runFeatureTDD(context.Background(), o, runner, "feat", "", []string{"@s1"})
+	if err != nil || status != StatusPass {
+		t.Fatalf("status=%s err=%v, want pass/nil", status, err)
+	}
+}
+
+// TestRunFeatureTDDRecordsRegression proves a green-on-arrival sandwich cycle
+// is threaded through to the per-scenario ScenarioState (Kind "regression",
+// Phase "done") AND that the judge dispatch task carries a note telling it
+// not to credit those scenarios as RED->GREEN TDD victories.
+func TestRunFeatureTDDRecordsRegression(t *testing.T) {
+	disp := &scriptDispatcher{outs: []string{
+		contract("@s1"), // test-writer only — green-on-arrival skips the GREEN phase
+		// judge:
+		"done\n```json\n{\"stage\":\"judge\",\"status\":\"pass\",\"verdict\":{\"result\":\"pass\",\"feedback\":\"ok\",\"score\":9}}\n```",
+	}}
+	snaps := []string{"S0", "S1"}
+	var si int
+	o := Options{
+		Dispatcher: disp,
+		Runner:     func(context.Context) (bool, string, error) { return false, "", nil }, // suite red overall
+		Out:        &bytes.Buffer{},
+		Budget:     2,
+		Snapshot:   func(context.Context) (string, error) { s := snaps[si%len(snaps)]; si++; return s, nil },
+		Diff: func(_ context.Context, _, _ string) ([]string, error) {
+			return []string{"src/test/java/com/acme/FooTest.java"}, nil
+		},
+		LoadReports: func(time.Time) (testresult.Report, error) {
+			return testresult.Report{Cases: []testresult.Case{{Class: "com.acme.FooTest", Name: "x", Status: testresult.Pass}}}, nil
+		},
+	}
+	runner := StageRunner{D: disp}
+	status, scenarios, err := runFeatureTDD(context.Background(), o, runner, "feat", "", []string{"@s1"})
+	if err != nil || status != StatusPass {
+		t.Fatalf("status=%s err=%v, want pass/nil", status, err)
+	}
+	if len(scenarios) != 1 || scenarios[0].Tag != "@s1" || scenarios[0].Kind != "regression" || scenarios[0].Phase != "done" {
+		t.Fatalf("scenarios = %+v, want [{Tag:@s1 Phase:done Kind:regression}]", scenarios)
+	}
+	var judgeTask string
+	for _, task := range disp.tasks {
+		if strings.HasPrefix(task, "judge|") {
+			judgeTask = task
+			break
+		}
+	}
+	if !strings.Contains(judgeTask, "green-on-arrival regression") {
+		t.Fatalf("judge task = %q, want it to note the green-on-arrival regression", judgeTask)
+	}
+}
+
+// TestRunFeatureTDDNormalPassRecordsTDDKind proves a normal RED->GREEN
+// sandwich cycle records ScenarioState.Kind "tdd" (not "regression") and does
+// NOT add a green-on-arrival note to the judge dispatch task.
+func TestRunFeatureTDDNormalPassRecordsTDDKind(t *testing.T) {
+	disp := &scriptDispatcher{outs: []string{
+		contract("@s1"), // test-writer
+		contract("@s1"), // implementer
+		// judge:
+		"done\n```json\n{\"stage\":\"judge\",\"status\":\"pass\",\"verdict\":{\"result\":\"pass\",\"feedback\":\"ok\",\"score\":9}}\n```",
+	}}
+	snaps := []string{"S0", "S1", "S2"}
+	var si, runN int
+	o := Options{
+		Dispatcher: disp,
+		Runner:     func(context.Context) (bool, string, error) { runN++; return runN >= 2, "", nil },
+		Out:        &bytes.Buffer{},
+		Budget:     2,
+		Snapshot:   func(context.Context) (string, error) { s := snaps[si%len(snaps)]; si++; return s, nil },
+		Diff: func(_ context.Context, from, _ string) ([]string, error) {
+			if from == "S0" {
+				return []string{"src/test/java/com/acme/FooTest.java"}, nil
+			}
+			return []string{"src/main/java/com/acme/Foo.java"}, nil
+		},
+		LoadReports: func(time.Time) (testresult.Report, error) {
+			return testresult.Report{Cases: []testresult.Case{{Class: "com.acme.FooTest", Name: "x", Status: testresult.Fail}}}, nil
+		},
+	}
+	runner := StageRunner{D: disp}
+	status, scenarios, err := runFeatureTDD(context.Background(), o, runner, "feat", "", []string{"@s1"})
+	if err != nil || status != StatusPass {
+		t.Fatalf("status=%s err=%v, want pass/nil", status, err)
+	}
+	if len(scenarios) != 1 || scenarios[0].Tag != "@s1" || scenarios[0].Kind != "tdd" || scenarios[0].Phase != "done" {
+		t.Fatalf("scenarios = %+v, want [{Tag:@s1 Phase:done Kind:tdd}]", scenarios)
+	}
+	var judgeTask string
+	for _, task := range disp.tasks {
+		if strings.HasPrefix(task, "judge|") {
+			judgeTask = task
+			break
+		}
+	}
+	if strings.Contains(judgeTask, "green-on-arrival regression") {
+		t.Fatalf("judge task = %q, must not mention green-on-arrival regression for a normal RED->GREEN pass", judgeTask)
+	}
+}
+
+// TestRunFeatureTDDSandwichRunsMutation proves Task 14 re-enables the
+// mutation gate on the sandwich path: it must run against the mutation
+// target derived from the implementer's SandwichResult.SourceArtifact (there
+// is no craftsman Contract on this path), and a passing score lets the
+// feature proceed to StatusPass.
+func TestRunFeatureTDDSandwichRunsMutation(t *testing.T) {
+	disp := &scriptDispatcher{outs: []string{
+		contract("@s1"), // test-writer
+		contractWithSource("src/main/java/com/acme/Foo.java", "@s1"), // implementer
+		// judge:
+		"done\n```json\n{\"stage\":\"judge\",\"status\":\"pass\",\"verdict\":{\"result\":\"pass\",\"feedback\":\"ok\",\"score\":9}}\n```",
+	}}
+	snaps := []string{"S0", "S1", "S2"}
+	var si, runN, mutCalls int
+	var gotTarget MutationTarget
+	o := Options{
+		Dispatcher: disp,
+		Runner:     func(context.Context) (bool, string, error) { runN++; return runN >= 2, "", nil },
+		Out:        &bytes.Buffer{},
+		Budget:     2,
+		Snapshot:   func(context.Context) (string, error) { s := snaps[si%len(snaps)]; si++; return s, nil },
+		Diff: func(_ context.Context, from, _ string) ([]string, error) {
+			if from == "S0" {
+				return []string{"src/test/java/com/acme/FooTest.java"}, nil
+			}
+			return []string{"src/main/java/com/acme/Foo.java"}, nil
+		},
+		LoadReports: func(time.Time) (testresult.Report, error) {
+			return testresult.Report{Cases: []testresult.Case{{Class: "com.acme.FooTest", Name: "x", Status: testresult.Fail}}}, nil
+		},
+		Mutator: func(_ context.Context, mt MutationTarget) MutationOutcome {
+			mutCalls++
+			gotTarget = mt
+			return MutationOutcome{Score: 1}
+		},
+		MutationThreshold: 1,
+	}
+	runner := StageRunner{D: disp}
+	status, _, err := runFeatureTDD(context.Background(), o, runner, "feat", "", []string{"@s1"})
+	if err != nil || status != StatusPass {
+		t.Fatalf("status=%s err=%v, want pass/nil", status, err)
+	}
+	if mutCalls != 1 {
+		t.Fatalf("mutator called %d times, want 1", mutCalls)
+	}
+	if gotTarget.Language != "java" || gotTarget.Dir != "src/main/java/com/acme" {
+		t.Fatalf("mutation target = %+v, want {java src/main/java/com/acme}", gotTarget)
+	}
+}
+
+// TestRunFeatureTDDSandwichMutationBlocks proves a failing mutation score on
+// the sandwich path is a retry (feedback + continue), not terminal: the next
+// iteration re-enters via RefineSandwich — matching the non-sandwich retry
+// semantics — and once the budget is exhausted the feature ends blocked with
+// the mutation feedback surfaced in Out.
+func TestRunFeatureTDDSandwichMutationBlocks(t *testing.T) {
+	src := contractWithSource("src/main/java/com/acme/Foo.java", "@s1")
+	disp := &scriptDispatcher{outs: []string{
+		contract("@s1"), // test-writer (cycle 1, RED)
+		src,             // implementer (cycle 1, GREEN)
+		"done\n```json\n{\"stage\":\"judge\",\"status\":\"pass\",\"verdict\":{\"result\":\"pass\",\"feedback\":\"ok\",\"score\":9}}\n```",
+		src, // implementer (refine, cycle 2)
+		"done\n```json\n{\"stage\":\"judge\",\"status\":\"pass\",\"verdict\":{\"result\":\"pass\",\"feedback\":\"ok\",\"score\":9}}\n```",
+	}}
+	snaps := []string{"S0", "S1", "S2"}
+	var si, runN, mutCalls int
+	out := &bytes.Buffer{}
+	o := Options{
+		Dispatcher: disp,
+		Runner:     func(context.Context) (bool, string, error) { runN++; return runN >= 2, "", nil },
+		Out:        out,
+		Budget:     2,
+		Snapshot:   func(context.Context) (string, error) { s := snaps[si%len(snaps)]; si++; return s, nil },
+		Diff: func(_ context.Context, from, _ string) ([]string, error) {
+			if from == "S0" {
+				return []string{"src/test/java/com/acme/FooTest.java"}, nil
+			}
+			return []string{"src/main/java/com/acme/Foo.java"}, nil
+		},
+		LoadReports: func(time.Time) (testresult.Report, error) {
+			return testresult.Report{Cases: []testresult.Case{{Class: "com.acme.FooTest", Name: "x", Status: testresult.Fail}}}, nil
+		},
+		Mutator: func(context.Context, MutationTarget) MutationOutcome {
+			mutCalls++
+			return MutationOutcome{Score: 0.1, Survivors: []string{"Foo.java:5 if->true"}}
+		},
+		MutationThreshold: 0.7,
+	}
+	runner := StageRunner{D: disp}
+	status, _, err := runFeatureTDD(context.Background(), o, runner, "feat", "", []string{"@s1"})
+	if err != nil || status != StatusBlocked {
+		t.Fatalf("status=%s err=%v, want blocked/nil", status, err)
+	}
+	if mutCalls != 2 {
+		t.Fatalf("mutator called %d times, want 2 (once per judge-pass verdict, budget 2)", mutCalls)
+	}
+	if !strings.Contains(out.String(), "mutation score") {
+		t.Fatalf("Out = %q, want mutation feedback surfaced", out.String())
+	}
+}
+
+// TestRunFeatureTDDReviseThenRefine proves that a judge "revise" on the
+// sandwich path re-enters via RefineSandwich (implementer only) rather than
+// re-running the whole RunSandwich cycle (which would re-dispatch the
+// test-writer against tests that already exist). The dispatcher and the
+// snapshot fixtures are sized to exactly the REFINE-path call counts — a
+// wrongly re-run RED phase would exhaust them and panic, failing the test.
+func TestRunFeatureTDDReviseThenRefine(t *testing.T) {
+	disp := &scriptDispatcher{outs: []string{
+		contract("@s1"), // test-writer (pass 1, RED)
+		contract("@s1"), // implementer (pass 1, GREEN)
+		// judge: revise
+		"done\n```json\n{\"stage\":\"judge\",\"status\":\"pass\",\"verdict\":{\"result\":\"revise\",\"feedback\":\"tighten naming\"}}\n```",
+		contract("@s1"), // refine implementer (pass 2) — NOT a test-writer dispatch
+		// judge: pass
+		"done\n```json\n{\"stage\":\"judge\",\"status\":\"pass\",\"verdict\":{\"result\":\"pass\",\"feedback\":\"ok\",\"score\":9}}\n```",
+	}}
+	// Snapshots: pass 1 (RunSandwich) needs 4 — before, after-tests(RED loop),
+	// fresh GREEN baseline, after-impl. Pass 2 (RefineSandwich) needs 2 —
+	// before, after. Sized to exactly 6; a 7th call panics.
+	snaps := []string{"S0", "S1", "S1b", "S2", "S3", "S4"}
+	var si int
+	var runN int
+	o := Options{
+		Dispatcher: disp,
+		// First Tests() call (RED check) is red; every call after is green
+		// (pass 1's GREEN check, and pass 2's refine DeterministicJudge check).
+		Runner: func(context.Context) (bool, string, error) { runN++; return runN >= 2, "", nil },
+		Out:    &bytes.Buffer{},
+		Budget: 3,
+		Snapshot: func(context.Context) (string, error) {
+			s := snaps[si] // direct index: exhausting it proves an extra RED phase ran
+			si++
+			return s, nil
+		},
+		Diff: func(_ context.Context, from, _ string) ([]string, error) {
+			if from == "S0" {
+				return []string{"src/test/java/com/acme/FooTest.java"}, nil
+			}
+			return []string{"src/main/java/com/acme/Foo.java"}, nil
+		},
+		LoadReports: func(time.Time) (testresult.Report, error) {
+			return testresult.Report{Cases: []testresult.Case{{Class: "com.acme.FooTest", Name: "x", Status: testresult.Fail}}}, nil
+		},
+	}
+	runner := StageRunner{D: disp}
+	status, _, err := runFeatureTDD(context.Background(), o, runner, "feat", "", []string{"@s1"})
+	if err != nil || status != StatusPass {
+		t.Fatalf("status=%s err=%v, want pass/nil", status, err)
+	}
+	if len(disp.tasks) != 5 {
+		t.Fatalf("expected exactly 5 dispatches (test-writer, implementer, judge, refine-implementer, judge), got %d: %v", len(disp.tasks), disp.tasks)
+	}
+	if !strings.Contains(disp.tasks[3], "tighten naming") {
+		t.Errorf("dispatch 3 (refine) should carry the judge's revise feedback: %q", disp.tasks[3])
+	}
+	if !strings.Contains(disp.tasks[3], ImplementerPrompt) {
+		t.Errorf("dispatch 3 (refine) should be the implementer, not the test-writer: %q", disp.tasks[3][:min(60, len(disp.tasks[3]))])
+	}
+}
+
 func TestRunResumeSkipsDoneFeatures(t *testing.T) {
 	opts := baseOptions(t, &seqDispatcher{calls: map[string]int{}, byAgent: map[string][]string{
 		// Only the second feature should run; analyst/architect must NOT be called.
@@ -399,7 +737,7 @@ func TestRunResumeSkipsDoneFeatures(t *testing.T) {
 		"judge":     {jsonBlock(`{"stage":"judge","status":"pass","verdict":{"result":"pass"}}`)},
 	}}, &countingChatter{}, green, "resume\n")
 	// Seed a resumable state: f1 done, f2 pending.
-	st := BeginRun("t", "", []string{"f1", "f2"})
+	st := BeginRun("t", "", []FeaturePlan{{Name: "f1"}, {Name: "f2"}})
 	st.Mark("f1", "pass")
 	if err := SaveState(filepath.Join(opts.WorkDir, "state.json"), st); err != nil {
 		t.Fatal(err)

@@ -24,6 +24,10 @@ func tddOverlay(stage string) (string, bool) {
 		return tdd.JudgePrompt, true
 	case "scribe":
 		return tdd.ScribePrompt, true
+	case "test-writer":
+		return tdd.TestWriterPrompt, true
+	case "implementer":
+		return tdd.ImplementerPrompt, true
 	default:
 		return "", false
 	}
@@ -47,7 +51,7 @@ func composeStagePrompt(root, stage string) (string, error) {
 }
 
 var tddPromptCmd = &cobra.Command{
-	Use:   "prompt <analyst|architect|craftsman|judge|scribe>",
+	Use:   "prompt <analyst|architect|craftsman|judge|scribe|test-writer|implementer>",
 	Short: "Print the composed stage prompt (agent body + overlay) for general-purpose dispatch",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -74,7 +78,7 @@ var tddCheckCmd = &cobra.Command{
 }
 
 var tddOverlayCmd = &cobra.Command{
-	Use:   "overlay <analyst|architect|craftsman|judge|scribe>",
+	Use:   "overlay <analyst|architect|craftsman|judge|scribe|test-writer|implementer>",
 	Short: "Print the generic TDD contract overlay for a stage (single source for the plugin)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

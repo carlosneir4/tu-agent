@@ -34,3 +34,12 @@ func TestMergeIntoTdd(t *testing.T) {
 		t.Fatalf("archive not merged")
 	}
 }
+
+func TestMergeIntoTddStrict(t *testing.T) {
+	base := defaultConfig()
+	proj := Config{Tdd: TddConfig{Strict: true}}
+	mergeInto(&base, proj)
+	if !base.Tdd.Strict {
+		t.Fatal("Tdd.Strict dropped by mergeInto")
+	}
+}

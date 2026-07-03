@@ -19,6 +19,7 @@ import (
 	"github.com/tu/tu-agent/internal/subagent"
 	"github.com/tu/tu-agent/internal/tdd"
 	"github.com/tu/tu-agent/internal/telemetry"
+	"github.com/tu/tu-agent/internal/testresult"
 	"github.com/tu/tu-agent/internal/tool"
 )
 
@@ -43,15 +44,27 @@ func tddStages() []tddStage {
 		{"craftsman", "developer", tdd.CraftsmanPrompt, writeGrant},
 		{"judge", "pr-reviewer", tdd.JudgePrompt, writeGrant},
 		{"scribe", "scribe", tdd.ScribePrompt, defaultGrant},
+		// test-writer/implementer are not execution stages — Run/runFeatureTDD
+		// (internal/tdd/flow.go) dispatch the sandwich via the "craftsman" stage
+		// name only. These two exist solely so the plugin conductor can fetch
+		// their composed prompt via `tu-agent tdd prompt <name>`.
+		{"test-writer", "developer", tdd.TestWriterPrompt, writeGrant},
+		{"implementer", "developer", tdd.ImplementerPrompt, writeGrant},
 	}
 }
 
 // validateTddAgents returns the roles whose .claude/agents/<role>.md file is
 // missing. Empty means the flow can run; otherwise the caller tells the user to
-// run `tu-agent init`.
+// run `tu-agent init`. Roles are deduplicated: test-writer/implementer share the
+// "developer" role with craftsman, so a missing developer.md is reported once.
 func validateTddAgents(root string) []string {
 	var missing []string
+	seen := make(map[string]bool)
 	for _, st := range tddStages() {
+		if seen[st.role] {
+			continue
+		}
+		seen[st.role] = true
 		if _, err := os.Stat(filepath.Join(root, ".claude", "agents", st.role+".md")); err != nil {
 			missing = append(missing, st.role)
 		}
@@ -254,6 +267,14 @@ var tddRunCmd = &cobra.Command{
 			Mutator:           mutator,
 			MutationThreshold: threshold,
 			Archive:           archive,
+			Strict:            cfg.Tdd.Strict,
+			Snapshot:          func(ctx context.Context) (string, error) { return tdd.Snapshot(ctx, root) },
+			Diff: func(ctx context.Context, from, to string) ([]string, error) {
+				return tdd.DiffFiles(ctx, root, from, to)
+			},
+			LoadReports: func(since time.Time) (testresult.Report, error) {
+				return testresult.LoadReports(root, since)
+			},
 		})
 		if err != nil {
 			return fmt.Errorf("tdd run: %w", err)

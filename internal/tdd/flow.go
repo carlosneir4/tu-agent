@@ -7,6 +7,9 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/tu/tu-agent/internal/testresult"
 )
 
 // Options configures one flow run.
@@ -24,6 +27,15 @@ type Options struct {
 	Mutator           Mutator
 	MutationThreshold float64
 	Archive           bool
+	// Strict opts the sandwich into the per-scenario RED->GREEN loop instead of
+	// batching a sub-feature's scenarios. Default false.
+	Strict bool
+
+	// Sandwich deps enable the RED->GREEN enforcement path. All three must be
+	// non-nil to enable it; otherwise runFeatureTDD uses the single-dispatch path.
+	Snapshot    func(ctx context.Context) (string, error)
+	Diff        func(ctx context.Context, from, to string) ([]string, error)
+	LoadReports func(since time.Time) (testresult.Report, error)
 }
 
 // Result is the terminal outcome of a flow run.
@@ -98,11 +110,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			fmt.Fprintln(o.Out, "design budget exhausted — stopping.")
 			return Result{Status: StatusBlocked}, nil
 		}
-		names := make([]string, 0, len(feats))
-		for _, f := range feats {
-			names = append(names, f.Name)
-		}
-		st = BeginRun(o.Task, o.Branch, names)
+		st = BeginRun(o.Task, o.Branch, feats)
 		if err := SaveState(statePath, st); err != nil {
 			return Result{Status: StatusBlocked}, fmt.Errorf("tdd.Run: %w", err)
 		}
@@ -117,9 +125,16 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		if err != nil {
 			return Result{Status: StatusBlocked, Features: st.Features}, fmt.Errorf("tdd.Run: read feature %s: %w", name, err)
 		}
-		status, ferr := runFeatureTDD(ctx, o, runner, name, ScenarioTags(featSrc))
+		kind := ""
+		if fs, ok := st.Feature(name); ok {
+			kind = fs.Kind
+		}
+		status, scenarios, ferr := runFeatureTDD(ctx, o, runner, name, kind, ScenarioTags(featSrc))
 		if ferr != nil {
 			return Result{Status: StatusBlocked, Features: st.Features}, fmt.Errorf("tdd.Run: %w", ferr)
+		}
+		for _, sc := range scenarios {
+			st.SetScenario(name, sc)
 		}
 		st.Mark(name, status)
 		if err := SaveState(statePath, st); err != nil {
@@ -141,36 +156,118 @@ func Run(ctx context.Context, o Options) (Result, error) {
 }
 
 // runFeatureTDD runs the standard TDD loop for one feature, returning its
-// terminal status. A nil error with StatusBlocked means a logical failure
-// (budget/fail); a non-nil error means a stage dispatch could not run.
-func runFeatureTDD(ctx context.Context, o Options, runner StageRunner, feature string, featureTags []string) (string, error) {
+// terminal status and the per-scenario states observed along the way (nil on
+// the non-sandwich path or on an early error). A nil error with StatusBlocked
+// means a logical failure (budget/fail); a non-nil error means a stage
+// dispatch could not run.
+func runFeatureTDD(ctx context.Context, o Options, runner StageRunner, feature, kind string, featureTags []string) (string, []ScenarioState, error) {
 	feedback := ""
+	sandwichEnabled := o.Snapshot != nil && o.Diff != nil && o.LoadReports != nil
+	greenAchieved := false
+	isRefactor := kind == "refactor"
+	var craft Contract
+	var scenarios []ScenarioState
+	var regressions []string
+	var sourceArtifact Artifact
 	for budget := o.Budget; budget > 0; budget-- {
-		task := "Implement the approved feature by strict TDD. handoff: " + feature
-		if feedback != "" {
-			task += "\n\nJudge feedback to address:\n" + feedback
+		if sandwichEnabled {
+			deps := SandwichDeps{
+				Runner:      runner,
+				Tests:       o.Runner,
+				Snapshot:    o.Snapshot,
+				Diff:        o.Diff,
+				LoadReports: o.LoadReports,
+				Out:         o.Out,
+				Strict:      o.Strict,
+				Budget:      o.Budget,
+			}
+			// The craftsman self-reports covered scenarios via the implementer
+			// contract; here featureTags double as the covered set because the
+			// gate already proved each test red then green.
+			var sw SandwichResult
+			switch {
+			case isRefactor:
+				sw = RunRefactor(ctx, deps, feature, featureTags, feedback)
+			case !greenAchieved:
+				sw = RunSandwich(ctx, deps, feature, featureTags, featureTags)
+			default:
+				sw = RefineSandwich(ctx, deps, feature, featureTags, feedback)
+			}
+			if !sw.OK {
+				// Phases (and refine) already retried internally, so a failure
+				// here is terminal — re-running from scratch would either dead-
+				// end (tests already exist) or mask the rejection.
+				fmt.Fprintf(o.Out, "sandwich: %s\n", sw.Feedback)
+				return StatusBlocked, scenarios, nil
+			}
+			if scenarios == nil {
+				// Record per-scenario kind only the first time green is achieved —
+				// a later refine pass revises production, not scenario coverage.
+				if isRefactor {
+					scenarios = make([]ScenarioState, 0, len(featureTags))
+					for _, tag := range featureTags {
+						scenarios = append(scenarios, ScenarioState{Tag: tag, Phase: "done", Kind: "refactor"})
+					}
+				} else {
+					regressions = sw.Regressions
+					regSet := make(map[string]bool, len(regressions))
+					for _, t := range regressions {
+						regSet[t] = true
+					}
+					scenarios = make([]ScenarioState, 0, len(featureTags))
+					for _, tag := range featureTags {
+						scKind := "tdd"
+						if regSet[tag] {
+							scKind = "regression"
+						}
+						scenarios = append(scenarios, ScenarioState{Tag: tag, Phase: "done", Kind: scKind})
+					}
+				}
+			}
+			greenAchieved = true
+			if sw.SourceArtifact.Path != "" {
+				sourceArtifact = sw.SourceArtifact
+			}
+		} else {
+			task := "Implement the approved feature by strict TDD. handoff: " + feature
+			if feedback != "" {
+				task += "\n\nJudge feedback to address:\n" + feedback
+			}
+			var err error
+			craft, err = runner.Run(ctx, "craftsman", task)
+			if err != nil {
+				return StatusBlocked, scenarios, err
+			}
+			if det := DeterministicJudge(ctx, o.Runner, featureTags, craft.Scenarios); !det.OK {
+				feedback = det.Feedback
+				fmt.Fprintf(o.Out, "deterministic gate: %s (budget %d)\n", det.Feedback, budget-1)
+				continue
+			}
 		}
-		craft, err := runner.Run(ctx, "craftsman", task)
+		judgeTask := "Judge design and discipline for feature " + feature + ". The deterministic gate already passed."
+		if isRefactor {
+			judgeTask += "\n\nNote: this is a refactor (no new behavior or tests) — evaluate structure/design only; do not credit it as a TDD victory."
+		} else if len(regressions) > 0 {
+			judgeTask += "\n\nNote: these scenarios were green-on-arrival regression coverage, not RED→GREEN — do not credit them as TDD victories: " + strings.Join(regressions, ", ")
+		}
+		judge, err := runner.Run(ctx, "judge", judgeTask)
 		if err != nil {
-			return StatusBlocked, err
-		}
-		if det := DeterministicJudge(ctx, o.Runner, featureTags, craft.Scenarios); !det.OK {
-			feedback = det.Feedback
-			fmt.Fprintf(o.Out, "deterministic gate: %s (budget %d)\n", det.Feedback, budget-1)
-			continue
-		}
-		judge, err := runner.Run(ctx, "judge",
-			"Judge design and discipline for feature "+feature+". The deterministic gate already passed.")
-		if err != nil {
-			return StatusBlocked, err
+			return StatusBlocked, scenarios, err
 		}
 		if judge.Verdict == nil {
-			return StatusBlocked, fmt.Errorf("judge returned no verdict for %s", feature)
+			return StatusBlocked, scenarios, fmt.Errorf("judge returned no verdict for %s", feature)
 		}
 		switch judge.Verdict.Result {
 		case "pass":
-			if o.Mutator != nil {
-				if mt, ok := MutationTargetFromContract(craft); ok {
+			if o.Mutator != nil && !isRefactor {
+				var mt MutationTarget
+				var ok bool
+				if sandwichEnabled {
+					mt, ok = MutationTargetFromArtifact(sourceArtifact)
+				} else {
+					mt, ok = MutationTargetFromContract(craft)
+				}
+				if ok {
 					out := o.Mutator(ctx, mt)
 					if out.Skipped {
 						fmt.Fprintf(o.Out, "mutation gate: skipped — %s\n", out.Note)
@@ -188,16 +285,16 @@ func runFeatureTDD(ctx context.Context, o Options, runner StageRunner, feature s
 				}
 			}
 			fmt.Fprintf(o.Out, "feature %s done — judge approved.\n", feature)
-			return StatusPass, nil
+			return StatusPass, scenarios, nil
 		case "revise":
 			feedback = judge.Verdict.Feedback
 			fmt.Fprintf(o.Out, "judge: revise — %s (budget %d)\n", feedback, budget-1)
 		default: // "fail"
-			return StatusBlocked, nil
+			return StatusBlocked, scenarios, nil
 		}
 	}
 	fmt.Fprintf(o.Out, "retry budget exhausted — feature %s blocked.\n", feature)
-	return StatusBlocked, nil
+	return StatusBlocked, scenarios, nil
 }
 
 // humanGate shows the feature list and reads one decision line: "approved" to
