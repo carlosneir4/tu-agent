@@ -37,13 +37,23 @@ func MutationTargetFromContract(c Contract) (MutationTarget, bool) {
 		if a.Kind != "source" {
 			continue
 		}
-		lang, ok := languageFromExt(filepath.Ext(a.Path))
-		if !ok {
-			return MutationTarget{}, false
-		}
-		return MutationTarget{Language: lang, Dir: filepath.Dir(a.Path)}, true
+		return MutationTargetFromArtifact(a)
 	}
 	return MutationTarget{}, false
+}
+
+// MutationTargetFromArtifact resolves a mutation target from a single source
+// artifact: language from the extension, directory from the path. Returns false
+// for a non-source artifact, an empty path, or an unknown extension.
+func MutationTargetFromArtifact(a Artifact) (MutationTarget, bool) {
+	if a.Kind != "source" || a.Path == "" {
+		return MutationTarget{}, false
+	}
+	lang, ok := languageFromExt(filepath.Ext(a.Path))
+	if !ok {
+		return MutationTarget{}, false
+	}
+	return MutationTarget{Language: lang, Dir: filepath.Dir(a.Path)}, true
 }
 
 func languageFromExt(ext string) (string, bool) {

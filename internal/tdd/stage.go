@@ -72,7 +72,9 @@ affected symbols. CLASSIFY the task complexity from that blast-radius and set th
   DECOMPOSE into several small, independently-testable sub-features: write one .feature per
   sub-feature under .tu-agent/tdd/features/<slug>.feature (unique slugs, each with its own @s
   scenarios in dependency order), then status "pass", complexity "complex", and return
-  "features" with one entry per sub-feature.
+  "features" with one entry per sub-feature. A sub-feature that is a pure refactor (no new
+  behavior/tests) may be emitted with "kind":"refactor" in its features entry; it still gets a
+  .feature file (which may have no @s scenarios).
 Keep slugs unique.` + contractInstruction
 
 // CraftsmanPrompt is the TDD-stage overlay for strict TDD with a test-gen safety net.
@@ -107,3 +109,34 @@ gates passed. Read .tu-agent/tdd/spec.md and the .tu-agent/tdd/progress/ notes, 
 mem_save once with topic "decision/<feature-slug>" and content capturing WHAT changed and WHY
 (decision, rationale, scenarios covered, files touched). Be concise and durable. Do not edit
 code.` + contractInstruction
+
+// RefactorPrompt is the overlay for a refactor sub-feature: no new tests, no
+// behavior change; improve structure while keeping the whole suite green. Unlike
+// the implementer, it MAY touch test files (e.g. renames) as long as every test
+// still passes.
+const RefactorPrompt = `tu-agent TDD task — refactor stage. Ignore any default output format from
+your role definition; produce exactly the contract below. This is a REFACTOR: do not add new
+behavior and do not write new tests. Improve the structure/design of the code for the named
+feature while keeping the ENTIRE existing test suite green. You may adjust tests only as needed
+to follow a rename/signature change — never to weaken or delete coverage. Report the primary
+source file as an artifact {"kind":"source","path":"<repo-relative>"}.` + contractInstruction
+
+// TestWriterPrompt is the RED-phase overlay: write only failing tests, no
+// production. The orchestrator verifies the tests are red before dispatching the
+// implementer.
+const TestWriterPrompt = `tu-agent TDD task — test-writer (RED phase). Ignore any default output
+format from your role definition; produce exactly the contract below. Write ONLY the failing
+tests for the listed @s scenarios. NO production code — tests only. Each test's Then must assert
+something measurable. Do NOT write, edit, or create any production/source code. The orchestrator
+will run the suite and CONFIRM these tests are red before any implementation; if you add
+production code the stage is rejected. In the contract, "scenarios" MUST list every @s tag you
+wrote a test for, and report each new test file as an artifact {"kind":"test","path":"<repo-relative>"}.` + contractInstruction
+
+// ImplementerPrompt is the GREEN-phase overlay: minimal production to pass the
+// already-red tests; never touch test files.
+const ImplementerPrompt = `tu-agent TDD task — implementer (GREEN phase). Ignore any default
+output format from your role definition; produce exactly the contract below. The tests for the
+listed @s scenarios already exist and are RED. Write the MINIMAL production code to make them
+pass. do NOT modify, add, or delete any test file — if you change a test the stage is rejected.
+Report the primary source file as an artifact {"kind":"source","path":"<repo-relative>"} so the
+mutation gate can target it. In the contract, "scenarios" MUST list every @s tag now passing.` + contractInstruction

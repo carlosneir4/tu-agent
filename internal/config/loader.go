@@ -142,4 +142,7 @@ func mergeInto(dst *Config, src Config) {
 	if src.Tdd.Archive != nil {
 		dst.Tdd.Archive = src.Tdd.Archive
 	}
+	if src.Tdd.Strict {
+		dst.Tdd.Strict = true
+	}
 }

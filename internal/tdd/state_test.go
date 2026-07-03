@@ -6,7 +6,7 @@ import (
 )
 
 func TestBeginRunAllPending(t *testing.T) {
-	st := BeginRun("do things", "feat/x", []string{"a", "b"})
+	st := BeginRun("do things", "feat/x", []FeaturePlan{{Name: "a"}, {Name: "b"}})
 	if st.Version != StateVersion || st.Task != "do things" || st.Branch != "feat/x" {
 		t.Fatalf("meta wrong: %+v", st)
 	}
@@ -16,7 +16,7 @@ func TestBeginRunAllPending(t *testing.T) {
 }
 
 func TestNextPendingAndMark(t *testing.T) {
-	st := BeginRun("t", "", []string{"a", "b"})
+	st := BeginRun("t", "", []FeaturePlan{{Name: "a"}, {Name: "b"}})
 	n, ok := st.NextPending()
 	if !ok || n != "a" {
 		t.Fatalf("first pending = %q,%v", n, ok)
@@ -33,7 +33,7 @@ func TestNextPendingAndMark(t *testing.T) {
 }
 
 func TestResumableAndSummary(t *testing.T) {
-	st := BeginRun("t", "", []string{"a", "b"})
+	st := BeginRun("t", "", []FeaturePlan{{Name: "a"}, {Name: "b"}})
 	st.Mark("a", "pass")
 	if !st.Resumable() {
 		t.Fatalf("one pending should be resumable")
@@ -53,7 +53,7 @@ func TestResumableAndSummary(t *testing.T) {
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "state.json")
-	want := BeginRun("count", "feat/count", []string{"a"})
+	want := BeginRun("count", "feat/count", []FeaturePlan{{Name: "a"}})
 	want.Mark("a", "pass")
 	if err := SaveState(p, want); err != nil {
 		t.Fatalf("save: %v", err)
@@ -74,5 +74,59 @@ func TestLoadStateMissing(t *testing.T) {
 	}
 	if len(got.Features) != 0 || got.Resumable() {
 		t.Fatalf("missing file should be zero State, got %+v", got)
+	}
+}
+
+func TestScenarioStateRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	st := BeginRun("task", "branch", []FeaturePlan{{Name: "feat-a"}})
+	st.SetScenario("feat-a", ScenarioState{Tag: "@s1", Phase: "green", Kind: "tdd"})
+	st.SetScenario("feat-a", ScenarioState{Tag: "@s1", Phase: "done", Kind: "tdd"}) // upsert
+	st.SetScenario("feat-a", ScenarioState{Tag: "@s2", Phase: "red", Kind: "regression"})
+	if err := SaveState(path, st); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fs *FeatureState
+	for i := range got.Features {
+		if got.Features[i].Name == "feat-a" {
+			fs = &got.Features[i]
+		}
+	}
+	if fs == nil || len(fs.Scenarios) != 2 {
+		t.Fatalf("scenarios = %+v, want 2", fs)
+	}
+	if fs.Scenarios[0].Tag != "@s1" || fs.Scenarios[0].Phase != "done" {
+		t.Fatalf("s1 = %+v, want @s1/done", fs.Scenarios[0])
+	}
+}
+
+// TestBeginRunPersistsKind proves FeaturePlan.Kind survives BeginRun and a
+// save/load round trip, and that Feature() looks it up by name.
+func TestBeginRunPersistsKind(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	st := BeginRun("t", "b", []FeaturePlan{{Name: "a", Kind: "refactor"}, {Name: "b"}})
+	if err := SaveState(path, st); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fa, ok := got.Feature("a")
+	if !ok || fa.Kind != "refactor" {
+		t.Fatalf("Feature(a) = %+v, ok=%v, want Kind=refactor", fa, ok)
+	}
+	fb, ok := got.Feature("b")
+	if !ok || fb.Kind != "" {
+		t.Fatalf("Feature(b) = %+v, ok=%v, want Kind=\"\"", fb, ok)
+	}
+	if _, ok := got.Feature("nope"); ok {
+		t.Fatalf("Feature(nope) should not be found")
 	}
 }
