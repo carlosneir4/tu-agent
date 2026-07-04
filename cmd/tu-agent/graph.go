@@ -345,6 +345,7 @@ var (
 	graphFlowJSON          bool
 	graphFlowMermaid       bool
 	graphQuiet             bool
+	graphPostBash          bool
 
 	graphBridgesTop     int
 	graphBridgesSamples int
@@ -509,6 +510,9 @@ var graphUpdateCmd = &cobra.Command{
 	Short: "Re-parse only changed files (alias for build)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if graphPostBash {
+			return postBashDecision(cmd.InOrStdin(), func() error { return runGraphBuildQuiet("", true) })
+		}
 		return runGraphBuildQuiet("", graphQuiet)
 	},
 }
@@ -593,6 +597,8 @@ func init() {
 	graphFlowCmd.Flags().BoolVar(&graphFlowMermaid, "mermaid", false, "emit a Mermaid flowchart diagram")
 	graphUpdateCmd.Flags().BoolVar(&graphQuiet, "quiet", false,
 		"suppress success output and skip .mcp.json rewrite; no-op if no graph exists (for hooks)")
+	graphUpdateCmd.Flags().BoolVar(&graphPostBash, "post-bash", false,
+		"read a PostToolUse payload on stdin; reconcile only if the command mutated the tree (implies --quiet)")
 	graphBridgesCmd.Flags().IntVar(&graphBridgesTop, "top", 20, "number of chokepoints to list")
 	graphBridgesCmd.Flags().IntVar(&graphBridgesSamples, "samples", 100, "source nodes sampled for betweenness")
 	graphBridgesCmd.Flags().BoolVar(&graphBridgesJSON, "json", false, "emit JSON")
