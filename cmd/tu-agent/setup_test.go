@@ -98,9 +98,11 @@ func TestRunSetupHooks_FreshRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("settings.json not written: %v", err)
 	}
-	for _, want := range []string{hookMatcher, hookCommand} {
-		if !strings.Contains(string(data), want) {
-			t.Errorf("settings.json missing %q:\n%s", want, data)
+	for _, h := range postToolUseHooks {
+		for _, want := range []string{h.matcher, h.command} {
+			if !strings.Contains(string(data), want) {
+				t.Errorf("settings.json missing %q:\n%s", want, data)
+			}
 		}
 	}
 	if !strings.Contains(out.String(), "Installed") {

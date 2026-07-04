@@ -37,7 +37,9 @@ func (c pluginHooksConfig) eventCommands(event string) string {
 	return strings.Join(cmds, "\n")
 }
 
-func TestPluginHooksConfig(t *testing.T) {
+// loadPluginHooks reads and parses plugin/hooks/hooks.json.
+func loadPluginHooks(t *testing.T) pluginHooksConfig {
+	t.Helper()
 	path := filepath.Join("..", "..", "plugin", "hooks", "hooks.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -47,6 +49,11 @@ func TestPluginHooksConfig(t *testing.T) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("parsing %s: %v", path, err)
 	}
+	return cfg
+}
+
+func TestPluginHooksConfig(t *testing.T) {
+	cfg := loadPluginHooks(t)
 
 	// Each plugin hook invokes the binary through the shim.
 	const prefix = "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent"
@@ -74,5 +81,25 @@ func TestPluginHooksConfig(t *testing.T) {
 				t.Errorf("%s: missing %q; got %q", tc.event, w, got)
 			}
 		}
+	}
+}
+
+// TestPluginHasPostBashHook asserts the plugin installs the Bash reconcile
+// hook (Task 2), mirroring the CLI setup path's postToolUseHooks list.
+func TestPluginHasPostBashHook(t *testing.T) {
+	cfg := loadPluginHooks(t)
+	found := false
+	for _, e := range cfg.Hooks["PostToolUse"] {
+		if e.Matcher != "Bash" {
+			continue
+		}
+		for _, h := range e.Hooks {
+			if strings.Contains(h.Command, "graph update --post-bash") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("plugin PostToolUse missing a Bash --post-bash hook")
 	}
 }

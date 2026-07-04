@@ -18,8 +18,31 @@ func TestMergePostToolUseHook_FreshFile(t *testing.T) {
 		t.Fatalf("output is not valid JSON:\n%s", out)
 	}
 	s := string(out)
-	if !strings.Contains(s, hookMatcher) || !strings.Contains(s, hookCommand) {
-		t.Errorf("output missing matcher/command:\n%s", s)
+	for _, want := range []string{`"matcher": "Write|Edit"`, "tu-agent graph update --quiet"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("output missing %q:\n%s", want, s)
+		}
+	}
+}
+
+func TestMergeInstallsBothHooks(t *testing.T) {
+	out, changed, err := mergePostToolUseHook(nil)
+	if err != nil || !changed {
+		t.Fatalf("first merge: changed=%v err=%v, want true,nil", changed, err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		`"matcher": "Write|Edit"`, "tu-agent graph update --quiet",
+		`"matcher": "Bash"`, "tu-agent graph update --post-bash",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("merged settings missing %q\n%s", want, s)
+		}
+	}
+	// Idempotent: a second merge over the produced output is a no-op.
+	_, changed2, err := mergePostToolUseHook(out)
+	if err != nil || changed2 {
+		t.Fatalf("second merge: changed=%v err=%v, want false,nil", changed2, err)
 	}
 }
 
@@ -37,10 +60,14 @@ func TestMergePostToolUseHook_NonClobber(t *testing.T) {
 		t.Fatalf("merge: %v", err)
 	}
 	if !changed {
-		t.Fatal("adding our hook to a file with a different hook should be a change")
+		t.Fatal("adding our hooks to a file with a different Bash hook should be a change")
 	}
 	s := string(out)
-	for _, want := range []string{`"model"`, "qwen", "echo other", "Bash", hookMatcher, hookCommand} {
+	for _, want := range []string{
+		`"model"`, "qwen", "echo other", "Bash",
+		`"matcher": "Write|Edit"`, "tu-agent graph update --quiet",
+		"tu-agent graph update --post-bash",
+	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("non-clobber output missing %q:\n%s", want, s)
 		}

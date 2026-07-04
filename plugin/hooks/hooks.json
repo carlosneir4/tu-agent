@@ -9,6 +9,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --quiet"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --post-bash"
+          }
+        ]
       }
     ],
     "SessionStart": [
