@@ -3,6 +3,7 @@ package tdd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,6 +53,20 @@ type countingChatter struct{ calls int }
 func (c *countingChatter) Chat(_ context.Context, _ string) (string, error) {
 	c.calls++
 	return jsonBlock(`{"stage":"analyst","status":"pass"}`), nil
+}
+
+// errStopAnalyst is the sentinel errChatter returns to make Run stop right
+// after dispatching the analyst's first turn — enough to inspect the task
+// it was given without a live LLM or a full contract exchange.
+var errStopAnalyst = errors.New("errChatter: stop after analyst turn")
+
+// errChatter records the input (the analyst task) it received, then errors so
+// RunAnalyst — and therefore Run — returns immediately.
+type errChatter struct{ got string }
+
+func (e *errChatter) Chat(_ context.Context, input string) (string, error) {
+	e.got = input
+	return "", errStopAnalyst
 }
 
 func TestRunHappyPath(t *testing.T) {
@@ -755,5 +770,33 @@ func TestRunResumeSkipsDoneFeatures(t *testing.T) {
 	}
 	if dd.calls["craftsman"] != 1 {
 		t.Fatalf("resume should run only the one pending feature, craftsman=%d", dd.calls["craftsman"])
+	}
+}
+
+// TestRunInjectsDesignSeed proves Options.DesignDoc, when set, is folded into
+// the analyst task as a seed-from-design instruction, and left untouched
+// (task passed through as-is) when DesignDoc is empty. The errChatter fake
+// errors out on the analyst's first turn so Run returns immediately after
+// building the task — no design/craftsman/judge stages need scripting.
+func TestRunInjectsDesignSeed(t *testing.T) {
+	analyst := &errChatter{}
+	o := Options{
+		Analyst:   analyst,
+		In:        strings.NewReader(""),
+		Out:       &strings.Builder{},
+		Task:      "build the thing",
+		DesignDoc: "docs/superpowers/plans/x.md",
+		WorkDir:   t.TempDir(),
+	}
+	_, _ = Run(context.Background(), o)
+	if !strings.Contains(analyst.got, "docs/superpowers/plans/x.md") || !strings.Contains(analyst.got, "seed") {
+		t.Fatalf("analyst task missing design seed: %q", analyst.got)
+	}
+
+	analyst.got = ""
+	o.DesignDoc = ""
+	_, _ = Run(context.Background(), o)
+	if strings.Contains(analyst.got, "seed the spec") {
+		t.Fatalf("unexpected seed instruction with no DesignDoc: %q", analyst.got)
 	}
 }

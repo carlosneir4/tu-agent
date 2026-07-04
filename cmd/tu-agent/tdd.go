@@ -24,6 +24,7 @@ import (
 )
 
 var tddProviderOverride string
+var tddDesign string
 
 // tddStage pairs a flow stage with the agent-file role that supplies its
 // project knowledge, the generic TDD overlay, and the stage's tool grant.
@@ -222,6 +223,9 @@ var tddRunCmd = &cobra.Command{
 
 		workDir := filepath.Join(root, ".tu-agent", "tdd")
 		task := "Help me build the following. Interrogate me until the spec is complete.\n\n" + strings.Join(args, " ")
+		if tddDesign != "" {
+			task = "Help me build the following.\n\n" + strings.Join(args, " ")
+		}
 
 		runner, err := resolveTestRunner(cfg, root)
 		if err != nil {
@@ -268,6 +272,7 @@ var tddRunCmd = &cobra.Command{
 			MutationThreshold: threshold,
 			Archive:           archive,
 			Strict:            cfg.Tdd.Strict,
+			DesignDoc:         tddDesign,
 			Snapshot:          func(ctx context.Context) (string, error) { return tdd.Snapshot(ctx, root) },
 			Diff: func(ctx context.Context, from, to string) ([]string, error) {
 				return tdd.DiffFiles(ctx, root, from, to)
@@ -290,6 +295,8 @@ var tddRunCmd = &cobra.Command{
 func init() {
 	tddRunCmd.Flags().StringVar(&tddProviderOverride, "provider", "",
 		"override provider for this run (claude|local); empty uses routing config")
+	tddRunCmd.Flags().StringVar(&tddDesign, "design", "",
+		"path to a design doc or superpowers plan the analyst seeds the spec from (confirm-by-exception)")
 	tddCmd.AddCommand(tddRunCmd)
 	rootCmd.AddCommand(tddCmd)
 }

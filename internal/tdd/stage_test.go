@@ -97,6 +97,14 @@ func TestOverlaysAreGenericContractOnly(t *testing.T) {
 	}
 }
 
+func TestAnalystPromptSeedsFromDesign(t *testing.T) {
+	for _, want := range []string{"design doc", "confirm by exception"} {
+		if !strings.Contains(AnalystPrompt, want) {
+			t.Errorf("AnalystPrompt missing %q", want)
+		}
+	}
+}
+
 func TestSandwichOverlays(t *testing.T) {
 	if !strings.Contains(TestWriterPrompt, "NO production") {
 		t.Error("TestWriterPrompt must forbid production code")
@@ -107,6 +115,14 @@ func TestSandwichOverlays(t *testing.T) {
 	for _, p := range []string{TestWriterPrompt, ImplementerPrompt} {
 		if !strings.Contains(p, "```json") {
 			t.Error("overlay missing contract instruction")
+		}
+	}
+}
+
+func TestArchitectPromptConsultsCoverage(t *testing.T) {
+	for _, want := range []string{"test gaps", "already covered"} {
+		if !strings.Contains(ArchitectPrompt, want) {
+			t.Errorf("ArchitectPrompt missing %q", want)
 		}
 	}
 }

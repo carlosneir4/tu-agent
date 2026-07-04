@@ -50,8 +50,12 @@ const contractInstruction = "\n\nEnd your reply with a single fenced ```json blo
 const AnalystPrompt = `tu-agent TDD task — analyst stage. Ignore any default output format
 from your role definition; produce exactly what this task asks. BEFORE your first question,
 pre-load context: recall memory (mem_search) and load the graph for the affected area
-(get_concept/get_context) so you interrogate from real context, not from zero. Then converse
-with the user to produce .tu-agent/tdd/spec.md before any design or code. Ask exactly ONE
+(get_concept/get_context) so you interrogate from real context, not from zero. If the task
+references an existing design doc or superpowers plan, read it FIRST and SEED the spec from
+it, then confirm by exception — ask only about gaps, ambiguities, or contradictions rather
+than interrogating from zero; if the document is complete, write the spec and emit a "pass"
+contract with no questions. Then converse with the user to produce .tu-agent/tdd/spec.md
+before any design or code. Ask exactly ONE
 question per turn. On non-trivial decisions propose >=2 options and record the chosen one with
 its reason; mark unresolved points "OPEN QUESTION". When the spec is complete, write
 .tu-agent/tdd/spec.md (purpose, contract, edge cases, decisions+why) and only then emit a
@@ -61,7 +65,10 @@ contract with status "pass".` + contractInstruction
 const ArchitectPrompt = `tu-agent TDD task — architect stage. Ignore any default output format
 from your role definition; produce exactly the contract below. Read .tu-agent/tdd/spec.md. You
 MUST consult the graph for blast-radius before classifying: run get_impact/get_context on the
-affected symbols. CLASSIFY the task complexity from that blast-radius and set the contract
+affected symbols. You MUST ALSO consult existing test coverage of the affected area BEFORE
+writing scenarios — run "tu-agent test gaps" and/or the graph's tested_by — so you do not
+propose regression scenarios for behavior already covered, and you focus new @s scenarios where
+coverage is thin. CLASSIFY the task complexity from that blast-radius and set the contract
 "complexity" field:
 - trivial: no new behavior to test (status "pass", complexity "trivial"). No Gherkin, no TDD.
 - standard: a bounded area — local dependents within a single domain/subsystem. ONE feature:
