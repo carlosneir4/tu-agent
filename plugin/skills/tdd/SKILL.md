@@ -67,6 +67,14 @@ contract (inputs/outputs/behavior), edge cases, and the reasons behind decisions
 If the user gave no feature description when invoking the skill, open by asking
 what they want to build. Keep going until the spec is complete; then write it to
 `.tu-agent/tdd/spec.md`. Do not invent answers — the user is the source of truth.
+
+**Design doc seeding:** if the user provides a design doc or superpowers plan file,
+seed the spec from it instead of interrogating from zero (mirroring the CLI `--design <path>` flag) — fetch the analyst prompt
+and prepend the file path and instruction: "The user provided a design document at
+<path>. Read it, seed the spec from it, then confirm by exception — ask only about
+gaps, ambiguities, or contradictions." The analyst reads the file and writes the spec
+directly if the document is complete, or asks clarifying questions if gaps exist.
+
 Only once the spec is complete, continue to Step 2.
 
 ## Step 2: Architect
@@ -76,6 +84,10 @@ Run the architect stage (dispatch `general-purpose` with `"$TU" tdd prompt archi
 scenarios, and returns a contract with a `features` array of
 `{name, scenarios}` objects (one entry for standard complexity, several for
 complex), plus a `complexity` of `trivial`, `standard`, or `complex`.
+
+The architect consults existing test coverage (via `tu-agent test gaps` / graph
+`tested_by`) before writing scenarios so it avoids proposing regression scenarios
+for behavior already covered.
 
 (The binary also accepts the legacy `handoff`+`scenarios` contract form for
 backward compatibility, normalized into a single feature.)

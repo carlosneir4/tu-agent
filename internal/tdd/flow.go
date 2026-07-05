@@ -31,6 +31,10 @@ type Options struct {
 	// batching a sub-feature's scenarios. Default false.
 	Strict bool
 
+	// DesignDoc, when set, is a design doc or superpowers plan the analyst seeds
+	// the spec from (confirm-by-exception) instead of interrogating from zero.
+	DesignDoc string
+
 	// Sandwich deps enable the RED->GREEN enforcement path. All three must be
 	// non-nil to enable it; otherwise runFeatureTDD uses the single-dispatch path.
 	Snapshot    func(ctx context.Context) (string, error)
@@ -59,7 +63,12 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	resume := st.Resumable() && resumeApproves(reader, o.Out, st)
 
 	if !resume {
-		if _, err := RunAnalyst(ctx, o.Analyst, o.Task, reader, o.Out); err != nil {
+		analystTask := o.Task
+		if o.DesignDoc != "" {
+			analystTask = "A design doc or superpowers plan exists at " + o.DesignDoc +
+				" — read it and seed the spec from it, confirming by exception (ask only about gaps, ambiguities, or contradictions).\n\n" + o.Task
+		}
+		if _, err := RunAnalyst(ctx, o.Analyst, analystTask, reader, o.Out); err != nil {
 			return Result{Status: StatusBlocked}, fmt.Errorf("tdd.Run: %w", err)
 		}
 		var feats []FeaturePlan
