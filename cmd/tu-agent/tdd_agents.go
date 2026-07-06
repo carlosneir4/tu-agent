@@ -37,25 +37,43 @@ func tddOverlay(stage string) (string, bool) {
 // the project's agent body (role knowledge) joined with the generic TDD overlay.
 // It is exactly what the CLI conductor composes in tddStageDefs, exposed so the
 // plugin can dispatch general-purpose without depending on agent registration.
-func composeStagePrompt(root, stage string) (string, error) {
+func composeStagePrompt(root, stage, relBase string) (string, error) {
 	for _, st := range tddStages() {
 		if st.stage == stage {
 			body, err := loadAgentBody(root, st.role)
 			if err != nil {
 				return "", fmt.Errorf("tdd prompt: %w — run `tu-agent init`", err)
 			}
-			return body + "\n\n" + st.overlay, nil
+			return body + "\n\n" + tdd.WithBaseDir(st.overlay, relBase), nil
 		}
 	}
 	return "", fmt.Errorf("tdd prompt: unknown stage %q", stage)
 }
 
+var (
+	tddPromptTicket  string
+	tddOverlayTicket string
+	tddPromptBase    string
+	tddOverlayBase   string
+)
+
+// promptRelBase picks the per-feature base dir for a stage prompt: an explicit
+// --base wins (used by the plugin, which resolves $BASE once); otherwise it is
+// derived from the ticket + feature description.
+func promptRelBase(base, ticket string, descArgs []string) string {
+	if base != "" {
+		return base
+	}
+	return tddRelBase(ticket, slugify(strings.Join(descArgs, " ")))
+}
+
 var tddPromptCmd = &cobra.Command{
-	Use:   "prompt <analyst|architect|craftsman|judge|scribe|test-writer|implementer>",
+	Use:   "prompt <stage> [feature description...]",
 	Short: "Print the composed stage prompt (agent body + overlay) for general-purpose dispatch",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		out, err := composeStagePrompt(repoRoot(), args[0])
+		relBase := promptRelBase(tddPromptBase, tddPromptTicket, args[1:])
+		out, err := composeStagePrompt(repoRoot(), args[0], relBase)
 		if err != nil {
 			return err
 		}
@@ -78,15 +96,16 @@ var tddCheckCmd = &cobra.Command{
 }
 
 var tddOverlayCmd = &cobra.Command{
-	Use:   "overlay <analyst|architect|craftsman|judge|scribe|test-writer|implementer>",
+	Use:   "overlay <stage> [feature description...]",
 	Short: "Print the generic TDD contract overlay for a stage (single source for the plugin)",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		o, ok := tddOverlay(args[0])
 		if !ok {
 			return fmt.Errorf("tdd overlay: unknown stage %q", args[0])
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), o)
+		relBase := promptRelBase(tddOverlayBase, tddOverlayTicket, args[1:])
+		fmt.Fprintln(cmd.OutOrStdout(), tdd.WithBaseDir(o, relBase))
 		return nil
 	},
 }
@@ -95,4 +114,8 @@ func init() {
 	tddCmd.AddCommand(tddCheckCmd)
 	tddCmd.AddCommand(tddOverlayCmd)
 	tddCmd.AddCommand(tddPromptCmd)
+	tddPromptCmd.Flags().StringVar(&tddPromptTicket, "ticket", "", "ticket id for the per-feature artifact dir")
+	tddOverlayCmd.Flags().StringVar(&tddOverlayTicket, "ticket", "", "ticket id for the per-feature artifact dir")
+	tddPromptCmd.Flags().StringVar(&tddPromptBase, "base", "", "explicit per-feature base dir (overrides --ticket/desc)")
+	tddOverlayCmd.Flags().StringVar(&tddOverlayBase, "base", "", "explicit per-feature base dir (overrides --ticket/desc)")
 }

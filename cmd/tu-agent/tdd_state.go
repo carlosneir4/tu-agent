@@ -10,24 +10,44 @@ import (
 	"github.com/tu/tu-agent/internal/tdd"
 )
 
-func tddStatePath() string {
-	return filepath.Join(repoRoot(), ".tu-agent", "tdd", "state.json")
+var tddStateTicket string
+
+// tddStatePath resolves the state.json for the addressed run: by ticket, else
+// the newest run, else a legacy flat run. Falls back to the flat path so a
+// fresh `state begin` has somewhere to write.
+func tddStatePath(root, ticket string) string {
+	if base, ok := resolveTddBase(root, ticket); ok {
+		return filepath.Join(base, "state.json")
+	}
+	return filepath.Join(root, ".tu-agent", "tdd", "state.json")
+}
+
+// tddStateBaseRel is the repo-relative dir that holds the resolved state.json.
+func tddStateBaseRel(root, statePath string) string {
+	rel, err := filepath.Rel(root, filepath.Dir(statePath))
+	if err != nil {
+		return ""
+	}
+	return rel
 }
 
 var tddStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Print the current tdd run state as JSON (features, statuses, resumable)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		st, err := tdd.LoadState(tddStatePath())
+		root := repoRoot()
+		sp := tddStatePath(root, tddStateTicket)
+		st, err := tdd.LoadState(sp)
 		if err != nil {
 			return fmt.Errorf("tdd status: %w", err)
 		}
 		out := struct {
 			Task      string             `json:"task"`
 			Branch    string             `json:"branch,omitempty"`
+			Base      string             `json:"base"`
 			Resumable bool               `json:"resumable"`
 			Features  []tdd.FeatureState `json:"features"`
-		}{st.Task, st.Branch, st.Resumable(), st.Features}
+		}{st.Task, st.Branch, tddStateBaseRel(root, sp), st.Resumable(), st.Features}
 		b, err := json.MarshalIndent(out, "", "  ")
 		if err != nil {
 			return fmt.Errorf("tdd status: %w", err)
@@ -60,7 +80,7 @@ var tddStateBeginCmd = &cobra.Command{
 			feats = append(feats, tdd.FeaturePlan{Name: name})
 		}
 		st := tdd.BeginRun(tddStateTask, tddStateBranch, feats)
-		if err := tdd.SaveState(tddStatePath(), st); err != nil {
+		if err := tdd.SaveState(tddStatePath(repoRoot(), tddStateTicket), st); err != nil {
 			return fmt.Errorf("tdd state begin: %w", err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "began run with %d feature(s)\n", len(tddStateFeatures))
@@ -77,7 +97,7 @@ var tddStateMarkCmd = &cobra.Command{
 		if status != "pass" && status != "blocked" && status != "pending" {
 			return fmt.Errorf("tdd state mark: status must be pass|blocked|pending, got %q", status)
 		}
-		st, err := tdd.LoadState(tddStatePath())
+		st, err := tdd.LoadState(tddStatePath(repoRoot(), tddStateTicket))
 		if err != nil {
 			return fmt.Errorf("tdd state mark: %w", err)
 		}
@@ -92,7 +112,7 @@ var tddStateMarkCmd = &cobra.Command{
 			return fmt.Errorf("tdd state mark: unknown feature %q", name)
 		}
 		st.Mark(name, status)
-		if err := tdd.SaveState(tddStatePath(), st); err != nil {
+		if err := tdd.SaveState(tddStatePath(repoRoot(), tddStateTicket), st); err != nil {
 			return fmt.Errorf("tdd state mark: %w", err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "marked %s %s\n", name, status)
@@ -104,6 +124,7 @@ func init() {
 	tddStateBeginCmd.Flags().StringArrayVar(&tddStateFeatures, "feature", nil, "feature slug (repeatable)")
 	tddStateBeginCmd.Flags().StringVar(&tddStateTask, "task", "", "the run's task description")
 	tddStateBeginCmd.Flags().StringVar(&tddStateBranch, "branch", "", "the feature branch")
+	tddStatusCmd.Flags().StringVar(&tddStateTicket, "ticket", "", "ticket id to address a specific run")
 	tddStateCmd.AddCommand(tddStateBeginCmd)
 	tddStateCmd.AddCommand(tddStateMarkCmd)
 	tddCmd.AddCommand(tddStatusCmd)

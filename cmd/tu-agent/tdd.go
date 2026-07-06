@@ -25,6 +25,7 @@ import (
 
 var tddProviderOverride string
 var tddDesign string
+var tddTicket string
 
 // tddStage pairs a flow stage with the agent-file role that supplies its
 // project knowledge, the generic TDD overlay, and the stage's tool grant.
@@ -99,7 +100,7 @@ func stripFrontmatter(s string) string {
 // tddStageDefs builds the dispatched stage definitions (architect, craftsman,
 // judge, scribe) whose system prompt = agent body + stage overlay. The analyst
 // runs in the foreground and is built separately.
-func tddStageDefs(root string) ([]*subagent.Definition, error) {
+func tddStageDefs(root, relBase string) ([]*subagent.Definition, error) {
 	var defs []*subagent.Definition
 	for _, st := range tddStages() {
 		if st.stage == "analyst" {
@@ -112,7 +113,7 @@ func tddStageDefs(root string) ([]*subagent.Definition, error) {
 		defs = append(defs, &subagent.Definition{
 			Name:         st.stage,
 			Description:  st.stage,
-			SystemPrompt: body + "\n\n" + st.overlay,
+			SystemPrompt: body + "\n\n" + tdd.WithBaseDir(st.overlay, relBase),
 			ToolSubset:   append([]string{}, st.tools...),
 		})
 	}
@@ -207,8 +208,18 @@ var tddRunCmd = &cobra.Command{
 		tools.Register(tool.NewMemSearchTool(memStore))
 		tools.Register(tool.NewMemRecentTool(memStore))
 
+		slug := slugify(strings.Join(args, " "))
+		relBase := tddRelBase(tddTicket, slug)
+		workDir := filepath.Join(root, relBase)
+		if err := os.MkdirAll(workDir, 0o755); err != nil {
+			return fmt.Errorf("tdd run: %w", err)
+		}
+		if tddTicket != "" {
+			warnBranch(currentBranch(root), sanitizeTicket(tddTicket), cmd.OutOrStdout())
+		}
+
 		// Stage dispatcher for architect/craftsman/judge.
-		defs, err := tddStageDefs(root)
+		defs, err := tddStageDefs(root, relBase)
 		if err != nil {
 			return fmt.Errorf("tdd run: %w", err)
 		}
@@ -219,9 +230,8 @@ var tddRunCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("tdd run: %w", err)
 		}
-		analyst := orchestrator.New(prov, tools, tel, analystBody+"\n\n"+tdd.AnalystPrompt, "analyst")
+		analyst := orchestrator.New(prov, tools, tel, analystBody+"\n\n"+tdd.WithBaseDir(tdd.AnalystPrompt, relBase), "analyst")
 
-		workDir := filepath.Join(root, ".tu-agent", "tdd")
 		task := "Help me build the following. Interrogate me until the spec is complete.\n\n" + strings.Join(args, " ")
 		if tddDesign != "" {
 			task = "Help me build the following.\n\n" + strings.Join(args, " ")
@@ -263,6 +273,7 @@ var tddRunCmd = &cobra.Command{
 			Out:        cmd.OutOrStdout(),
 			Task:       task,
 			WorkDir:    workDir,
+			RelBase:    relBase,
 			FeatureReader: func(name string) (string, error) {
 				data, rerr := os.ReadFile(filepath.Join(workDir, "features", name+".feature"))
 				return string(data), rerr
@@ -297,6 +308,8 @@ func init() {
 		"override provider for this run (claude|local); empty uses routing config")
 	tddRunCmd.Flags().StringVar(&tddDesign, "design", "",
 		"path to a design doc or superpowers plan the analyst seeds the spec from (confirm-by-exception)")
+	tddRunCmd.Flags().StringVar(&tddTicket, "ticket", "",
+		"ticket id; groups artifacts under .tu-agent/tdd/<ticket>-<slug>/ and warns if the branch doesn't match")
 	tddCmd.AddCommand(tddRunCmd)
 	rootCmd.AddCommand(tddCmd)
 }

@@ -3,6 +3,7 @@ package tdd
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Dispatcher runs a named non-interactive sub-agent and returns its final text.
@@ -40,6 +41,15 @@ var DefaultToolGrant = []string{
 // CraftsmanToolGrant adds write access for the TDD stage.
 var CraftsmanToolGrant = append(append([]string{}, DefaultToolGrant...), "write_file")
 
+// TddDirToken is the placeholder in stage overlays that every consumer replaces
+// with the resolved per-feature artifact dir before dispatch.
+const TddDirToken = "__TDDDIR__"
+
+// WithBaseDir substitutes the per-feature base dir into a stage overlay.
+func WithBaseDir(overlay, baseDir string) string {
+	return strings.ReplaceAll(overlay, TddDirToken, baseDir)
+}
+
 const contractInstruction = "\n\nEnd your reply with a single fenced ```json block " +
 	"containing your contract: {stage, status, complexity?, artifacts[], scenarios[], " +
 	"risks[], assumptions[], handoff, verdict?}. Write all real output to files and " +
@@ -54,16 +64,16 @@ pre-load context: recall memory (mem_search) and load the graph for the affected
 references an existing design doc or superpowers plan, read it FIRST and SEED the spec from
 it, then confirm by exception — ask only about gaps, ambiguities, or contradictions rather
 than interrogating from zero; if the document is complete, write the spec and emit a "pass"
-contract with no questions. Then converse with the user to produce .tu-agent/tdd/spec.md
+contract with no questions. Then converse with the user to produce __TDDDIR__/spec.md
 before any design or code. Ask exactly ONE
 question per turn. On non-trivial decisions propose >=2 options and record the chosen one with
 its reason; mark unresolved points "OPEN QUESTION". When the spec is complete, write
-.tu-agent/tdd/spec.md (purpose, contract, edge cases, decisions+why) and only then emit a
+__TDDDIR__/spec.md (purpose, contract, edge cases, decisions+why) and only then emit a
 contract with status "pass".` + contractInstruction
 
 // ArchitectPrompt is the TDD-stage overlay for design + Gherkin + complexity.
 const ArchitectPrompt = `tu-agent TDD task — architect stage. Ignore any default output format
-from your role definition; produce exactly the contract below. Read .tu-agent/tdd/spec.md. You
+from your role definition; produce exactly the contract below. Read __TDDDIR__/spec.md. You
 MUST consult the graph for blast-radius before classifying: run get_impact/get_context on the
 affected symbols. You MUST ALSO consult existing test coverage of the affected area BEFORE
 writing scenarios — run "tu-agent test gaps" and/or the graph's tested_by — so you do not
@@ -72,12 +82,12 @@ coverage is thin. CLASSIFY the task complexity from that blast-radius and set th
 "complexity" field:
 - trivial: no new behavior to test (status "pass", complexity "trivial"). No Gherkin, no TDD.
 - standard: a bounded area — local dependents within a single domain/subsystem. ONE feature:
-  write .tu-agent/tdd/features/<slug>.feature with @s1..@sn tagged scenarios (each Then asserts
+  write __TDDDIR__/features/<slug>.feature with @s1..@sn tagged scenarios (each Then asserts
   something measurable), then status "pass", complexity "standard", and return
   "features": [{"name":"<slug>","scenarios":["@s1",...]}].
 - complex: WIDE blast-radius — spans more than one domain/subsystem, or many dependents.
   DECOMPOSE into several small, independently-testable sub-features: write one .feature per
-  sub-feature under .tu-agent/tdd/features/<slug>.feature (unique slugs, each with its own @s
+  sub-feature under __TDDDIR__/features/<slug>.feature (unique slugs, each with its own @s
   scenarios in dependency order), then status "pass", complexity "complex", and return
   "features" with one entry per sub-feature. A sub-feature that is a pure refactor (no new
   behavior/tests) may be emitted with "kind":"refactor" in its features entry; it still gets a
@@ -95,7 +105,7 @@ implementation and add tests afterward; that defeats TDD and leaves vacuous test
 gate flags as survivors. Before the first scenario, check whether the code you will touch has
 tests ("tu-agent test gaps" / graph tested_by); if it has NONE, run "tu-agent test gen
 <target>" to lay a safety net BEFORE the cycle. Greenfield code is hand-written test-first.
-Write a @s->test map to .tu-agent/tdd/progress/tdd_<name>.md. In the contract, "scenarios"
+Write a @s->test map to __TDDDIR__/progress/tdd_<name>.md. In the contract, "scenarios"
 MUST list every @s tag covered with a concrete test. Address each judge-feedback point if any.
 Report the primary source file as an artifact {"kind":"source","path":"<repo-relative>"} so
 the mutation gate can target it.` + contractInstruction
@@ -106,13 +116,13 @@ role definition; produce exactly the contract below. The deterministic gate (tes
 every @s covered) already passed. Judge DESIGN and DISCIPLINE only: short functions, revealing
 names, no duplication, correct error contract (stderr + exit code), and NO production code that
 no failing test demanded (scope creep). You do not edit code — you prune. Write your review to
-.tu-agent/tdd/progress/judge_<name>.md and set contract.verdict to {result: pass|revise|fail,
+__TDDDIR__/progress/judge_<name>.md and set contract.verdict to {result: pass|revise|fail,
 feedback, score}. Be concrete: cite file:line.` + contractInstruction
 
 // ScribePrompt is the TDD-stage overlay for phase 3 (archive to memory).
 const ScribePrompt = `tu-agent TDD task — scribe stage. Ignore any default output format from
 your role definition; produce exactly what this task asks. The feature is complete and all
-gates passed. Read .tu-agent/tdd/spec.md and the .tu-agent/tdd/progress/ notes, then call
+gates passed. Read __TDDDIR__/spec.md and the __TDDDIR__/progress/ notes, then call
 mem_save once with topic "decision/<feature-slug>" and content capturing WHAT changed and WHY
 (decision, rationale, scenarios covered, files touched). Be concise and durable. Do not edit
 code.` + contractInstruction

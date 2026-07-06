@@ -21,6 +21,7 @@ var (
 	tddGateCovered  string
 	tddGateExpect   string
 	tddGateNewTests string
+	tddGateTicket   string
 )
 
 // tddGateResult is the JSON the gate prints for the plugin skill to read.
@@ -55,7 +56,7 @@ func evalRed(overallPassed bool, rep testresult.Report, newTests []string) tddGa
 // returns the structured result. A missing feature file or unresolved test
 // command is an error (the caller distinguishes "ran and failed" from "could
 // not run").
-func runGate(ctx context.Context, cfg config.Config, root, feature, coveredRaw, expect, newTestsRaw string) (tddGateResult, error) {
+func runGate(ctx context.Context, cfg config.Config, root, ticket, feature, coveredRaw, expect, newTestsRaw string) (tddGateResult, error) {
 	if feature == "" {
 		return tddGateResult{}, fmt.Errorf("--feature is required")
 	}
@@ -83,8 +84,12 @@ func runGate(ctx context.Context, cfg config.Config, root, feature, coveredRaw, 
 		}
 		return evalRed(passed, rep, splitTags(newTestsRaw)), nil
 	}
-	// expect green: read feature file first, then resolve test runner
-	featPath := filepath.Join(root, ".tu-agent", "tdd", "features", feature+".feature")
+	// expect green: read feature file from the per-feature dir
+	base, ok := resolveTddBase(root, ticket)
+	if !ok {
+		base = filepath.Join(root, ".tu-agent", "tdd")
+	}
+	featPath := filepath.Join(base, "features", feature+".feature")
 	data, err := os.ReadFile(featPath)
 	if err != nil {
 		return tddGateResult{}, fmt.Errorf("reading feature: %w", err)
@@ -102,7 +107,7 @@ var tddGateCmd = &cobra.Command{
 	Use:   "gate",
 	Short: "Run the deterministic gate (green tests + @s coverage) and print JSON",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		res, err := runGate(cmd.Context(), cfg, repoRoot(), tddGateFeature, tddGateCovered, tddGateExpect, tddGateNewTests)
+		res, err := runGate(cmd.Context(), cfg, repoRoot(), tddGateTicket, tddGateFeature, tddGateCovered, tddGateExpect, tddGateNewTests)
 		if err != nil {
 			return fmt.Errorf("tdd gate: %w", err)
 		}
@@ -120,5 +125,6 @@ func init() {
 	tddGateCmd.Flags().StringVar(&tddGateCovered, "covered", "", "comma-separated @s tags the craftsman covered")
 	tddGateCmd.Flags().StringVar(&tddGateExpect, "expect", "green", "expected color: green | red")
 	tddGateCmd.Flags().StringVar(&tddGateNewTests, "new-tests", "", "comma-separated new test file paths (for --expect red)")
+	tddGateCmd.Flags().StringVar(&tddGateTicket, "ticket", "", "ticket id to address a specific run's feature dir")
 	tddCmd.AddCommand(tddGateCmd)
 }

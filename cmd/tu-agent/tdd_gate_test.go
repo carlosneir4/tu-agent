@@ -42,7 +42,7 @@ func TestRunGate(t *testing.T) {
 	ctx := context.Background()
 
 	// All scenarios covered + tests green -> ok.
-	res, err := runGate(ctx, greenCfg, root, "count", "@s1,@s2", "green", "")
+	res, err := runGate(ctx, greenCfg, root, "", "count", "@s1,@s2", "green", "")
 	if err != nil {
 		t.Fatalf("runGate: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestRunGate(t *testing.T) {
 	}
 
 	// A missing scenario -> not ok, feedback names it.
-	res, err = runGate(ctx, greenCfg, root, "count", "@s1", "green", "")
+	res, err = runGate(ctx, greenCfg, root, "", "count", "@s1", "green", "")
 	if err != nil {
 		t.Fatalf("runGate: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestRunGate(t *testing.T) {
 	}
 
 	// Covered but tests red -> not ok.
-	res, err = runGate(ctx, redCfg, root, "count", "@s1,@s2", "green", "")
+	res, err = runGate(ctx, redCfg, root, "", "count", "@s1,@s2", "green", "")
 	if err != nil {
 		t.Fatalf("runGate: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestRunGate(t *testing.T) {
 	}
 
 	// Missing feature file -> error.
-	if _, err := runGate(ctx, greenCfg, root, "nope", "@s1", "green", ""); err == nil {
+	if _, err := runGate(ctx, greenCfg, root, "", "nope", "@s1", "green", ""); err == nil {
 		t.Fatalf("want error for missing feature file")
 	}
 }
@@ -101,7 +101,7 @@ func TestRunGateInvalidExpect(t *testing.T) {
 	ctx := context.Background()
 
 	// Invalid expect value "blue" should error, not silently run green path.
-	_, err := runGate(ctx, cfg, root, "count", "@s1", "blue", "")
+	_, err := runGate(ctx, cfg, root, "", "count", "@s1", "blue", "")
 	if err == nil {
 		t.Fatalf("want error for invalid expect value, got nil")
 	}

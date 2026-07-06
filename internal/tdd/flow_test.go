@@ -778,6 +778,76 @@ func TestRunResumeSkipsDoneFeatures(t *testing.T) {
 // (task passed through as-is) when DesignDoc is empty. The errChatter fake
 // errors out on the analyst's first turn so Run returns immediately after
 // building the task — no design/craftsman/judge stages need scripting.
+// taskRecordingDispatcher wraps seqDispatcher but also records the first task
+// string dispatched to each agent, so tests can assert on the exact text
+// built for a stage (e.g. the architect's per-feature spec path) without
+// needing a full contract exchange to inspect it after the fact.
+type taskRecordingDispatcher struct {
+	seqDispatcher
+	tasks map[string]string
+}
+
+func (d *taskRecordingDispatcher) Dispatch(ctx context.Context, agent, task string) (string, error) {
+	if d.tasks == nil {
+		d.tasks = map[string]string{}
+	}
+	if _, ok := d.tasks[agent]; !ok {
+		d.tasks[agent] = task
+	}
+	return d.seqDispatcher.Dispatch(ctx, agent, task)
+}
+
+// TestRunArchitectTaskUsesRelBase proves that when Options.RelBase is set to
+// the per-feature artifact dir, the architect is dispatched a task pointing
+// at that dir's spec.md — matching the path the architect's system overlay
+// (WithBaseDir) already references. Before the fix this was hardcoded to the
+// flat ".tu-agent/tdd/spec.md", contradicting the overlay.
+func TestRunArchitectTaskUsesRelBase(t *testing.T) {
+	d := &taskRecordingDispatcher{seqDispatcher: seqDispatcher{calls: map[string]int{}, byAgent: map[string][]string{
+		"architect": {jsonBlock(`{"stage":"architect","status":"pass","complexity":"standard","handoff":"count"}`)},
+		"craftsman": {jsonBlock(`{"stage":"craftsman","status":"pass","scenarios":["@s1","@s2"]}`)},
+		"judge":     {jsonBlock(`{"stage":"judge","status":"pass","verdict":{"result":"pass"}}`)},
+	}}}
+	opts := baseOptions(t, &d.seqDispatcher, passAnalyst(), green, "approved\n")
+	opts.Dispatcher = d
+	opts.RelBase = ".tu-agent/tdd/ABC-1-x"
+	res, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.Status != StatusPass {
+		t.Fatalf("status = %q, want pass", res.Status)
+	}
+	want := ".tu-agent/tdd/ABC-1-x/spec.md"
+	if !strings.Contains(d.tasks["architect"], want) {
+		t.Fatalf("architect task = %q, want it to contain %q", d.tasks["architect"], want)
+	}
+}
+
+// TestRunArchitectTaskFallsBackWithoutRelBase proves that when RelBase is
+// unset, the architect task falls back to the flat ".tu-agent/tdd/spec.md"
+// path rather than producing a malformed path.
+func TestRunArchitectTaskFallsBackWithoutRelBase(t *testing.T) {
+	d := &taskRecordingDispatcher{seqDispatcher: seqDispatcher{calls: map[string]int{}, byAgent: map[string][]string{
+		"architect": {jsonBlock(`{"stage":"architect","status":"pass","complexity":"standard","handoff":"count"}`)},
+		"craftsman": {jsonBlock(`{"stage":"craftsman","status":"pass","scenarios":["@s1","@s2"]}`)},
+		"judge":     {jsonBlock(`{"stage":"judge","status":"pass","verdict":{"result":"pass"}}`)},
+	}}}
+	opts := baseOptions(t, &d.seqDispatcher, passAnalyst(), green, "approved\n")
+	opts.Dispatcher = d
+	res, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.Status != StatusPass {
+		t.Fatalf("status = %q, want pass", res.Status)
+	}
+	want := ".tu-agent/tdd/spec.md"
+	if !strings.Contains(d.tasks["architect"], want) {
+		t.Fatalf("architect task = %q, want fallback to contain %q", d.tasks["architect"], want)
+	}
+}
+
 func TestRunInjectsDesignSeed(t *testing.T) {
 	analyst := &errChatter{}
 	o := Options{

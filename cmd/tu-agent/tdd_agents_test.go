@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tu/tu-agent/internal/subagent"
+	"github.com/tu/tu-agent/internal/tdd"
 )
 
 func TestTddCheckMissing(t *testing.T) {
@@ -83,19 +86,49 @@ func TestComposeStagePromptSandwich(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "developer.md"), []byte("---\nname: x\n---\nDEV-BODY\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tw, err := composeStagePrompt(root, "test-writer")
+	tw, err := composeStagePrompt(root, "test-writer", tddRelBase("", "x"))
 	if err != nil {
 		t.Fatalf("composeStagePrompt(test-writer): %v", err)
 	}
 	if !strings.Contains(tw, "DEV-BODY") || !strings.Contains(tw, "NO production") {
 		t.Fatalf("test-writer prompt must join body + RED overlay, got: %q", tw)
 	}
-	impl, err := composeStagePrompt(root, "implementer")
+	impl, err := composeStagePrompt(root, "implementer", tddRelBase("", "x"))
 	if err != nil {
 		t.Fatalf("composeStagePrompt(implementer): %v", err)
 	}
 	if !strings.Contains(impl, "DEV-BODY") || !strings.Contains(impl, "do NOT modify") {
 		t.Fatalf("implementer prompt must join body + GREEN overlay, got: %q", impl)
+	}
+}
+
+func TestTddStageDefsSubstitutesBaseDir(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "agents")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// tddStageDefs loads every non-analyst role; give them all a body.
+	for _, role := range []string{"architect", "developer", "pr-reviewer", "scribe"} {
+		if err := os.WriteFile(filepath.Join(dir, role+".md"), []byte("---\nname: x\n---\nBODY\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defs, err := tddStageDefs(root, ".tu-agent/tdd/ABC-1-x")
+	if err != nil {
+		t.Fatalf("tddStageDefs: %v", err)
+	}
+	var arch *subagent.Definition
+	for _, d := range defs {
+		if strings.Contains(d.SystemPrompt, tdd.TddDirToken) {
+			t.Errorf("stage %s still contains unsubstituted token", d.Name)
+		}
+		if d.Name == "architect" {
+			arch = d
+		}
+	}
+	if arch == nil || !strings.Contains(arch.SystemPrompt, ".tu-agent/tdd/ABC-1-x/spec.md") {
+		t.Errorf("architect def missing substituted base dir")
 	}
 }
 
@@ -109,17 +142,49 @@ func TestComposeStagePrompt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "developer.md"), []byte("---\nname: x\n---\nDEV-BODY\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := composeStagePrompt(root, "craftsman")
+	out, err := composeStagePrompt(root, "craftsman", tddRelBase("", "x"))
 	if err != nil {
 		t.Fatalf("compose: %v", err)
 	}
 	if !strings.Contains(out, "DEV-BODY") || !strings.Contains(out, "tu-agent TDD task") {
 		t.Fatalf("compose must join body + overlay, got: %q", out)
 	}
-	if _, err := composeStagePrompt(root, "bogus"); err == nil {
+	if _, err := composeStagePrompt(root, "bogus", tddRelBase("", "x")); err == nil {
 		t.Fatal("unknown stage must error")
 	}
-	if _, err := composeStagePrompt(root, "architect"); err == nil {
+	if _, err := composeStagePrompt(root, "architect", tddRelBase("", "x")); err == nil {
 		t.Fatal("missing agent file must error")
+	}
+}
+
+func TestPromptRelBase(t *testing.T) {
+	// explicit base wins, ignores ticket/desc
+	if got := promptRelBase(".tu-agent/tdd/EXPLICIT", "ABC-1", []string{"user", "login"}); got != ".tu-agent/tdd/EXPLICIT" {
+		t.Errorf("explicit base = %q", got)
+	}
+	// no base -> derive from ticket + desc
+	if got := promptRelBase("", "ABC-1", []string{"user", "login"}); got != tddRelBase("ABC-1", slugify("user login")) {
+		t.Errorf("derived base = %q", got)
+	}
+}
+
+func TestComposeStagePromptSubstitutesBaseDir(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "agents")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "architect.md"), []byte("---\nname: x\n---\nBODY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := composeStagePrompt(root, "architect", ".tu-agent/tdd/ABC-1-x")
+	if err != nil {
+		t.Fatalf("composeStagePrompt: %v", err)
+	}
+	if strings.Contains(out, tdd.TddDirToken) {
+		t.Errorf("token not substituted")
+	}
+	if !strings.Contains(out, ".tu-agent/tdd/ABC-1-x/spec.md") {
+		t.Errorf("base dir not applied")
 	}
 }
