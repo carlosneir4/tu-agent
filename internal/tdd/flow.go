@@ -14,14 +14,17 @@ import (
 
 // Options configures one flow run.
 type Options struct {
-	Analyst           Chatter
-	Dispatcher        Dispatcher
-	Runner            TestRunner
-	In                io.Reader
-	Out               io.Writer
-	Task              string
-	Branch            string
-	WorkDir           string
+	Analyst    Chatter
+	Dispatcher Dispatcher
+	Runner     TestRunner
+	In         io.Reader
+	Out        io.Writer
+	Task       string
+	Branch     string
+	WorkDir    string
+	// RelBase is the repo-relative per-feature artifact dir (e.g.
+	// .tu-agent/tdd/<ticket>-<slug>) — the same dir the stage overlays reference.
+	RelBase           string
 	FeatureReader     func(name string) (string, error)
 	Budget            int
 	Mutator           Mutator
@@ -77,7 +80,11 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		// Design loop: at most 3 architect→human-gate rounds (revise feedback is
 		// fed back to the architect); not user-configurable yet.
 		for designBudget := 3; designBudget > 0; designBudget-- {
-			task := "Read .tu-agent/tdd/spec.md and produce the design, scenarios, and complexity classification."
+			base := o.RelBase
+			if base == "" {
+				base = ".tu-agent/tdd"
+			}
+			task := "Read " + base + "/spec.md and produce the design, scenarios, and complexity classification."
 			if archFeedback != "" {
 				task += "\n\nThe user rejected the previous design:\n" + archFeedback + "\nRevise the design accordingly."
 			}

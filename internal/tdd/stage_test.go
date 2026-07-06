@@ -126,3 +126,29 @@ func TestArchitectPromptConsultsCoverage(t *testing.T) {
 		}
 	}
 }
+
+func TestWithBaseDir(t *testing.T) {
+	got := WithBaseDir("write to "+TddDirToken+"/spec.md now", ".tu-agent/tdd/ABC-1-x")
+	want := "write to .tu-agent/tdd/ABC-1-x/spec.md now"
+	if got != want {
+		t.Fatalf("WithBaseDir = %q, want %q", got, want)
+	}
+}
+
+func TestOverlaysUseTokenNotLiteral(t *testing.T) {
+	overlays := map[string]string{
+		"analyst":   AnalystPrompt,
+		"architect": ArchitectPrompt,
+		"craftsman": CraftsmanPrompt,
+		"judge":     JudgePrompt,
+		"scribe":    ScribePrompt,
+	}
+	for name, ov := range overlays {
+		if strings.Contains(ov, ".tu-agent/tdd/") {
+			t.Errorf("%s overlay still contains hardcoded .tu-agent/tdd/ literal", name)
+		}
+		if !strings.Contains(ov, TddDirToken) {
+			t.Errorf("%s overlay does not contain %s token", name, TddDirToken)
+		}
+	}
+}

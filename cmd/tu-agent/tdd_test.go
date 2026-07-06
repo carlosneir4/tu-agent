@@ -54,7 +54,7 @@ func TestTddStageDefsComposesBodyAndOverlay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	defs, err := tddStageDefs(root)
+	defs, err := tddStageDefs(root, tddRelBase("", "x"))
 	if err != nil {
 		t.Fatalf("tddStageDefs: %v", err)
 	}
