@@ -580,6 +580,35 @@ var graphBuildCmd = &cobra.Command{
 	},
 }
 
+// graphAnnounce gates printing a session-orientation nudge after `graph
+// update`. SessionStart hooks use it: Claude Code injects the hook's stdout
+// into the agent's context, so the nudge reaches the model every session.
+var graphAnnounce bool
+
+// announceGraph prints the orientation nudge to stdout. Silent no-op when no
+// graph exists (the hook fires in every repo, including ones that never ran
+// tu-agent).
+func announceGraph() error {
+	if _, err := os.Stat(graphDBPath(repoRoot())); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("graph announce: stat graph db: %w", err)
+	}
+	s, err := openGraphStore()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	n, err := s.NodeCount()
+	if err != nil {
+		return fmt.Errorf("graph announce: %w", err)
+	}
+	fmt.Printf(`tu-agent: graph ready (%d nodes). Follow the PROTOCOL in CLAUDE.md: query get_context BEFORE editing any file (also get_impact, find_symbol, get_concept), and call mem_recent now to recall prior decisions.
+NOTE: the tu-agent-graph MCP tools may be DEFERRED — absent from your active tool list. If so, load them with your tool-search mechanism (e.g. ToolSearch query "tu-agent-graph") instead of concluding they are unavailable. CLI fallback: tu-agent graph context <file-or-symbol>.
+`, n)
+	return nil
+}
+
 var graphUpdateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Re-parse only changed files (alias for build)",
@@ -588,7 +617,13 @@ var graphUpdateCmd = &cobra.Command{
 		if graphPostBash {
 			return postBashDecision(cmd.InOrStdin(), func() error { return runGraphBuildQuiet("", true) })
 		}
-		return runGraphBuildQuiet("", graphQuiet)
+		if err := runGraphBuildQuiet("", graphQuiet); err != nil {
+			return err
+		}
+		if graphAnnounce {
+			return announceGraph()
+		}
+		return nil
 	},
 }
 
@@ -674,6 +709,8 @@ func init() {
 		"suppress success output and skip .mcp.json rewrite; no-op if no graph exists (for hooks)")
 	graphUpdateCmd.Flags().BoolVar(&graphPostBash, "post-bash", false,
 		"read a PostToolUse payload on stdin; reconcile only if the command mutated the tree (implies --quiet)")
+	graphUpdateCmd.Flags().BoolVar(&graphAnnounce, "announce", false,
+		"after updating, print a session-orientation nudge for the agent (for SessionStart hooks; silent when no graph exists)")
 	graphBridgesCmd.Flags().IntVar(&graphBridgesTop, "top", 20, "number of chokepoints to list")
 	graphBridgesCmd.Flags().IntVar(&graphBridgesSamples, "samples", 100, "source nodes sampled for betweenness")
 	graphBridgesCmd.Flags().BoolVar(&graphBridgesJSON, "json", false, "emit JSON")

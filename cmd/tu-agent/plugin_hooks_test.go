@@ -63,7 +63,7 @@ func TestPluginHooksConfig(t *testing.T) {
 		want  []string
 	}{
 		{"PostToolUse", []string{"graph update"}},
-		{"SessionStart", []string{"graph update", "memory import"}},
+		{"SessionStart", []string{"graph update --quiet --announce", "memory import"}},
 		{"Stop", []string{"memory export"}},
 		{"SessionEnd", []string{"memory export"}},
 	}
@@ -81,6 +81,13 @@ func TestPluginHooksConfig(t *testing.T) {
 				t.Errorf("%s: missing %q; got %q", tc.event, w, got)
 			}
 		}
+	}
+
+	// The session-orientation nudge (--announce) is a SessionStart-only concern:
+	// PostToolUse fires on every Write/Edit/Bash, so re-printing the nudge there
+	// would spam the agent's context on every tool call.
+	if got := cfg.eventCommands("PostToolUse"); strings.Contains(got, "--announce") {
+		t.Errorf("PostToolUse must not carry --announce (SessionStart-only); got %q", got)
 	}
 }
 

@@ -141,6 +141,9 @@ func TestHardenedSettingsSessionStartImport(t *testing.T) {
 	if !strings.Contains(joined, "graph update") || !strings.Contains(joined, "--quiet") {
 		t.Errorf("SessionStart should refresh the graph (graph update --quiet); got %q", joined)
 	}
+	if !strings.Contains(joined, "tu-agent graph update --quiet --announce") {
+		t.Errorf("SessionStart graph update must carry --announce (nudge for the agent's context); got %q", joined)
+	}
 	if !strings.Contains(joined, "memory import") {
 		t.Errorf("SessionStart should import shared memory (memory import); got %q", joined)
 	}
@@ -507,7 +510,10 @@ func TestMergeSettings_MigratesLegacyTuAgentHooks(t *testing.T) {
 	}
 	// Old un-guarded memory hooks (no binary guard clause prefix).
 	oldSessionStart := map[string]any{
-		"hooks": []any{map[string]any{"type": "command", "command": "tu-agent memory import --quiet"}},
+		"hooks": []any{
+			map[string]any{"type": "command", "command": "command -v tu-agent >/dev/null 2>&1 || exit 0; tu-agent graph update --quiet"},
+			map[string]any{"type": "command", "command": "tu-agent memory import --quiet"},
+		},
 	}
 	oldAutoExport := map[string]any{
 		"hooks": []any{map[string]any{"type": "command", "command": "tu-agent memory export --quiet"}},
@@ -596,6 +602,25 @@ func TestMergeSettings_MigratesLegacyTuAgentHooks(t *testing.T) {
 		cmd, _ := hm["command"].(string)
 		if !strings.HasPrefix(cmd, guardPrefix) {
 			t.Errorf("%s hook command does not start with binary guard clause.\ngot:  %q\nwant prefix: %q", ev, cmd, guardPrefix)
+		}
+		if ev == "SessionStart" {
+			var joined []string
+			for _, h := range inner {
+				if hm, ok := h.(map[string]any); ok {
+					if c, ok := hm["command"].(string); ok {
+						joined = append(joined, c)
+					}
+				}
+			}
+			all := strings.Join(joined, "\n")
+			if !strings.Contains(all, "tu-agent graph update --quiet --announce") {
+				t.Errorf("migrated SessionStart must carry the graph update --announce nudge; got:\n%s", all)
+			}
+			for _, c := range joined {
+				if strings.Contains(c, "graph update --quiet") && !strings.Contains(c, "--announce") {
+					t.Errorf("stale pre-announce graph update command survived migration: %q", c)
+				}
+			}
 		}
 	}
 }

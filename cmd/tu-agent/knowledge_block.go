@@ -42,6 +42,9 @@ const knowledgeBody = knowledgeOpen + "\n" +
 	"     - If you have the graph tools:  get_context(<file-or-symbol>)\n" +
 	"       (also: get_impact, find_symbol)\n" +
 	"     - Otherwise, via CLI:           tu-agent graph context <file-or-symbol>\n" +
+	"   The graph MCP tools are often DEFERRED — absent from your active tool list.\n" +
+	"   Load them with your tool-search mechanism (e.g. ToolSearch \"tu-agent-graph\")\n" +
+	"   before falling back to the CLI; never conclude they are unavailable.\n" +
 	"   get_context returns blast radius (dependents), the relevant concept(s),\n" +
 	"   conventions, and tests to run — pointers, not source.\n" +
 	"3. The graph can miss framework/DI/compiled relationships — if it returns \"(none)\"\n" +

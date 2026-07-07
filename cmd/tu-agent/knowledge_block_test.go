@@ -85,6 +85,7 @@ func TestKnowledgeBody_DocumentsBrainArtifacts(t *testing.T) {
 		"get_impact",
 		"find_symbol",
 		"tu-agent graph context",
+		"The graph MCP tools are often DEFERRED",
 	} {
 		if !strings.Contains(knowledgeBody, want) {
 			t.Errorf("knowledgeBody missing %q", want)
