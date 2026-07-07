@@ -456,6 +456,44 @@ providers:
 	}
 }
 
+func TestLoad_RoutingDisabled_ProjectLayer(t *testing.T) {
+	base := t.TempDir()
+	userDir := filepath.Join(base, "tu-agent")
+	projDir := filepath.Join(base, "project")
+
+	// User layer doesn't set it; project layer (committed, repo-enforced) does.
+	writeFile(t, userDir, "config.yaml", `
+routing:
+  default: claude
+`)
+	writeFile(t, projDir, "config.yaml", `
+routing:
+  disabled: true
+`)
+
+	cfg, err := config.NewLoader(filepath.Join(base, "claude"), userDir, projDir).Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Routing.Disabled {
+		t.Fatal("Routing.Disabled = false, want true (project layer must set the kill-switch)")
+	}
+}
+
+func TestLoad_RoutingDisabled_NotSetByDefault(t *testing.T) {
+	base := t.TempDir()
+	userDir := filepath.Join(base, "tu-agent")
+	projDir := filepath.Join(base, "project")
+
+	cfg, err := config.NewLoader(filepath.Join(base, "claude"), userDir, projDir).Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Routing.Disabled {
+		t.Fatal("Routing.Disabled = true by default, want false")
+	}
+}
+
 func TestLoadLearnConfig(t *testing.T) {
 	tests := []struct {
 		name           string

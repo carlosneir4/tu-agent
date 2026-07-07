@@ -43,3 +43,21 @@ func TestMergeIntoTddStrict(t *testing.T) {
 		t.Fatal("Tdd.Strict dropped by mergeInto")
 	}
 }
+
+func TestMergeIntoRoutingDisabled(t *testing.T) {
+	base := defaultConfig()
+	mergeInto(&base, Config{Routing: RoutingConfig{Disabled: true}})
+	if !base.Routing.Disabled {
+		t.Fatal("Routing.Disabled not merged")
+	}
+}
+
+func TestMergeIntoRoutingDisabled_Sticky(t *testing.T) {
+	base := defaultConfig()
+	mergeInto(&base, Config{Routing: RoutingConfig{Disabled: true}})
+	// A later layer without the field must not un-set it.
+	mergeInto(&base, Config{Routing: RoutingConfig{Default: "local"}})
+	if !base.Routing.Disabled {
+		t.Fatal("Routing.Disabled was reset by a later layer without the field — kill-switch must be sticky")
+	}
+}

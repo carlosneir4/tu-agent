@@ -221,6 +221,9 @@ func resolveProviderName(cfg config.Config, task, override string) string {
 // selectProvider resolves the active provider for a task and constructs it.
 // API keys are read from environment variables: ANTHROPIC_API_KEY, LOCAL_API_KEY.
 func selectProvider(cfg config.Config, task, override string) (provider.Provider, error) {
+	if cfg.Routing.Disabled || os.Getenv("TU_AGENT_NO_PROVIDER") != "" {
+		return nil, fmt.Errorf("provider calls are disabled for this repository (routing.disabled in .tu-agent/config.yaml or TU_AGENT_NO_PROVIDER) — deterministic commands are unaffected")
+	}
 	name := resolveProviderName(cfg, task, override)
 	pc := cfg.Providers[name]
 	switch name {

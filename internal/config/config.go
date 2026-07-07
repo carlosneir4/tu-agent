@@ -14,6 +14,11 @@ type RoutingConfig struct {
 	Default   string            `yaml:"default"`
 	SubAgents map[string]string `yaml:"sub_agents"`
 	Tasks     map[string]string `yaml:"tasks"`
+	// Disabled hard-blocks every provider call regardless of environment keys.
+	// Set it in the PROJECT config (./.tu-agent/config.yaml, committed) to
+	// guarantee a repo never talks to an external model through the binary;
+	// deterministic commands are unaffected.
+	Disabled bool `yaml:"disabled"`
 }
 
 // ProviderConfig holds endpoint configuration for a named provider.

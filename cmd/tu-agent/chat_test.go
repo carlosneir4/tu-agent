@@ -89,6 +89,31 @@ func TestSelectProvider_ClaudeMissingAPIKey(t *testing.T) {
 	}
 }
 
+func TestSelectProvider_RoutingDisabled(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-key")
+	cfg := config.Config{Routing: config.RoutingConfig{Default: "claude", Disabled: true}}
+	_, err := selectProvider(cfg, "chat", "")
+	if err == nil {
+		t.Fatal("selectProvider() should error when Routing.Disabled is true, got nil")
+	}
+	if !strings.Contains(err.Error(), "provider calls are disabled") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "provider calls are disabled")
+	}
+}
+
+func TestSelectProvider_NoProviderEnvVar(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-key")
+	t.Setenv("TU_AGENT_NO_PROVIDER", "1")
+	cfg := config.Config{Routing: config.RoutingConfig{Default: "claude"}}
+	_, err := selectProvider(cfg, "chat", "")
+	if err == nil {
+		t.Fatal("selectProvider() should error when TU_AGENT_NO_PROVIDER is set, got nil")
+	}
+	if !strings.Contains(err.Error(), "provider calls are disabled") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "provider calls are disabled")
+	}
+}
+
 func TestSelectProvider_LocalUsesDefaultBaseURL(t *testing.T) {
 	t.Setenv("LOCAL_API_KEY", "lm-studio")
 	cfg := config.Config{

@@ -188,6 +188,15 @@ providers:
 > **`context_size` must match the model loaded in your local server.** Too low and
 > tu-agent underuses the context; too high and you get `n_keep > n_ctx` HTTP 400s.
 
+Setting `routing: { disabled: true }` in the project config hard-blocks every
+provider/API call the binary would make, regardless of environment keys — a
+developer with `ANTHROPIC_API_KEY` exported still cannot reach an external
+model. The same effect is available per-invocation via the `TU_AGENT_NO_PROVIDER`
+environment variable. Deterministic commands (`graph`, `memory`, `stats`, ...)
+are unaffected either way. The audit trail is `.tu-agent/telemetry.jsonl`,
+which logs every provider call, so an empty log after enabling the switch is
+verifiable evidence no call was made.
+
 API keys are never stored in config — set them as environment variables
 (`ANTHROPIC_API_KEY`, `LOCAL_API_KEY`).
 

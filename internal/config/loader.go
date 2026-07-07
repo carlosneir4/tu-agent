@@ -84,6 +84,9 @@ func mergeInto(dst *Config, src Config) {
 	if src.Routing.Default != "" {
 		dst.Routing.Default = src.Routing.Default
 	}
+	if src.Routing.Disabled {
+		dst.Routing.Disabled = true
+	}
 	for k, v := range src.Routing.SubAgents {
 		dst.Routing.SubAgents[k] = v
 	}
