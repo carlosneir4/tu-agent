@@ -177,7 +177,7 @@ func hardenHooks(lang string, pluginPresent bool) map[string]any {
 		hooks["SessionStart"] = []any{
 			map[string]any{
 				"hooks": []any{
-					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent graph update --quiet"},
+					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent graph update --quiet --announce"},
 					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory import --quiet"},
 					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory relink --quiet"},
 					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory materialize --quiet"},
