@@ -118,8 +118,14 @@ func ftsQuery(q string) string {
 
 // searchFTS runs a ranked MATCH query. bm25() returns smaller (more negative)
 // values for better matches, so ASC puts the best match first; updated_at
-// breaks ties newest-first.
-func (s *Store) searchFTS(query, typeFilter string) ([]Observation, error) {
+// breaks ties newest-first. limit caps the returned rows (0 = uncapped); the
+// second return is the total match count before the cap so a caller can show
+// an honest "showing N of M" disclosure.
+func (s *Store) searchFTS(query, typeFilter string, limit int) ([]Observation, int, error) {
+	countSQL := `SELECT count(*)
+		FROM observations_fts
+		JOIN observations o ON o.id = observations_fts.id
+		WHERE observations_fts MATCH ? AND o.deleted_at IS NULL`
 	sql := `SELECT o.id, o.topic_key, o.scope, o.project, o.title, o.content,
 			o.type, o.source, o.revision, o.created_at, o.updated_at, o.author, o.sync_id
 		FROM observations_fts
@@ -127,17 +133,26 @@ func (s *Store) searchFTS(query, typeFilter string) ([]Observation, error) {
 		WHERE observations_fts MATCH ? AND o.deleted_at IS NULL`
 	args := []any{ftsQuery(query)}
 	if typeFilter != "" {
+		countSQL += ` AND o.type = ?`
 		sql += ` AND o.type = ?`
 		args = append(args, typeFilter)
 	}
+	var total int
+	if err := s.db.QueryRow(countSQL, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("memory.Store.searchFTS: count: %w", err)
+	}
 	sql += ` ORDER BY bm25(observations_fts), o.updated_at DESC`
+	if limit > 0 {
+		sql += ` LIMIT ?`
+		args = append(args, limit)
+	}
 	rows, err := s.db.Query(sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("memory.Store.searchFTS: %w", err)
+		return nil, 0, fmt.Errorf("memory.Store.searchFTS: %w", err)
 	}
 	out, err := collectRows(rows)
 	if err != nil {
-		return nil, fmt.Errorf("memory.Store.searchFTS: %w", err)
+		return nil, 0, fmt.Errorf("memory.Store.searchFTS: %w", err)
 	}
-	return out, nil
+	return out, total, nil
 }

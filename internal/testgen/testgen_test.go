@@ -233,7 +233,7 @@ func TestGenerateJavaMockedRunner(t *testing.T) {
 	if !res.Passed || res.TestPath != "src/test/java/com/acme/FooTest.java" {
 		t.Fatalf("res = %+v", res)
 	}
-	if want := "mvn -q test -Dtest=FooTest#barGen*"; strings.Join(res.RunCommand, " ") != want {
+	if want := "mvn -q test -Dtest=FooTest#barGen* -DfailIfNoTests=false"; strings.Join(res.RunCommand, " ") != want {
 		t.Fatalf("RunCommand = %v, want %q", res.RunCommand, want)
 	}
 }

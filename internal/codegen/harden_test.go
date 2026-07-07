@@ -35,7 +35,7 @@ func contains(ss []string, want string) bool {
 }
 
 func TestHardenedSettings_PermissionsAndScalars(t *testing.T) {
-	s := HardenedSettings("go", "go")
+	s := HardenedSettings("go", "go", false)
 
 	deny := permList(t, s, "deny")
 	for _, want := range []string{
@@ -96,7 +96,7 @@ func TestHardenedSettings_Toolchains(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.lang+"/"+c.build, func(t *testing.T) {
-			s := HardenedSettings(c.lang, c.build)
+			s := HardenedSettings(c.lang, c.build, false)
 			if !contains(permList(t, s, "allow"), c.wantAllow) {
 				t.Errorf("allow missing %q", c.wantAllow)
 			}
@@ -113,7 +113,7 @@ func TestHardenedSettings_Toolchains(t *testing.T) {
 }
 
 func TestHardenedSettingsSessionStartImport(t *testing.T) {
-	s := HardenedSettings("go", "go")
+	s := HardenedSettings("go", "go", false)
 	hooks, ok := s["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("settings has no hooks map")
@@ -150,7 +150,7 @@ func TestHardenedSettingsSessionStartImport(t *testing.T) {
 }
 
 func TestHardenSessionStartIncludesRelink(t *testing.T) {
-	s := HardenedSettings("go", "go")
+	s := HardenedSettings("go", "go", false)
 	hooks, ok := s["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("settings has no hooks map")
@@ -178,7 +178,7 @@ func TestHardenSessionStartIncludesRelink(t *testing.T) {
 }
 
 func TestHardenedSettingsAutoExportHooks(t *testing.T) {
-	s := HardenedSettings("go", "go")
+	s := HardenedSettings("go", "go", false)
 	hooks, ok := s["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("settings has no hooks map")
@@ -198,7 +198,7 @@ func TestHardenedSettingsAutoExportHooks(t *testing.T) {
 }
 
 func TestHardenedSettings_IsValidJSON(t *testing.T) {
-	b, err := json.Marshal(HardenedSettings("go", "go"))
+	b, err := json.Marshal(HardenedSettings("go", "go", false))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestSecretPathPattern(t *testing.T) {
 }
 
 func TestMergeSettings_AddsIntoEmpty(t *testing.T) {
-	gen := HardenedSettings("go", "go")
+	gen := HardenedSettings("go", "go", false)
 	merged := MergeSettings(map[string]any{}, gen)
 	if !contains(permList(t, merged, "deny"), "Bash(rm -rf *)") {
 		t.Error("merge into empty lost deny entries")
@@ -232,7 +232,7 @@ func TestMergeSettings_AddsIntoEmpty(t *testing.T) {
 }
 
 func TestMergeSettings_Idempotent(t *testing.T) {
-	gen := HardenedSettings("go", "go")
+	gen := HardenedSettings("go", "go", false)
 	once := MergeSettings(map[string]any{}, gen)
 	twice := MergeSettings(once, gen)
 	b1, _ := json.Marshal(once)
@@ -251,7 +251,7 @@ func TestMergeSettings_PreservesUserEntries(t *testing.T) {
 		"includeCoAuthoredBy": false,
 		"customUserKey":       "keep-me",
 	}
-	merged := MergeSettings(existing, HardenedSettings("go", "go"))
+	merged := MergeSettings(existing, HardenedSettings("go", "go", false))
 
 	perms := merged["permissions"].(map[string]any)
 	if perms["defaultMode"] != "acceptEdits" {
@@ -280,7 +280,7 @@ func TestMergeSettings_UnionsHooksByMatcher(t *testing.T) {
 			},
 		},
 	}
-	merged := MergeSettings(existing, HardenedSettings("go", "go"))
+	merged := MergeSettings(existing, HardenedSettings("go", "go", false))
 	pre := merged["hooks"].(map[string]any)["PreToolUse"].([]any)
 	if len(pre) != 2 {
 		t.Errorf("PreToolUse len = %d, want 2", len(pre))
@@ -425,7 +425,7 @@ func TestCommandTouchesSecret(t *testing.T) {
 }
 
 func TestHardenHooksGuardMatchesBash(t *testing.T) {
-	s := HardenedSettings("go", "go")
+	s := HardenedSettings("go", "go", false)
 	hooks := s["hooks"].(map[string]any)
 	pre := hooks["PreToolUse"].([]any)
 	found := false
@@ -441,7 +441,7 @@ func TestHardenHooksGuardMatchesBash(t *testing.T) {
 }
 
 func TestHookCommandsDegradeWithoutBinary(t *testing.T) {
-	s := HardenedSettings("go", "go")
+	s := HardenedSettings("go", "go", false)
 	hooks := s["hooks"].(map[string]any)
 	const guard = "command -v tu-agent >/dev/null 2>&1 || exit 0;"
 	for _, ev := range []string{"PreToolUse", "SessionStart", "Stop", "SessionEnd"} {
@@ -454,7 +454,7 @@ func TestHookCommandsDegradeWithoutBinary(t *testing.T) {
 }
 
 func TestSecretGuardUsesGuardPathNotJq(t *testing.T) {
-	s := HardenedSettings("go", "go")
+	s := HardenedSettings("go", "go", false)
 	hooks := s["hooks"].(map[string]any)
 	pre := hooks["PreToolUse"].([]any)
 	cmd := pre[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
@@ -522,7 +522,7 @@ func TestMergeSettings_MigratesLegacyTuAgentHooks(t *testing.T) {
 		},
 	}
 
-	merged := MergeSettings(existing, HardenedSettings("go", "go"))
+	merged := MergeSettings(existing, HardenedSettings("go", "go", false))
 
 	hooks, ok := merged["hooks"].(map[string]any)
 	if !ok {
@@ -627,7 +627,7 @@ func TestMergeSettingsPreservesGraphFreshnessHook(t *testing.T) {
 
 	// MergeSettings with a Go repo so hardenHooks emits a PostToolUse formatter
 	// entry — this is the path that triggers unionHookEntries on PostToolUse.
-	merged := MergeSettings(existing, HardenedSettings("go", "go"))
+	merged := MergeSettings(existing, HardenedSettings("go", "go", false))
 
 	hooks, ok := merged["hooks"].(map[string]any)
 	if !ok {
@@ -685,7 +685,7 @@ func TestGitignoreBlockKeepsChunksVersioned(t *testing.T) {
 }
 
 func TestHardenSessionStartIncludesCrystallize(t *testing.T) {
-	s := HardenedSettings("go", "go")
+	s := HardenedSettings("go", "go", false)
 	hooks, ok := s["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("settings has no hooks map")
@@ -705,5 +705,125 @@ func TestHardenSessionStartIncludesCrystallize(t *testing.T) {
 	}
 	if !strings.Contains(joined, "memory crystallize --nudge") {
 		t.Errorf("SessionStart must run the crystallize nudge; got:\n%s", joined)
+	}
+}
+
+// TestMergeSettingsPluginStripsSupersededHooks verifies that merging a
+// pluginPresent=true generated settings into an existing settings.json that
+// was hardened STANDALONE (pluginPresent=false, so it has the full
+// SessionStart/Stop/SessionEnd tu-agent hooks) strips those now-superseded
+// tu-agent-managed hooks. Without this, upgrading a repo via
+// `prepare --update --plugin` leaves the old graph-update/memory hooks in
+// settings.json alongside the plugin's own hooks.json entries, so every
+// export/graph-update double-fires.
+//
+// The merge must visit the UNION of event keys (existing ∪ generated), not
+// just the generated set — hardenHooks(pluginPresent=true) omits
+// SessionStart/Stop/SessionEnd entirely, so those events must still be
+// visited via the existing side to strip the stale managed entries. If
+// stripping leaves an event with zero entries, the event key itself must be
+// removed rather than left as an empty `[]` husk.
+func TestMergeSettingsPluginStripsSupersededHooks(t *testing.T) {
+	old := HardenedSettings("go", "go", false)
+	hooks, ok := old["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("old settings has no hooks map")
+	}
+
+	// Inject a user-authored SessionStart hook (not tu-agent-managed), mimicking
+	// the user-entry style used in TestMergeSettings_MigratesLegacyTuAgentHooks.
+	// It must survive the merge even though the rest of SessionStart is stripped.
+	userSessionStart := map[string]any{
+		"hooks": []any{map[string]any{"type": "command", "command": "echo user-session-start"}},
+	}
+	ss, ok := hooks["SessionStart"].([]any)
+	if !ok {
+		t.Fatal("old settings has no SessionStart hook")
+	}
+	hooks["SessionStart"] = append(ss, userSessionStart)
+
+	// Simulate the plugin now being present: re-hardening generates settings
+	// without SessionStart/Stop/SessionEnd (the plugin's hooks.json owns those).
+	generated := HardenedSettings("go", "go", true)
+	merged := MergeSettings(old, generated)
+
+	mergedHooks, ok := merged["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("merged settings has no hooks map")
+	}
+
+	// No tu-agent-managed entry may remain under SessionStart, Stop, or
+	// SessionEnd — the plugin now owns those.
+	for _, ev := range []string{"SessionStart", "Stop", "SessionEnd"} {
+		entries, _ := mergedHooks[ev].([]any)
+		for _, e := range entries {
+			if isTuAgentManagedHook(e) {
+				t.Errorf("%s still has a tu-agent-managed hook after merging pluginPresent settings: %v", ev, e)
+			}
+		}
+	}
+
+	// Stop and SessionEnd had ONLY tu-agent-managed entries in `old` — after
+	// stripping, the event key must be removed entirely, not left as `[]`.
+	for _, ev := range []string{"Stop", "SessionEnd"} {
+		if v, present := mergedHooks[ev]; present {
+			t.Errorf("%s should be removed entirely (no entries left), got %v", ev, v)
+		}
+	}
+
+	// The user-authored SessionStart hook must survive.
+	ssAfter, ok := mergedHooks["SessionStart"].([]any)
+	if !ok {
+		t.Fatal("SessionStart missing after merge, but the surviving user entry should have kept it alive")
+	}
+	foundUser := false
+	for _, e := range ssAfter {
+		em, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		inner, _ := em["hooks"].([]any)
+		for _, h := range inner {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			if cmd, _ := hm["command"].(string); cmd == "echo user-session-start" {
+				foundUser = true
+			}
+		}
+	}
+	if !foundUser {
+		t.Error("user-authored SessionStart hook was dropped by merge")
+	}
+
+	// PreToolUse (secret guard) and PostToolUse (formatter) must still be present.
+	if _, ok := mergedHooks["PreToolUse"]; !ok {
+		t.Error("PreToolUse secret guard missing after merge")
+	}
+	if _, ok := mergedHooks["PostToolUse"]; !ok {
+		t.Error("PostToolUse formatter missing after merge")
+	}
+}
+
+func TestHardenHooksPluginPresent(t *testing.T) {
+	h := hardenHooks("go", true)
+	for _, k := range []string{"SessionStart", "Stop", "SessionEnd"} {
+		if _, ok := h[k]; ok {
+			t.Errorf("pluginPresent hooks include %s — duplicated with plugin/hooks/hooks.json", k)
+		}
+	}
+	if _, ok := h["PreToolUse"]; !ok {
+		t.Errorf("secret guard must remain even with plugin present")
+	}
+	if _, ok := h["PostToolUse"]; !ok {
+		t.Errorf("go formatter hook must remain even with plugin present")
+	}
+	// Without the plugin nothing changes.
+	full := hardenHooks("go", false)
+	for _, k := range []string{"SessionStart", "Stop", "SessionEnd", "PreToolUse", "PostToolUse"} {
+		if _, ok := full[k]; !ok {
+			t.Errorf("standalone hooks missing %s", k)
+		}
 	}
 }

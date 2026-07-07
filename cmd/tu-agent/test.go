@@ -293,7 +293,10 @@ func resolveTestGenTargets(target string, top int, domain string) (*query.Graph,
 		return g, targets, nil
 	}
 
-	id := resolveTarget(g, target)
+	id, _, err := resolveTargetChecked(g, target)
+	if err != nil {
+		return nil, nil, err
+	}
 	node, ok := g.NodeByID(id)
 	if !ok {
 		return nil, nil, fmt.Errorf("test gen: target %q not found — try 'tu-agent graph find %s'", target, target)

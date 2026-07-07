@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,7 +101,7 @@ func TestBuildConceptCardsFromUnits(t *testing.T) {
 		{Path: "src/c/P.java", Package: "com.acme.shop.catalog"},
 		{Path: "src/o/O.java", Package: "com.acme.shop.orders"},
 	}
-	cards, err := buildConceptCardsFromUnits(units, nil, nil, []string{"com.acme.shop"}, codegen.DomainMapOptions{Depth: 1, MinFiles: 1}, "leiden")
+	cards, err := buildConceptCardsFromUnits(units, nil, nil, nil, nil, []string{"com.acme.shop"}, codegen.DomainMapOptions{Depth: 1, MinFiles: 1}, "leiden")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,12 +116,85 @@ func TestBuildConceptCardsFallsBackToDomains(t *testing.T) {
 		{Path: "a3", Package: "com.acme.x"}, {Path: "a4", Package: "com.acme.x"},
 		{Path: "a5", Package: "com.acme.y"},
 	}
-	cards, err := buildConceptCardsFromUnits(units, nil, nil, nil, codegen.DomainMapOptions{Depth: 1, MinFiles: 1}, "heuristic")
+	cards, err := buildConceptCardsFromUnits(units, nil, nil, nil, nil, nil, codegen.DomainMapOptions{Depth: 1, MinFiles: 1}, "heuristic")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(cards) == 0 {
 		t.Fatal("fallback produced no cards")
+	}
+}
+
+// TestBuildConceptCardsThreadsWeighted is the regression test for the two-layer
+// drop that made `learn --cluster leiden` silently never run Leiden: learn.go
+// discarded edges/weighted from loadSourceUnits, and buildConceptCardsFromUnits
+// hardcoded nil/nil into buildDomains, so BuildDomainMapClustered always took
+// its len(weighted)==0 fallback regardless of the flag. All 20 units share one
+// package (so the package-path heuristic can only ever produce a single
+// domain), but the weighted edges form two internally-dense, mutually
+// disconnected communities — so if edges/weighted actually reach
+// BuildDomainMapClustered, its topology split (2 domains) must differ from the
+// heuristic's package split (1 domain), and must match calling
+// BuildDomainMapClustered directly.
+func TestBuildConceptCardsThreadsWeighted(t *testing.T) {
+	const groupSize = 10 // 2 groups * 10 = 20 >= clusterFallbackMinFiles
+	var units []codegen.SourceUnit
+	var weighted []codegen.WeightedEdge
+	for _, group := range []string{"a", "b"} {
+		for i := 1; i <= groupSize; i++ {
+			units = append(units, codegen.SourceUnit{
+				Path:    fmt.Sprintf("src/%s%d.go", group, i),
+				Package: "pkg.shared",
+			})
+			if i > 1 {
+				weighted = append(weighted, codegen.WeightedEdge{
+					From:   fmt.Sprintf("src/%s%d.go", group, i-1),
+					To:     fmt.Sprintf("src/%s%d.go", group, i),
+					Weight: 5,
+				})
+			}
+		}
+	}
+	opts := codegen.DomainMapOptions{Depth: 1, MinFiles: 1}
+
+	cards, err := buildConceptCardsFromUnits(units, nil, weighted, nil, nil, nil, opts, "leiden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotNames := map[string]bool{}
+	for _, c := range cards {
+		gotNames[c.Name] = true
+	}
+
+	wantDomains := codegen.BuildDomainMapClustered(units, nil, weighted, opts)
+	wantNames := map[string]bool{}
+	for _, d := range wantDomains {
+		if d.Files == nil {
+			continue // parent marker, not a leaf concept
+		}
+		wantNames[d.Name] = true
+	}
+	if len(gotNames) != len(wantNames) {
+		t.Fatalf("cards = %v, want name set %v (from BuildDomainMapClustered directly)", gotNames, wantNames)
+	}
+	for name := range wantNames {
+		if !gotNames[name] {
+			t.Errorf("card set %v missing clustered domain %q", gotNames, name)
+		}
+	}
+
+	// The heuristic groups every file under one shared package into a single
+	// domain; if the community split actually reached the pipeline, it must
+	// diverge from that (two domains vs one).
+	heuristicDomains := codegen.BuildDomainMap(units, nil, opts)
+	heurLeaves := 0
+	for _, d := range heuristicDomains {
+		if d.Files != nil {
+			heurLeaves++
+		}
+	}
+	if heurLeaves == len(wantNames) {
+		t.Fatalf("fixture did not diverge: heuristic leaves=%d, clustered leaves=%d", heurLeaves, len(wantNames))
 	}
 }
 

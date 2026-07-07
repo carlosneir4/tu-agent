@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tu/tu-agent/internal/codegen"
+	"github.com/tu/tu-agent/internal/mutation"
 )
 
 // JavaAdapter implements LanguageAdapter for Maven and Gradle repos.
@@ -53,26 +54,39 @@ func (a *JavaAdapter) TestPath(repoRoot string, t Target) (string, error) {
 func (a *JavaAdapter) PromptFragment(t Target, testPath string) string {
 	cls := strings.TrimSuffix(filepath.Base(testPath), ".java")
 	prefix := javaGenPrefix(t)
+	start, end := genStartFor(t), genEndFor(t)
 	return fmt.Sprintf(`Write a JUnit 5 test class at %s.
 Rules:
 - The public class MUST be named %s (it must match the file name) and declare the same package as the source class (its package clause is in the context).
 - Use JUnit 5 (org.junit.jupiter.api). Aim to cover real branches and state, not just deterministic getters: use Mockito (mocks, spies, mockStatic) and test doubles freely to drive error paths, conditionals, and stateful behavior the context shows. Mock at collaborator boundaries rather than avoiding the logic under test.
 - Every @Test method name MUST start with %q and continue in strict camelCase with NO underscores anywhere (Java's default checkstyle MethodName rule ^[a-z][a-zA-Z0-9]*$ rejects underscores — a test that compiles and passes can still fail the build), e.g. %sWhenEmpty(), never %s_when_empty().
-- Inside the class body, wrap ALL generated @Test methods between a line "// tu-agent:gen:start" and a line "// tu-agent:gen:end".
+- Inside the class body, wrap ALL generated @Test methods between a line "// %s" and a line "// %s", EXACTLY as shown (no other text on those two lines) — these keys belong only to this target, never reuse another method's keys.
 - Output one complete compilable file: package clause, imports, class. No explanations.`,
-		testPath, cls, prefix, prefix, prefix)
+		testPath, cls, prefix, prefix, prefix, start, end)
 }
 
 func (a *JavaAdapter) RunCommand(repoRoot, testPath string, t Target) ([]string, error) {
 	cls := strings.TrimSuffix(filepath.Base(testPath), ".java")
 	prefix := javaGenPrefix(t)
+	// Scope the run to the owning module in a multi-module repo (the module
+	// nearest the test file's own build file) — mirrors the same walk-up
+	// internal/mutation already uses for pitest, so a Maven reactor or Gradle
+	// composite build runs only the module under test instead of every module
+	// from the root.
+	mod := mutation.JavaModuleDir(repoRoot, filepath.Dir(testPath))
 	switch a.runner(repoRoot) {
 	case "maven":
 		bin := "mvn"
 		if _, err := os.Stat(filepath.Join(repoRoot, "mvnw")); err == nil {
 			bin = "./mvnw"
 		}
-		return []string{bin, "-q", "test", "-Dtest=" + cls + "#" + prefix + "*"}, nil
+		// -DfailIfNoTests=false: a module-scoped -Dtest filter that matches no
+		// test in that module must not hard-fail the build.
+		args := []string{bin, "-q", "test", "-Dtest=" + cls + "#" + prefix + "*", "-DfailIfNoTests=false"}
+		if mod != "." {
+			args = append(args, "-pl", mod)
+		}
+		return args, nil
 	case "gradle":
 		// Find javaTest anywhere in the path, not just as a prefix, so a
 		// module-prefixed path (core/src/test/java/...) yields the package
@@ -86,7 +100,11 @@ func (a *JavaAdapter) RunCommand(repoRoot, testPath string, t Target) ([]string,
 		if _, err := os.Stat(filepath.Join(repoRoot, "gradlew")); err == nil {
 			bin = "./gradlew"
 		}
-		return []string{bin, "test", "--tests", fqcn + "." + prefix + "*"}, nil
+		task := "test"
+		if mod != "." {
+			task = ":" + strings.ReplaceAll(filepath.ToSlash(mod), "/", ":") + ":test"
+		}
+		return []string{bin, task, "--tests", fqcn + "." + prefix + "*"}, nil
 	}
 	return nil, fmt.Errorf("JavaAdapter.RunCommand: no runner detected at %s", repoRoot)
 }

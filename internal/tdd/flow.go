@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -62,7 +63,10 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	runner := StageRunner{D: o.Dispatcher}
 	statePath := filepath.Join(o.WorkDir, "state.json")
 
-	st, _ := LoadState(statePath)
+	st, err := LoadState(statePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: tdd state unreadable (%v) — starting fresh\n", err)
+	}
 	resume := st.Resumable() && resumeApproves(reader, o.Out, st)
 
 	if !resume {
@@ -105,7 +109,11 @@ func Run(ctx context.Context, o Options) (Result, error) {
 				fmt.Fprintln(o.Out, "trivial path complete — tests green.")
 				return Result{Status: StatusPass}, nil
 			}
-			feats = planFeatures(arch)
+			var dups []string
+			feats, dups = planFeatures(arch)
+			for _, d := range dups {
+				fmt.Fprintf(o.Out, "warning: architect emitted duplicate feature %q — keeping first\n", d)
+			}
 			if len(feats) == 0 {
 				fmt.Fprintln(o.Out, "architect produced no features — stopping.")
 				return Result{Status: StatusBlocked}, nil
@@ -126,7 +134,11 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			fmt.Fprintln(o.Out, "design budget exhausted — stopping.")
 			return Result{Status: StatusBlocked}, nil
 		}
-		st = BeginRun(o.Task, o.Branch, feats)
+		var err error
+		st, err = BeginRun(o.Task, o.Branch, feats)
+		if err != nil {
+			return Result{Status: StatusBlocked}, fmt.Errorf("tdd.Run: %w", err)
+		}
 		if err := SaveState(statePath, st); err != nil {
 			return Result{Status: StatusBlocked}, fmt.Errorf("tdd.Run: %w", err)
 		}

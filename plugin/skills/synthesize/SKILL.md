@@ -10,7 +10,7 @@ knowledge block from the concept cards already in the graph store.
 
 Define `TU="${CLAUDE_PLUGIN_ROOT}/bin/tu-agent"`.
 
-1. **Preflight:** run `"$TU" version`; require ≥ 0.2 (see install
+1. **Preflight:** run `"$TU" version`; require ≥ 0.3 (see install
    instructions in the shim error if missing).
 2. **Check inputs:** the graph store must hold at least one concept — call the
    `get_concept` MCP tool (no `name`) and confirm it lists one or more. If none,

@@ -62,15 +62,15 @@ func TestJavaAdapterRunCommand(t *testing.T) {
 		files []string
 		want  string
 	}{
-		{"maven", []string{"pom.xml"}, "mvn -q test -Dtest=FooTest#barGen*"},
-		{"maven wrapper", []string{"pom.xml", "mvnw"}, "./mvnw -q test -Dtest=FooTest#barGen*"},
+		{"maven", []string{"pom.xml"}, "mvn -q test -Dtest=FooTest#barGen* -DfailIfNoTests=false"},
+		{"maven wrapper", []string{"pom.xml", "mvnw"}, "./mvnw -q test -Dtest=FooTest#barGen* -DfailIfNoTests=false"},
 		{"gradle", []string{"build.gradle"}, "gradle test --tests com.acme.FooTest.barGen*"},
 		{"gradle wrapper", []string{"build.gradle.kts", "gradlew"}, "./gradlew test --tests com.acme.FooTest.barGen*"},
 		// Dual-build repos carry both a pom.xml and a build.gradle.
 		// A committed wrapper is the strongest signal of the team's real tool and
 		// must win over a bare build file of the other ecosystem.
 		{"dual build: gradlew wins over pom.xml", []string{"pom.xml", "build.gradle", "gradlew"}, "./gradlew test --tests com.acme.FooTest.barGen*"},
-		{"dual build: mvnw wins over build.gradle", []string{"build.gradle", "mvnw"}, "./mvnw -q test -Dtest=FooTest#barGen*"},
+		{"dual build: mvnw wins over build.gradle", []string{"build.gradle", "mvnw"}, "./mvnw -q test -Dtest=FooTest#barGen* -DfailIfNoTests=false"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -91,24 +91,49 @@ func TestJavaAdapterRunCommand(t *testing.T) {
 	}
 }
 
-// TestJavaAdapterRunCommandMultiModule pins the Gradle FQCN derivation for a
-// multi-module layout where the test path is prefixed by the module directory
-// (e.g. core/src/test/java/...). The package — not the module path — must form
-// the --tests filter.
+// TestJavaAdapterRunCommandMultiModule pins the Gradle FQCN derivation AND the
+// module-scoped task for a multi-module layout where the test path is
+// prefixed by the module directory (e.g. core/src/test/java/...). The
+// package — not the module path — must form the --tests filter, and the
+// task itself must be scoped to the module (:core:test) so the build does not
+// run every module's tests from the root.
 func TestJavaAdapterRunCommandMultiModule(t *testing.T) {
 	a := &JavaAdapter{}
 	tgt := Target{Name: "IngestionResult.error", Path: "core/src/main/java/com/acme/ingest/IngestionResult.java", Language: "java"}
 	testPath := "core/src/test/java/com/acme/ingest/IngestionResultTest.java"
 
 	root := t.TempDir()
-	writeFiles(t, root, "build.gradle", "gradlew")
+	writeFiles(t, root, "settings.gradle", "gradlew", "core/build.gradle")
 	argv, err := a.RunCommand(root, testPath, tgt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "./gradlew test --tests com.acme.ingest.IngestionResultTest.errorGen*"
+	want := "./gradlew :core:test --tests com.acme.ingest.IngestionResultTest.errorGen*"
 	if got := strings.Join(argv, " "); got != want {
 		t.Fatalf("RunCommand = %q, want %q", got, want)
+	}
+}
+
+// TestJavaAdapterRunCommandMavenMultiModule mirrors the Gradle case for Maven:
+// the test path lives under a module (core/...) that owns its own pom.xml, so
+// the run command must be scoped with -pl and must not hard-fail the whole
+// reactor build when the module's -Dtest filter matches nothing.
+func TestJavaAdapterRunCommandMavenMultiModule(t *testing.T) {
+	a := &JavaAdapter{}
+	tgt := Target{Name: "Foo.bar", Path: "core/src/main/java/com/acme/Foo.java", Language: "java"}
+	testPath := "core/src/test/java/com/acme/FooTest.java"
+
+	root := t.TempDir()
+	writeFiles(t, root, "pom.xml", "core/pom.xml")
+	argv, err := a.RunCommand(root, testPath, tgt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(argv, " ")
+	for _, want := range []string{"-pl core", "-DfailIfNoTests=false", "-Dtest=FooTest#barGen*"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("maven multi-module RunCommand = %q, missing %q", joined, want)
+		}
 	}
 }
 

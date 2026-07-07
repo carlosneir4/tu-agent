@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -104,6 +105,99 @@ func TestRunGraphImpactResolvesAmbiguousSymbolName(t *testing.T) {
 	}
 	if !strings.Contains(out, "Ctrl") {
 		t.Errorf("impact of ambiguous name 'Svc' missing dependent Ctrl:\n%s", out)
+	}
+	// "Svc" substring-matches four nodes (Svc, SvcException, and their two file
+	// nodes) but only Svc matches exactly — the multi-hit exact-match path still
+	// discloses how the ambiguous input was interpreted.
+	if !strings.Contains(out, `resolved "Svc" →`) {
+		t.Errorf("expected disclosure line for ambiguous exact-match resolution:\n%s", out)
+	}
+}
+
+func TestRunGraphImpactUnknownSymbolErrors(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "Svc.java"), []byte("package p;\npublic class Svc {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("runGraphBuild: %v", err)
+	}
+	_, err := runGraphImpact("Nonexistent", 2, 50, query.SurpriseConfig{}, false)
+	if err == nil || !strings.Contains(err.Error(), `symbol not found: "Nonexistent"`) {
+		t.Fatalf("want symbol-not-found error, got %v", err)
+	}
+}
+
+func TestRunGraphImpactAmbiguousSuggests(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Neither class is named exactly "Svc" — querying "Svc" substring-matches
+	// both (and their file nodes) with no exact-name hit, so resolution must
+	// fail with up to 3 "did you mean" candidates instead of silently picking one.
+	files := map[string]string{
+		"SvcException.java": "package p;\npublic class SvcException {}\n",
+		"SvcHelper.java":    "package p;\npublic class SvcHelper {}\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("runGraphBuild: %v", err)
+	}
+	_, err := runGraphImpact("Svc", 2, 50, query.SurpriseConfig{}, false)
+	if err == nil || !strings.Contains(err.Error(), "did you mean") {
+		t.Fatalf("want did-you-mean error, got %v", err)
+	}
+}
+
+func TestRunGraphImpactSubstringDisclosure(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Class name deliberately does not match the filename, so querying the
+	// substring "Alph" hits exactly one node (the class) — a single non-exact
+	// match, which must carry a disclosure line rather than resolve silently.
+	if err := os.WriteFile(filepath.Join(src, "Container.java"), []byte("package p;\npublic class Alpha {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("runGraphBuild: %v", err)
+	}
+	out, err := runGraphImpact("Alph", 2, 50, query.SurpriseConfig{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `resolved "Alph" →`) {
+		t.Errorf("missing disclosure line; out=%q", out)
 	}
 }
 
@@ -366,6 +460,64 @@ func TestRunGraphCycles(t *testing.T) {
 	}
 }
 
+func TestRunGraphCyclesCapsMembers(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite := func(rel, content string) {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const n = 25
+	for i := 0; i < n; i++ {
+		next := (i + 1) % n
+		mustWrite(fmt.Sprintf("pkg/f%d.go", i),
+			fmt.Sprintf("package pkg\nfunc F%d() { F%d() }\n", i, next))
+	}
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	out, err := runGraphCycles(false)
+	if err != nil {
+		t.Fatalf("cycles: %v", err)
+	}
+
+	var membersLine string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "members:") {
+			membersLine = l
+			break
+		}
+	}
+	if membersLine == "" {
+		t.Fatalf("no members line found in:\n%s", out)
+	}
+	if !strings.Contains(membersLine, fmt.Sprintf("%d members", n)) {
+		t.Errorf("expected real total %q in members line, got: %q", fmt.Sprintf("%d members", n), membersLine)
+	}
+	if !strings.Contains(membersLine, "(+5 more)") {
+		t.Errorf("expected cap marker '(+5 more)' in members line, got: %q", membersLine)
+	}
+	idx := strings.Index(membersLine, ": ")
+	if idx == -1 {
+		t.Fatalf("members line missing ': ' separator: %q", membersLine)
+	}
+	namesPart := strings.TrimSuffix(membersLine[idx+2:], " (+5 more)")
+	names := strings.Split(namesPart, ", ")
+	if len(names) != 20 {
+		t.Errorf("expected exactly 20 member names listed, got %d: %v", len(names), names)
+	}
+}
+
 func TestGraphImpactRelatedKnowledge(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
@@ -394,7 +546,10 @@ func TestGraphImpactRelatedKnowledge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	subID := resolveTarget(g, "Sub")
+	subID, _, err := resolveTargetChecked(g, "Sub")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ms, err := memory.Open(memoryDBPath("."))
 	if err != nil {
 		t.Fatal(err)
@@ -435,5 +590,67 @@ func TestRelatedKnowledge_MarksAuto(t *testing.T) {
 	}
 	if !strings.Contains(got, "~auto") {
 		t.Fatalf("auto link must be marked ~auto, got:\n%s", got)
+	}
+}
+
+func TestGraphImpactRelatedKnowledgeMarksStale(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"Base.java": "package p;\npublic class Base {}\n",
+		"Sub.java":  "package p;\npublic class Sub extends Base {}\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if _, err := captureStdout(t, func() error { return runGraphBuild("") }); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	g, err := loadQueryGraph()
+	if err != nil {
+		t.Fatal(err)
+	}
+	subID, _, err := resolveTargetChecked(g, "Sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms, err := memory.Open(memoryDBPath("."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs, err := ms.Upsert("gotcha/stale-sub", "Sub note whose other link has vanished", memory.UpsertOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Found by the impact query via this link to a real, live node...
+	if _, err := ms.Relate(obs.ID, subID, "related"); err != nil {
+		t.Fatal(err)
+	}
+	// ...but flagged stale because it also links to a node that no longer exists.
+	if _, err := ms.Relate(obs.ID, "src/Ghost.java::Ghost", "documents"); err != nil {
+		t.Fatal(err)
+	}
+	_ = ms.Close()
+
+	out, err := runGraphImpact("Base", 3, 50, query.SurpriseConfig{}, false)
+	if err != nil {
+		t.Fatalf("impact: %v", err)
+	}
+	if !strings.Contains(out, "gotcha/stale-sub") {
+		t.Fatalf("Related knowledge block must list the linked observation:\n%s", out)
+	}
+	if !strings.Contains(out, "possibly stale") {
+		t.Errorf("Related knowledge block must mark a stale-linked note:\n%s", out)
 	}
 }

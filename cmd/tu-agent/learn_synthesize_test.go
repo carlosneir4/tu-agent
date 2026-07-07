@@ -272,3 +272,148 @@ func TestRunStatus_FromStore(t *testing.T) {
 		t.Fatalf("runStatus from store: %v", err)
 	}
 }
+
+func TestWriteArchitectureSkill_NoExistingFileWritesWithMarker(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "SKILL.md")
+	content := "---\nname: architecture\ndescription: d\n---\n# Architecture Overview\nbody\n"
+
+	wrote, err := writeArchitectureSkill(outPath, content)
+	if err != nil {
+		t.Fatalf("writeArchitectureSkill: %v", err)
+	}
+	if !wrote {
+		t.Fatal("wrote = false, want true for a fresh file")
+	}
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), architectureGeneratedMarker) {
+		t.Errorf("written file missing marker:\n%s", got)
+	}
+	if !strings.HasPrefix(string(got), "---\n") {
+		t.Errorf("marker must not precede the frontmatter delimiter:\n%s", got)
+	}
+}
+
+func TestWriteArchitectureSkill_HandWrittenFileSurvives(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "SKILL.md")
+	handWritten := "---\nname: architecture\ndescription: hand-edited\n---\n# My own overview\n"
+	if err := os.WriteFile(outPath, []byte(handWritten), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wrote, err := writeArchitectureSkill(outPath, "---\nname: architecture\ndescription: d\n---\n# Regenerated\n")
+	if err != nil {
+		t.Fatalf("writeArchitectureSkill: %v", err)
+	}
+	if wrote {
+		t.Error("wrote = true, want false: a hand-edited file (no marker) must not be overwritten")
+	}
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != handWritten {
+		t.Errorf("hand-written file was modified:\n%s", got)
+	}
+}
+
+func TestWriteArchitectureSkill_MarkedFileIsRewritten(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "SKILL.md")
+	marked := "---\nname: architecture\ndescription: old\n---\n" + architectureGeneratedMarker + "\n# Old overview\n"
+	if err := os.WriteFile(outPath, []byte(marked), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent := "---\nname: architecture\ndescription: new\n---\n# New overview\n"
+	wrote, err := writeArchitectureSkill(outPath, newContent)
+	if err != nil {
+		t.Fatalf("writeArchitectureSkill: %v", err)
+	}
+	if !wrote {
+		t.Error("wrote = false, want true: a previously generated file must be regenerated")
+	}
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "New overview") {
+		t.Errorf("file was not rewritten with new content:\n%s", got)
+	}
+	if !strings.Contains(string(got), architectureGeneratedMarker) {
+		t.Errorf("rewritten file lost its marker:\n%s", got)
+	}
+}
+
+func TestInjectArchitectureMarker_PlacedAfterFrontmatter(t *testing.T) {
+	content := "---\nname: architecture\ndescription: d\n---\n# Architecture Overview\nbody\n"
+	got := injectArchitectureMarker(content)
+	want := "---\nname: architecture\ndescription: d\n---\n" + architectureGeneratedMarker + "\n# Architecture Overview\nbody\n"
+	if got != want {
+		t.Errorf("injectArchitectureMarker =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestInjectArchitectureMarker_Idempotent(t *testing.T) {
+	content := "---\nname: architecture\ndescription: d\n---\n" + architectureGeneratedMarker + "\n# Architecture Overview\n"
+	if got := injectArchitectureMarker(content); got != content {
+		t.Errorf("injectArchitectureMarker should be a no-op when the marker is already present:\n%s", got)
+	}
+}
+
+// TestPluginTemplateMarkerPlacement_ParsesAsGraphKnowledge pins the interop
+// between the plugin's architecture-synthesizer.md template (Step 2) and
+// codegen.ParseSkillContent, the entry point registerKnowledge (learn_graph.go)
+// uses to load a SKILL.md into the graph knowledge layer. The marker MUST sit
+// on its own line right after the closing "---", exactly where the binary's
+// own injectArchitectureMarker places it — the file must still start with
+// "---" or splitFrontmatter (and thus ParseSkillContent) rejects it, and the
+// skill silently drops out of the graph knowledge layer (a slog.Warn, not a
+// hard failure, so this would otherwise go unnoticed).
+func TestPluginTemplateMarkerPlacement_ParsesAsGraphKnowledge(t *testing.T) {
+	// Marker AFTER the closing frontmatter delimiter — what the plugin
+	// template now instructs, byte-matching the binary's placement.
+	afterFrontmatter := "---\n" +
+		"name: architecture\n" +
+		"description: Project architecture overview.\n" +
+		"---\n" +
+		architectureGeneratedMarker + "\n" +
+		"# Architecture Overview\nbody\n"
+
+	if !strings.HasPrefix(afterFrontmatter, "---\n") {
+		t.Fatal("test fixture must start with the frontmatter delimiter")
+	}
+	skill, err := codegen.ParseSkillContent(afterFrontmatter)
+	if err != nil {
+		t.Fatalf("ParseSkillContent must accept marker-after-frontmatter placement: %v", err)
+	}
+	if skill.Name != "architecture" {
+		t.Errorf("skill.Name = %q, want %q", skill.Name, "architecture")
+	}
+	// The marker-guard's own detection mechanism (writeArchitectureSkill,
+	// injectArchitectureMarker) is a plain strings.Contains check — confirm
+	// it still fires with the marker in the body rather than the frontmatter.
+	if !strings.Contains(afterFrontmatter, architectureGeneratedMarker) {
+		t.Error("marker-guard Contains check must detect the marker after frontmatter")
+	}
+
+	// Marker BEFORE the leading "---" — what the plugin template instructed
+	// before this fix. The file no longer starts with "---", so
+	// splitFrontmatter (via ParseSkillContent) must reject it: this is the
+	// exact failure mode the review finding flagged, documented here so a
+	// future edit to the template cannot silently regress it.
+	beforeFrontmatter := architectureGeneratedMarker + "\n" +
+		"---\n" +
+		"name: architecture\n" +
+		"description: Project architecture overview.\n" +
+		"---\n" +
+		"# Architecture Overview\nbody\n"
+
+	if _, err := codegen.ParseSkillContent(beforeFrontmatter); err == nil {
+		t.Error("ParseSkillContent must reject marker-before-frontmatter placement (this is why placement matters)")
+	}
+}

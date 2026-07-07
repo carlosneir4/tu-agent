@@ -95,7 +95,7 @@ func TestDelete_SoftDeletes(t *testing.T) {
 	if n := storeLen(t, s); n != 0 {
 		t.Errorf("Len = %d after delete, want 0", n)
 	}
-	res, err := s.Search("findable", "")
+	res, _, err := s.Search("findable", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

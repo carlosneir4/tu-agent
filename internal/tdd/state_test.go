@@ -1,12 +1,17 @@
 package tdd
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestBeginRunAllPending(t *testing.T) {
-	st := BeginRun("do things", "feat/x", []FeaturePlan{{Name: "a"}, {Name: "b"}})
+	st, err := BeginRun("do things", "feat/x", []FeaturePlan{{Name: "a"}, {Name: "b"}})
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
 	if st.Version != StateVersion || st.Task != "do things" || st.Branch != "feat/x" {
 		t.Fatalf("meta wrong: %+v", st)
 	}
@@ -15,8 +20,18 @@ func TestBeginRunAllPending(t *testing.T) {
 	}
 }
 
+func TestBeginRunRejectsDuplicates(t *testing.T) {
+	_, err := BeginRun("t", "b", []FeaturePlan{{Name: "x"}, {Name: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "duplicate feature") {
+		t.Fatalf("want duplicate-feature error, got %v", err)
+	}
+}
+
 func TestNextPendingAndMark(t *testing.T) {
-	st := BeginRun("t", "", []FeaturePlan{{Name: "a"}, {Name: "b"}})
+	st, err := BeginRun("t", "", []FeaturePlan{{Name: "a"}, {Name: "b"}})
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
 	n, ok := st.NextPending()
 	if !ok || n != "a" {
 		t.Fatalf("first pending = %q,%v", n, ok)
@@ -33,7 +48,10 @@ func TestNextPendingAndMark(t *testing.T) {
 }
 
 func TestResumableAndSummary(t *testing.T) {
-	st := BeginRun("t", "", []FeaturePlan{{Name: "a"}, {Name: "b"}})
+	st, err := BeginRun("t", "", []FeaturePlan{{Name: "a"}, {Name: "b"}})
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
 	st.Mark("a", "pass")
 	if !st.Resumable() {
 		t.Fatalf("one pending should be resumable")
@@ -53,7 +71,10 @@ func TestResumableAndSummary(t *testing.T) {
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "state.json")
-	want := BeginRun("count", "feat/count", []FeaturePlan{{Name: "a"}})
+	want, err := BeginRun("count", "feat/count", []FeaturePlan{{Name: "a"}})
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
 	want.Mark("a", "pass")
 	if err := SaveState(p, want); err != nil {
 		t.Fatalf("save: %v", err)
@@ -80,7 +101,10 @@ func TestLoadStateMissing(t *testing.T) {
 func TestScenarioStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
-	st := BeginRun("task", "branch", []FeaturePlan{{Name: "feat-a"}})
+	st, err := BeginRun("task", "branch", []FeaturePlan{{Name: "feat-a"}})
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
 	st.SetScenario("feat-a", ScenarioState{Tag: "@s1", Phase: "green", Kind: "tdd"})
 	st.SetScenario("feat-a", ScenarioState{Tag: "@s1", Phase: "done", Kind: "tdd"}) // upsert
 	st.SetScenario("feat-a", ScenarioState{Tag: "@s2", Phase: "red", Kind: "regression"})
@@ -110,7 +134,10 @@ func TestScenarioStateRoundTrip(t *testing.T) {
 func TestBeginRunPersistsKind(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
-	st := BeginRun("t", "b", []FeaturePlan{{Name: "a", Kind: "refactor"}, {Name: "b"}})
+	st, err := BeginRun("t", "b", []FeaturePlan{{Name: "a", Kind: "refactor"}, {Name: "b"}})
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
 	if err := SaveState(path, st); err != nil {
 		t.Fatal(err)
 	}
@@ -128,5 +155,49 @@ func TestBeginRunPersistsKind(t *testing.T) {
 	}
 	if _, ok := got.Feature("nope"); ok {
 		t.Fatalf("Feature(nope) should not be found")
+	}
+}
+
+// TestLoadStateDedupesDuplicateFeatures reproduces a resume against a
+// state.json written by an older binary (or hand-edited) that contains two
+// features with the same name. BeginRun's duplicate guard only protects the
+// construction path — LoadState must defensively dedupe (keep-first) so a
+// stale/hand-edited file on disk can't wedge NextPending/Mark into an
+// infinite loop on resume. This must NOT error: resume must not brick an
+// existing run.
+func TestLoadStateDedupesDuplicateFeatures(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "state.json")
+	raw := `{
+		"version": 1,
+		"task": "t",
+		"branch": "b",
+		"features": [
+			{"name": "x", "status": "pending"},
+			{"name": "x", "status": "pending"},
+			{"name": "y", "status": "pending"}
+		]
+	}`
+	if err := os.WriteFile(p, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := LoadState(p)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if len(st.Features) != 2 {
+		t.Fatalf("want 2 deduped features, got %d: %+v", len(st.Features), st.Features)
+	}
+
+	// A NextPending -> Mark("x", "pass") -> NextPending cycle must terminate:
+	// the second call must not return "x" again.
+	name, ok := st.NextPending()
+	if !ok || name != "x" {
+		t.Fatalf("first pending = %q,%v, want x", name, ok)
+	}
+	st.Mark(name, "pass")
+	name, ok = st.NextPending()
+	if !ok || name != "y" {
+		t.Fatalf("second pending = %q,%v, want y (loop over x would return x again)", name, ok)
 	}
 }

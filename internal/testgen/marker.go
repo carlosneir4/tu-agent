@@ -38,3 +38,25 @@ func tsGenTitle(t Target) string { return t.Name + " (gen)" }
 
 // tsGenRunPattern scopes a vitest/jest -t run to this target's gen tests.
 func tsGenRunPattern(t Target) string { return regexp.QuoteMeta(t.Name) + `.*\(gen\)` }
+
+// sentinelKey returns the exact suffix used in this target's per-target
+// sentinel comments (tu-agent:gen:start:<key> / tu-agent:gen:end:<key>). It
+// reuses the same marker identity already used to name this target's
+// generated functions (or describe-block title, for TS) per language, trimmed
+// of any trailing "_", so the sentinel key always lines up with what the
+// model was told to emit — and so a merge for target B can never match target
+// A's suffixed region.
+func sentinelKey(t Target) string {
+	var key string
+	switch t.Language {
+	case "java":
+		key = javaGenPrefix(t)
+	case "python":
+		key = pyGenPrefix(t)
+	case "typescript":
+		key = strings.ReplaceAll(t.Name, ".", "_")
+	default:
+		key = t.TestFuncPrefix()
+	}
+	return strings.TrimSuffix(key, "_")
+}

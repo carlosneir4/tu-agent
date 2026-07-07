@@ -36,7 +36,7 @@ func TestSaveCrystallizedSkill_StoresRecordWithProvenanceAndMaterializes(t *test
 	memCrystallizeMin = 3
 	seedCluster(t)
 
-	path, err := saveCrystallizedSkill("checkout", "---\nname: checkout\n---\nbody")
+	path, err := saveCrystallizedSkill("checkout", "---\nname: checkout\n---\nbody", 0)
 	if err != nil {
 		t.Fatalf("saveCrystallizedSkill: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestSaveCrystallizedSkill_UnknownLabelErrors(t *testing.T) {
 	t.Cleanup(func() { memCrystallizeMin = 5 })
 	memCrystallizeMin = 3
 	seedCluster(t) // a "checkout" cluster exists; "nonexistent" does not
-	_, err := saveCrystallizedSkill("nonexistent", "body")
+	_, err := saveCrystallizedSkill("nonexistent", "body", 0)
 	if err == nil {
 		t.Fatal("expected an error for an unknown cluster label")
 	}

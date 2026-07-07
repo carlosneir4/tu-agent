@@ -9,17 +9,21 @@ import (
 	"regexp"
 )
 
-// treeMutatingRe matches a tree-mutating verb only at COMMAND position — the
-// start of the command or right after a shell operator (; & | ) — so an argument
-// like the "rm" in `grep rm file` does not false-match. Covers deletes/moves/
-// patches and git operations that change tracked files.
-var treeMutatingRe = regexp.MustCompile(`(?:^|[;&|])\s*(?:rm|mv|patch|git\s+(?:checkout|switch|reset|restore|stash|clean|apply|revert|rm|merge|rebase|pull))\b`)
+// treeMutatingRe matches a tree-mutating verb at COMMAND position — start of any
+// line or right after a shell operator — so arguments like the "rm" in
+// `grep rm file` do not false-match. sed only counts with -i (in-place).
+var treeMutatingRe = regexp.MustCompile(`(?m)(?:^|[;&|])\s*(?:rm|mv|cp|tee|patch|sed\s+(?:\S+\s+)*-i|git\s+(?:checkout|switch|reset|restore|stash|clean|apply|revert|rm|merge|rebase|pull))\b`)
+
+// srcRedirectRe matches shell redirection straight into a source file — writes
+// the graph must reconcile. Bounded to known source extensions so log/tmp
+// redirects stay quiet.
+var srcRedirectRe = regexp.MustCompile(`>>?\s*\S+\.(?:go|java|py|ts|tsx|js|jsx|kt|rb|rs)\b`)
 
 // mutatesTree reports whether a shell command likely mutated the working tree.
 // It errs toward true: a false positive costs one extra (cheap-when-clean)
 // reconcile; a false negative leaves a stale graph node until the next reconcile.
 func mutatesTree(cmd string) bool {
-	return treeMutatingRe.MatchString(cmd)
+	return treeMutatingRe.MatchString(cmd) || srcRedirectRe.MatchString(cmd)
 }
 
 // postBashDecision reads a PostToolUse payload (JSON) from r and calls reconcile

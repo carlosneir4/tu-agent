@@ -9,6 +9,9 @@ tool_subset:
   - bash
   - load_skill
   - write_file
+  - get_context
+  - get_concept
+  - find_symbol
   - mem_save
   - mem_search
   - mem_recent

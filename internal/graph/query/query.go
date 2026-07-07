@@ -135,19 +135,6 @@ type ImpactResult struct {
 	Truncated       bool             // true when maxResults capped the traversal (more reachable nodes exist)
 }
 
-// Contains reports whether nodeID is in the result set.
-func (r *ImpactResult) Contains(nodeID string) bool {
-	if r == nil {
-		return false
-	}
-	for _, h := range r.Hits {
-		if h.Node.ID == nodeID {
-			return true
-		}
-	}
-	return false
-}
-
 // NodeIDs returns all affected node IDs, sorted.
 func (r *ImpactResult) NodeIDs() []string {
 	out := make([]string, 0, len(r.Hits))

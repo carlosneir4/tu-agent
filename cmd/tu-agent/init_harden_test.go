@@ -25,7 +25,7 @@ func TestApplyHardening_CreatesAndIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 
-	if err := applyHardening("go", "go", false); err != nil {
+	if err := applyHardening("go", "go", false, false); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	path := filepath.Join(".claude", "settings.json")
@@ -38,7 +38,7 @@ func TestApplyHardening_CreatesAndIsIdempotent(t *testing.T) {
 		t.Fatalf("settings.json invalid JSON: %v", err)
 	}
 
-	if err := applyHardening("go", "go", false); err != nil {
+	if err := applyHardening("go", "go", false, false); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	second, _ := os.ReadFile(path)
@@ -59,7 +59,7 @@ func TestApplyHardening_PrivateWritesGitInfoExclude(t *testing.T) {
 	}
 	chdir(t, dir)
 
-	if err := applyHardening("go", "go", true); err != nil {
+	if err := applyHardening("go", "go", true, false); err != nil {
 		t.Fatalf("private run: %v", err)
 	}
 
@@ -79,7 +79,7 @@ func TestApplyHardening_PrivateWritesGitInfoExclude(t *testing.T) {
 	}
 
 	// Idempotent: a second run leaves the exclude unchanged (block not duplicated).
-	if err := applyHardening("go", "go", true); err != nil {
+	if err := applyHardening("go", "go", true, false); err != nil {
 		t.Fatalf("second private run: %v", err)
 	}
 	ex2, _ := os.ReadFile(filepath.Join(".git", "info", "exclude"))
@@ -103,7 +103,7 @@ func TestApplyHardening_BacksUpAndPreserves(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyHardening("go", "go", false); err != nil {
+	if err := applyHardening("go", "go", false, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -123,7 +123,7 @@ func TestApplyHardening_BacksUpAndPreserves(t *testing.T) {
 	}
 
 	// A second run must not clobber the original backup with hardened content.
-	if err := applyHardening("go", "go", false); err != nil {
+	if err := applyHardening("go", "go", false, false); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	bak, err := os.ReadFile(filepath.Join(".claude", "settings.json.bak"))

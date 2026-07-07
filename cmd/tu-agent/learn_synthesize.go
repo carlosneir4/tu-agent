@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tu/tu-agent/internal/codegen"
@@ -155,11 +156,59 @@ func runSynthesize(ctx context.Context, subpath, providerOverride string) error 
 		return fmt.Errorf("creating architecture skill dir: %w", err)
 	}
 	outPath := filepath.Join(outDir, "SKILL.md")
-	if err := os.WriteFile(outPath, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", outPath, err)
+	wrote, err := writeArchitectureSkill(outPath, content)
+	if err != nil {
+		return err
 	}
-	fmt.Printf("Wrote %s (%d domains, %d domain edges)\n", outPath, len(domains), len(domainEdges))
+	if wrote {
+		fmt.Printf("Wrote %s (%d domains, %d domain edges)\n", outPath, len(domains), len(domainEdges))
+	}
 	return nil
+}
+
+// architectureGeneratedMarker tags a generated architecture/SKILL.md as owned
+// by tu-agent codegen. It lives on its own line right after the closing
+// frontmatter delimiter (never before the leading "---", which
+// codegen.ParseSkillContent requires as the file's first line) so a
+// hand-edited replacement can be told apart from a generated one.
+const architectureGeneratedMarker = "<!-- tu-agent:generated -->"
+
+// injectArchitectureMarker inserts architectureGeneratedMarker as the first
+// line of the body, right after the closing "---" of the YAML frontmatter.
+// If no frontmatter is found (unexpected for model output), the marker is
+// prepended as the file's first line instead — still "near the top".
+func injectArchitectureMarker(content string) string {
+	if strings.Contains(content, architectureGeneratedMarker) {
+		return content
+	}
+	if strings.HasPrefix(content, "---\n") {
+		if end := strings.Index(content[4:], "\n---\n"); end >= 0 {
+			splitAt := 4 + end + len("\n---\n")
+			return content[:splitAt] + architectureGeneratedMarker + "\n" + content[splitAt:]
+		}
+	}
+	return architectureGeneratedMarker + "\n" + content
+}
+
+// writeArchitectureSkill writes the generated architecture SKILL.md to
+// outPath, injecting architectureGeneratedMarker near the top. If outPath
+// already exists without the marker, it was hand-edited: the write is
+// skipped (a warning is printed) rather than clobbering it. Returns whether
+// the file was (over)written.
+func writeArchitectureSkill(outPath, content string) (bool, error) {
+	existing, err := os.ReadFile(outPath)
+	if err == nil {
+		if !strings.Contains(string(existing), architectureGeneratedMarker) {
+			fmt.Fprintln(os.Stderr, "architecture skill exists without the tu-agent marker — hand-edited, not overwriting (delete it to regenerate)")
+			return false, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("writeArchitectureSkill: reading %s: %w", outPath, err)
+	}
+	if err := os.WriteFile(outPath, []byte(injectArchitectureMarker(content)), 0o644); err != nil {
+		return false, fmt.Errorf("writeArchitectureSkill: writing %s: %w", outPath, err)
+	}
+	return true, nil
 }
 
 // mergedSynthesizeAndEnrich runs phase 4 via the single merged model call,
@@ -204,7 +253,7 @@ func mergedSynthesizeAndEnrich(ctx context.Context, root string, prov provider.P
 		outDir := filepath.Join(generatedSkillsDir(root), "architecture")
 		if mkErr := os.MkdirAll(outDir, 0o755); mkErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: creating architecture dir: %v\n", mkErr)
-		} else if wErr := os.WriteFile(filepath.Join(outDir, "SKILL.md"), []byte(arch), 0o644); wErr != nil {
+		} else if _, wErr := writeArchitectureSkill(filepath.Join(outDir, "SKILL.md"), arch); wErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: writing architecture skill: %v\n", wErr)
 		}
 	}

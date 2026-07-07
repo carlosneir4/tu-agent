@@ -76,7 +76,7 @@ func TestUpsertDerivedTypeIsSearchable(t *testing.T) {
 	if _, err := s.Upsert("gotcha/styleguide-generated", "view interfaces are generated", memory.UpsertOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Search("generated", "gotcha")
+	got, _, err := s.Search("generated", "gotcha", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestOpenBackfillsTypeFromTopicKey(t *testing.T) {
 	}
 	defer s.Close()
 
-	got, err := s.Search("body", "bug-pattern")
+	got, _, err := s.Search("body", "bug-pattern", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestOpenBackfillsTypeFromTopicKey(t *testing.T) {
 		t.Fatalf("expected backfilled bug-pattern row to be type-searchable, got %+v", got)
 	}
 	// The invalid-prefix row must remain untyped.
-	all, err := s.Search("body", "")
+	all, _, err := s.Search("body", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

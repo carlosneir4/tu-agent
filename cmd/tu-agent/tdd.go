@@ -52,6 +52,10 @@ func tddStages() []tddStage {
 		// their composed prompt via `tu-agent tdd prompt <name>`.
 		{"test-writer", "developer", tdd.TestWriterPrompt, writeGrant},
 		{"implementer", "developer", tdd.ImplementerPrompt, writeGrant},
+		// refactor is not dispatched by Run/runFeatureTDD either — it exists so
+		// the plugin conductor can fetch its composed prompt via `tu-agent tdd
+		// prompt refactor` for architect-emitted kind:"refactor" features.
+		{"refactor", "developer", tdd.RefactorPrompt, writeGrant},
 	}
 }
 

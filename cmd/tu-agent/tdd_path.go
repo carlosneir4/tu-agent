@@ -76,11 +76,6 @@ func tddRelBase(ticket, slug string) string {
 	return path.Join(".tu-agent", "tdd", slug)
 }
 
-// tddBaseDir is the absolute per-feature artifact dir under root.
-func tddBaseDir(root, ticket, slug string) string {
-	return filepath.Join(root, tddRelBase(ticket, slug))
-}
-
 // currentBranch returns the checked-out branch name, or "" on error.
 func currentBranch(root string) string {
 	cmd := exec.Command("git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD")

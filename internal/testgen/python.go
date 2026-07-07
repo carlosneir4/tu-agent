@@ -43,16 +43,17 @@ func (a *PythonAdapter) TestPath(repoRoot string, t Target) (string, error) {
 
 func (a *PythonAdapter) PromptFragment(t Target, testPath string) string {
 	prefix := pyGenPrefix(t)
+	start, end := genStartFor(t), genEndFor(t)
 	return fmt.Sprintf(`Write a pytest test file at %s.
 Rules:
 - Plain pytest: top-level test functions and bare assert statements; no unittest classes.
 - Every test function name MUST start with %q (e.g. def %s_happy_path()).
-- Wrap ALL generated test functions between a line "# tu-agent:gen:start" and a line "# tu-agent:gen:end".
+- Wrap ALL generated test functions between a line "# %s" and a line "# %s", EXACTLY as shown (no other text on those two lines) — these keys belong only to this target, never reuse another function's keys.
 - Use @pytest.mark.parametrize where a table of cases is natural.
 - Cover real branches and error paths, not just happy-path returns: use monkeypatch or unittest.mock (patch, MagicMock) to stub collaborators and reach conditionals and error handling.
 - Import the module under test the same way the call sites in the context do.
 - Output one complete runnable file: imports first, then the wrapped tests. No explanations.`,
-		testPath, prefix, prefix)
+		testPath, prefix, prefix, start, end)
 }
 
 func (a *PythonAdapter) RunCommand(repoRoot, testPath string, t Target) ([]string, error) {

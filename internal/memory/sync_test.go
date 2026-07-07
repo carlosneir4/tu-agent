@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+// TestRelChunkPath verifies the git-pathspec form of a chunk path: always
+// forward-slashed, and naming the same file ChunkPath would write to disk, so
+// `git show HEAD:<path>` finds what ChunkPath's caller just wrote.
+func TestRelChunkPath(t *testing.T) {
+	const author = "Alice Example <alice@example.com>"
+	got := RelChunkPath(author)
+	want := ".tu-agent/memory/chunks/chunk-" + authorSlug(author) + ".jsonl.gz"
+	if got != want {
+		t.Fatalf("RelChunkPath(%q) = %q, want %q", author, got, want)
+	}
+	if filepath.Base(ChunkPath(t.TempDir(), author)) != filepath.Base(got) {
+		t.Fatalf("RelChunkPath and ChunkPath must agree on the filename")
+	}
+}
+
 func TestExportImportRoundTrip(t *testing.T) {
 	src := openTestStoreInternal(t)
 	if _, err := src.Upsert("decision/rag", "use graph", UpsertOpts{Author: "alice", Type: "decision"}); err != nil {
@@ -28,7 +43,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	if res.Inserted != 1 || res.Updated != 0 || res.Skipped != 0 {
 		t.Fatalf("import result = %+v, want 1 inserted", res)
 	}
-	got, err := dst.Search("graph", "")
+	got, _, err := dst.Search("graph", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +75,7 @@ func TestImportMaxRevisionWins(t *testing.T) {
 	if res.Skipped != 1 {
 		t.Fatalf("older revision should be skipped, got %+v", res)
 	}
-	got, _ := dst.Search("decision", "")
+	got, _, _ := dst.Search("decision", "", 0)
 	if len(got) != 1 || got[0].Content != "v2" {
 		t.Fatalf("want v2 to survive, got %+v", got)
 	}
@@ -90,7 +105,7 @@ func TestImportMalformedTimestampFallsBackToNow(t *testing.T) {
 	}
 
 	// Observation must be searchable — content is the valuable part.
-	got, err := s.Search("malformed timestamp", "")
+	got, _, err := s.Search("malformed timestamp", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -160,7 +175,7 @@ func TestImportRecordsDoesNotValidateType(t *testing.T) {
 	if _, err := s.ImportRecords([]ChunkRecord{rec}); err != nil {
 		t.Fatalf("ImportRecords must not reject a non-canonical type: %v", err)
 	}
-	got, err := s.Search("legacy", "")
+	got, _, err := s.Search("legacy", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

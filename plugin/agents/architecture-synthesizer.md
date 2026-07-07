@@ -40,13 +40,23 @@ no skill's Key Files are ignored.
 
 ### Step 2: Write `.claude/skills/architecture/SKILL.md`
 
-Exactly this structure:
+Guard first: if the file already exists and does NOT contain the marker line
+`<!-- tu-agent:generated -->`, it was hand-edited — do NOT overwrite it. Skip
+this step and report `FAILED architecture: skill exists without the tu-agent
+marker — hand-edited, not overwriting (delete it to regenerate)`. Otherwise
+(no file, or an existing file that has the marker) write exactly this
+structure, marker line included. The marker MUST go on its own line
+immediately after the closing `---` of the frontmatter, never before the
+leading `---` — the file must start with `---` or `codegen.ParseSkillContent`
+(and the graph knowledge loader that calls it) fails to parse it and the skill
+silently drops out of the graph knowledge layer:
 
 ```
 ---
 name: architecture
 description: Project architecture overview — domains, navigation, and change-impact map.
 ---
+<!-- tu-agent:generated -->
 # Architecture Overview
 
 ## Purpose
@@ -116,10 +126,8 @@ feature, the `groundwork` skill hands off to the `tdd` dev-flow.
      - Otherwise, via CLI:           tu-agent graph context <file-or-symbol>
    get_context returns blast radius (dependents), the relevant concept(s),
    conventions, and tests to run — pointers, not source.
-3. The graph is authoritative for structure (callers, dependents, tests), but it
-   can miss framework/DI/inherited-from-compiled relationships. If it returns
-   "(none)" where you expect dependents, cross-check with a targeted search
-   before concluding.
+3. The graph can miss framework/DI/compiled relationships — if it returns "(none)"
+   for a symbol you can see used, cross-check with a targeted search.
 4. Only then read specific files if you still need detail.
 
 Do not skip step 2 for impact/dependency questions or before edits — the graph

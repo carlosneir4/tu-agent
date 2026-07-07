@@ -9,7 +9,9 @@ tool_subset:
   - find
   - list_dir
   - load_skill
-  - mem_save
+  - get_context
+  - get_impact
+  - find_symbol
   - mem_search
   - mem_recent
 ---
@@ -34,7 +36,6 @@ You are a security reviewer for {{.ProjectName}} (Go).
 1. Read the diff; trace tainted input to sinks.
 2. Verify `go test` and `go vet ./...` still pass after remediation.
 3. Report each issue with severity, file:line, and remediation.
-4. `mem_save` recurring issues with topic `bug-pattern`.
 
 ## Out of scope
 

@@ -54,11 +54,25 @@ func runGraphBuildQuiet(subpath string, quiet bool) error {
 		return err
 	}
 	defer s.Close()
-	root := "."
-	if subpath != "" {
-		root = subpath
+	root, err := filepath.Abs(repoRoot())
+	if err != nil {
+		return fmt.Errorf("graph build: resolving repo root: %w", err)
 	}
-	res, err := extract.Build(root, extract.Extensions(), s)
+	scope := ""
+	if subpath != "" {
+		abs, err := filepath.Abs(subpath)
+		if err != nil {
+			return fmt.Errorf("graph build: resolving %s: %w", subpath, err)
+		}
+		rel, err := filepath.Rel(root, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("graph build: %s is outside the repository root %s", subpath, root)
+		}
+		if rel != "." {
+			scope = filepath.ToSlash(rel)
+		}
+	}
+	res, err := extract.BuildScoped(root, scope, extract.Extensions(), s)
 	if err != nil {
 		return err
 	}
@@ -135,16 +149,27 @@ func loadQueryGraph() (*query.Graph, error) {
 	return query.NewGraph(nodes, edges, query.WithPackages(pkgByPath)), nil
 }
 
-// resolveTarget returns the graph node ID for target. A single substring match
-// is used directly. When several nodes match (e.g. "Svc" hits Svc, SvcException
-// and their files), it disambiguates to an exact-name match, preferring a class
-// node — resolving to the class lets Impact reach both symbol-level edges
-// (calls/extends) and, via its containing file, file-level import edges. Only if
-// nothing matches exactly is the literal target returned (likely unresolvable).
-func resolveTarget(g *query.Graph, target string) string {
+// resolveTargetChecked resolves target to a node ID. It errors when nothing in
+// the graph matches (with up to 3 candidate suggestions when a substring search
+// finds near-misses), and returns a one-line disclosure when the resolution was
+// not an exact name match, so callers can show how the target was interpreted.
+func resolveTargetChecked(g *query.Graph, target string) (id, disclosure string, err error) {
+	// A literal, already-known graph node ID (e.g. "path/File.java::Symbol", as
+	// produced by other graph output) resolves directly — it is not an ambiguous
+	// human-typed name, so no disclosure is warranted.
+	if n, ok := g.NodeByID(target); ok {
+		return n.ID, "", nil
+	}
 	hits := g.Find(target)
+	if len(hits) == 0 {
+		return "", "", fmt.Errorf("symbol not found: %q — use find_symbol to locate the right name", target)
+	}
 	if len(hits) == 1 {
-		return hits[0].ID
+		n := hits[0]
+		if strings.EqualFold(n.Name, target) {
+			return n.ID, "", nil
+		}
+		return n.ID, fmt.Sprintf("resolved %q → %s (1 candidate)", target, n.ID), nil
 	}
 	lower := strings.ToLower(target)
 	var exactClass, exactAny string
@@ -159,14 +184,21 @@ func resolveTarget(g *query.Graph, target string) string {
 			exactClass = n.ID
 		}
 	}
-	switch {
-	case exactClass != "":
-		return exactClass
-	case exactAny != "":
-		return exactAny
-	default:
-		return target
+	id = exactClass
+	if id == "" {
+		id = exactAny
 	}
+	if id == "" {
+		names := make([]string, 0, 3)
+		for _, n := range hits {
+			names = append(names, n.Name)
+			if len(names) == 3 {
+				break
+			}
+		}
+		return "", "", fmt.Errorf("symbol not found: %q — did you mean: %s (use find_symbol to disambiguate)", target, strings.Join(names, ", "))
+	}
+	return id, fmt.Sprintf("resolved %q → %s (%d candidates — use find_symbol to disambiguate)", target, id, len(hits)), nil
 }
 
 func runGraphImpact(target string, depth, maxResults int, cfg query.SurpriseConfig, surprisingOnly bool) (string, error) {
@@ -174,14 +206,21 @@ func runGraphImpact(target string, depth, maxResults int, cfg query.SurpriseConf
 	if err != nil {
 		return "", err
 	}
-	targetID := resolveTarget(g, target)
+	targetID, disclosure, err := resolveTargetChecked(g, target)
+	if err != nil {
+		return "", err
+	}
 	result, err := g.Impact(targetID, depth, query.DirUp, 0)
 	if err != nil {
 		return "", err
 	}
 	result.SurprisingEdges = g.ComputeSurprising(targetID, result, cfg)
 	if surprisingOnly {
-		return query.FormatSurprising(targetID, result, maxResults), nil
+		out := query.FormatSurprising(targetID, result, maxResults)
+		if disclosure != "" {
+			out = disclosure + "\n\n" + out
+		}
+		return out, nil
 	}
 	formatted := query.FormatImpact(targetID, result, maxResults)
 	note := ""
@@ -199,7 +238,11 @@ func runGraphImpact(target string, depth, maxResults int, cfg query.SurpriseConf
 		note = fmt.Sprintf("\n_(%d of these dependents are cycle-mates (co-coupled with `%s`); the rest are genuine downstream. The cyclic core has %d members.)_\n",
 			mates, targetID, len(core))
 	}
-	return formatted + note + relatedKnowledgeSection(targetID, result.NodeIDs()), nil
+	out := formatted + note + relatedKnowledgeSection(targetID, result.NodeIDs())
+	if disclosure != "" {
+		out = disclosure + "\n\n" + out
+	}
+	return out, nil
 }
 
 // relatedKnowledgeSection returns a "Related knowledge" markdown block listing
@@ -240,6 +283,7 @@ func relatedKnowledgeSection(targetID string, affectedIDs []string) string {
 	if err != nil || len(obs) == 0 {
 		return ""
 	}
+	stale := recallStale(s, obs)
 	var b strings.Builder
 	b.WriteString("\n## Related knowledge\n")
 	for _, o := range obs {
@@ -251,6 +295,9 @@ func relatedKnowledgeSection(targetID string, affectedIDs []string) string {
 		if autoOnly[o.ID] {
 			marker = " ~auto"
 		}
+		if n := stale[o.ID]; n > 0 {
+			marker += fmt.Sprintf(" ⚠ possibly stale: %d linked symbol(s) no longer in the graph — verify before trusting", n)
+		}
 		fmt.Fprintf(&b, "- [%s] %s (rev %d)%s\n", key, firstLine(o.Content, 80), o.Revision, marker)
 	}
 	return b.String()
@@ -261,11 +308,19 @@ func runGraphContext(target string, depth, maxResults int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	res, err := g.Context(resolveTarget(g, target), depth)
+	targetID, disclosure, err := resolveTargetChecked(g, target)
 	if err != nil {
 		return "", err
 	}
-	return query.FormatContext(res, maxResults), nil
+	res, err := g.Context(targetID, depth)
+	if err != nil {
+		return "", err
+	}
+	out := query.FormatContext(res, maxResults)
+	if disclosure != "" {
+		out = disclosure + "\n\n" + out
+	}
+	return out, nil
 }
 
 // runGraphTraits is the single assembly path shared by the CLI subcommand and
@@ -275,7 +330,11 @@ func runGraphTraits(target string, depth, maxResults int) (*query.TraitsResult, 
 	if err != nil {
 		return nil, err
 	}
-	return g.Traits(resolveTarget(g, target), depth, maxResults)
+	targetID, _, err := resolveTargetChecked(g, target)
+	if err != nil {
+		return nil, err
+	}
+	return g.Traits(targetID, depth, maxResults)
 }
 
 // runGraphFlow is the single assembly path shared by the CLI subcommand and
@@ -285,7 +344,11 @@ func runGraphFlow(target string, depth, fanOut int) (*query.FlowResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return g.Flow(resolveTarget(g, target), depth, fanOut)
+	targetID, _, err := resolveTargetChecked(g, target)
+	if err != nil {
+		return nil, err
+	}
+	return g.Flow(targetID, depth, fanOut)
 }
 
 func runGraphFind(symbol string) (string, error) {
@@ -448,10 +511,21 @@ func runGraphCycles(jsonOut bool) (string, error) {
 	if len(cycles) == 0 {
 		return "No dependency cycles found.\n", nil
 	}
+	const cyclesMemberCap = 20
 	var sb strings.Builder
 	sb.WriteString("## Dependency cycles (strongly-connected components, size > 1)\n\n")
 	for i, comp := range cycles {
-		fmt.Fprintf(&sb, "%d. %d members: %s\n", i+1, len(comp), strings.Join(comp, ", "))
+		members := comp
+		extra := 0
+		if len(members) > cyclesMemberCap {
+			extra = len(members) - cyclesMemberCap
+			members = members[:cyclesMemberCap]
+		}
+		fmt.Fprintf(&sb, "%d. %d members: %s", i+1, len(comp), strings.Join(members, ", "))
+		if extra > 0 {
+			fmt.Fprintf(&sb, " (+%d more)", extra)
+		}
+		sb.WriteString("\n")
 	}
 	sb.WriteString("\nCut these to break coupling; changes to any member ripple across the whole component.\n")
 	return sb.String(), nil
@@ -495,6 +569,7 @@ var graphCmd = &cobra.Command{
 var graphBuildCmd = &cobra.Command{
 	Use:   "build [path]",
 	Short: "Build or incrementally refresh the graph",
+	Long:  "Build or incrementally refresh the graph. A path argument restricts the refresh to that subtree; entries outside it are never deleted.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sub := ""

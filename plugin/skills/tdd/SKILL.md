@@ -132,6 +132,11 @@ Ask them to **approve**, **abort**, or **describe what to change**. Then:
   revised features and ask again. Allow up to **3 design rounds**; if still not
   approved, STOP.
 
+If the architect returned `complexity: trivial`, there are no features to
+list — show the architect's one-line summary of the intended change (its
+`handoff`) and ask the user to **approve or abort** before Step 4. Never
+start the trivial path without that approval.
+
 ## Step 3.5: Branch and ticket
 
 After the user approves the scenarios, before any TDD. The ticket `$TICKET`
@@ -155,32 +160,46 @@ leaves a tracked run open.)
 If `complexity` is `trivial`: run the craftsman stage (dispatch `general-purpose`
 with `"$TU" tdd prompt craftsman --base "$BASE"`) to make the change keeping
 existing tests green, then run
-`"$TU" tdd gate --feature <name> --covered <scenarios> ${TICKET:+--ticket "$TICKET"}`. If the JSON has
-`"ok": true`, report done. Otherwise show the feedback and stop. The trivial path
-writes no run state.
+```
+"$TU" tdd verify
+```
+If the JSON has `"ok": true`, report done; otherwise show the failure and stop.
+Do NOT call `tdd gate` on the trivial path — there is no feature file to gate
+against. The trivial path writes no run state.
 
 ## Step 5: Standard loop — outer feature loop + inner retry budget
 
 **Record the run first (fresh runs only).** If you are NOT resuming, run
-`"$TU" tdd state begin` with one `--feature <slug>` per approved feature (from the
-architect's `features` array), plus `--branch <name>` and `--task "<short
-description>"`. On resume the state already exists — skip this.
+`"$TU" tdd state begin --base "$BASE"` with one `--feature <slug>` per approved
+feature (from the architect's `features` array), plus `--branch <name>` and
+`--task "<short description>"`. On resume the state already exists — skip this.
 
-Then obtain the pending features from `"$TU" tdd status ${TICKET:+--ticket "$TICKET"}` (the `pending` list). For
+Then obtain the pending features from `"$TU" tdd status --base "$BASE"` (the
+features whose `status` is `"pending"` in the `features` array). For
 each pending feature in order, run the **inner standard loop** below (retry
 budget 3). After the feature reaches a terminal state, call
-`"$TU" tdd state mark <slug> pass` on success or
-`"$TU" tdd state mark <slug> blocked` on failure. Stop the entire run on the
-first blocked feature — remaining features stay `pending` and are resumable in
-the next session.
+`"$TU" tdd state mark <slug> pass --base "$BASE"` on success or
+`"$TU" tdd state mark <slug> blocked --base "$BASE"` on failure. Stop the entire
+run on the first blocked feature — remaining features stay `pending` and are
+resumable in the next session.
 
 **Inner standard loop for one feature (retry budget 3):** each pass through the
 loop is a full RED->GREEN sandwich — the test-writer and implementer are always
 re-dispatched together; there is no partial resume mid-sandwich.
 
+**Refactor features skip the sandwich.** If a feature's entry in the architect
+contract has `"kind": "refactor"`, do not run RED→GREEN: dispatch
+`general-purpose` with `"$TU" tdd prompt refactor --base "$BASE"` plus the
+feature name, then run `"$TU" tdd verify` — the whole suite must stay green
+(`"ok": true`; otherwise feed the failure back and retry within the same
+budget of 3). Then run the judge (step 6) and on `pass` mark the feature done
+as usual.
+
 **Language support:** the RED→GREEN gate currently supports Java (JUnit XML)
 and Go projects only — other languages lack a result-artifact parser and
-`isTestPath` recognition, so their test files would be mis-partitioned.
+`isTestPath` recognition, so their test files would be mis-partitioned. For Go
+the gate additionally proves each new test file red by running exactly its
+Test functions scoped to its package.
 
 Repeat up to 3 times:
 
@@ -207,7 +226,7 @@ Repeat up to 3 times:
    ```
    NEW_TESTS="$( printf '%s\n' "$CHANGED" | grep -E '(_test\.go$|/src/test/|^src/test/)' | paste -sd, - )"
    ```
-   Then run: `"$TU" tdd gate --feature <name> --expect red --new-tests "$NEW_TESTS" ${TICKET:+--ticket "$TICKET"}`.
+   Then run: `"$TU" tdd gate --feature <name> --expect red --new-tests "$NEW_TESTS" --base "$BASE"`.
    - `"ok": false` with feedback `"tests green without production: ..."` naming
      every new test file — the scenario already passed against existing code.
      This is a **regression catch**, not a defect: note it for the archive and
@@ -216,11 +235,10 @@ Repeat up to 3 times:
      change"`) — the new tests did not go red; feed the feedback to the
      test-writer and loop (consume one budget).
    - `"ok": true` — the new tests are confirmed red; continue to the GREEN
-     phase. Before dispatching the implementer, **remember this state as the
-     post-RED baseline**: keep `$CHANGED` (the full path set) and, for every
-     TEST file in it, its content hash (`git hash-object <file>`). Nothing is
-     committed or stashed between RED and GREEN, so this remembered baseline —
-     not a fresh diff — is what the GREEN guard compares against.
+     phase. The gate just wrote the durable RED baseline to
+     `$BASE/progress/red-baseline.json` (the content hashes of the new test
+     files). You do not need to remember anything — the GREEN gate verifies
+     it.
 
 **GREEN phase — minimal production, tests are frozen:**
 
@@ -229,40 +247,35 @@ Repeat up to 3 times:
    not modify, add, or delete any test file.
 5. Recompute the changed-or-new file set the same untracked-aware way
    (`{ git diff --name-only; git ls-files --others --exclude-standard; } | sort -u`).
-   A plain re-diff after GREEN shows the *cumulative* RED+GREEN changes — the
-   RED test files always reappear in it — so presence alone can't tell you
-   whether the implementer touched them. Compare against the **remembered
-   post-RED baseline** instead: for every TEST file in the new set, if it
-   wasn't in the baseline's test-file list, or its `git hash-object` no longer
-   matches the hash recorded at the end of RED, that's a violation — the
-   implementer added or modified a test. Feed it back to the implementer ("you
-   modified a test; tests are frozen once red") and loop (consume one budget)
-   without calling the gate. Otherwise run
-   `"$TU" tdd gate --feature <name> --covered <the implementer's scenarios> ${TICKET:+--ticket "$TICKET"}`.
+   Read the test-file list from `$BASE/progress/red-baseline.json`; if any
+   TEST file in the new set is not listed there, the implementer **added** a
+   test — feed it back ("you added a test; tests are frozen once red") and
+   loop (consume one budget) without calling the gate. Modified tests are
+   caught by the gate itself: it re-hashes the baseline files and fails with
+   `test files mutated since RED: ...` — treat that feedback exactly like any
+   other `"ok": false` (feed back to the implementer, consume one budget).
+   Otherwise run
+   `"$TU" tdd gate --feature <name> --covered <the implementer's scenarios> --base "$BASE"`.
    - Non-zero exit / error: the gate could not run — show the error and stop.
    - `"ok": false`: feed the `feedback` back to the implementer and loop (consume one budget).
-   - `"ok": true`: continue.
+   - `"ok": true`: continue. If the gate JSON carries a `warning` about a
+     missing baseline, surface it to the user but continue.
 6. Run the judge stage (dispatch `general-purpose` with `"$TU" tdd prompt judge --base "$BASE"`). On its verdict:
    - `revise`: feed the feedback to the test-writer and restart the sandwich
      from step 1 (consume one budget).
-   - `fail`: call `"$TU" tdd state mark <slug> blocked` and stop the entire run.
+   - `fail`: call `"$TU" tdd state mark <slug> blocked --base "$BASE"` and stop the entire run.
    - `pass`: continue to step 7.
-7. **DEFERRED — not currently run.** Mutation hardening (`tdd.mutation`) is
-   deliberately skipped on this two-phase RED→GREEN sandwich path, matching the
-   CLI conductor (`internal/tdd/flow.go`), which only runs the mutation gate on
-   the non-sandwich loop. Do not run `"$TU" test mutation` here even if
-   `tdd.mutation` is enabled — this step is pending re-enablement for the
-   sandwich flow. (Historical description, not currently exercised: if enabled,
-   run `"$TU" test mutation <primary source file or package>`; if the score is
-   below `tdd.mutation_threshold` (default 0.7), feed the surviving mutants back
-   to the implementer and loop, consuming one budget.)
+7. **DEFERRED — do not run `"$TU" test mutation` here even if `tdd.mutation`
+   is enabled.** Mutation hardening is pending re-enablement for the sandwich
+   flow, matching the CLI conductor.
 8. The feature passed. If `tdd.archive` is enabled (default on), run the scribe
    stage (dispatch `general-purpose` with `"$TU" tdd prompt scribe --base "$BASE"`)
-   to `mem_save` a `decision/<feature>` note. Call `"$TU" tdd state mark <slug> pass`.
+   to `mem_save` a `decision/<feature>` note. Call
+   `"$TU" tdd state mark <slug> pass --base "$BASE"`.
 
 If the budget is exhausted for a feature, call
-`"$TU" tdd state mark <slug> blocked` and stop the entire run with the last
-feedback.
+`"$TU" tdd state mark <slug> blocked --base "$BASE"` and stop the entire run
+with the last feedback.
 
 ## Notes
 
@@ -271,9 +284,14 @@ feedback.
 - Keep the contract JSON shape the agents emit; route on `status` and (for the
   architect) `complexity`, exactly as the CLI conductor does.
 - `tdd gate --expect red` only checks whether the named files went red — it does
-  not check who wrote what. The RED-phase "wrote production" and GREEN-phase
-  "modified a test" order violations are guarded by you computing the
-  untracked-aware changed-file set and, for GREEN, hashing test files against
-  the remembered post-RED baseline (steps 2 and 5) — the same guard
-  `internal/tdd.RunSandwich` applies in the CLI conductor by staging into a
-  private temp index (`git add -A`) before diffing.
+  not check who wrote what. The RED-phase "wrote production" order violation is
+  guarded by you computing the untracked-aware changed-file set (step 2). Test
+  mutation after RED is no longer something you track by hand: the gate owns
+  the durable baseline (`$BASE/progress/red-baseline.json`, written and
+  re-hashed by `cmd/tu-agent/tdd_gate.go`) and fails with `test files mutated
+  since RED: ...` if anything changed — you only additionally catch **added**
+  tests (step 5), which the baseline can't see. This is a different mechanism
+  from the CLI's fully-automated conductor, `internal/tdd.RunSandwich`, which
+  never calls `tdd gate` and instead diffs a private git-index snapshot
+  (`internal/tdd/worktree.go`) — the two paths solve the same problem with
+  different plumbing.

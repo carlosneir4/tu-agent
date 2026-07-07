@@ -41,7 +41,7 @@ func TestRunLearnConceptPhaseWritesCards(t *testing.T) {
 		{Path: "src/c/P.java", Package: "com.acme.shop.catalog"},
 		{Path: "src/o/O.java", Package: "com.acme.shop.orders"},
 	}
-	cards, err := buildConceptCardsFromUnits(units, nil, nil, []string{"com.acme.shop"}, codegen.DomainMapOptions{Depth: 1, MinFiles: 1}, "leiden")
+	cards, err := buildConceptCardsFromUnits(units, nil, nil, nil, nil, []string{"com.acme.shop"}, codegen.DomainMapOptions{Depth: 1, MinFiles: 1}, "leiden")
 	if err != nil {
 		t.Fatal(err)
 	}

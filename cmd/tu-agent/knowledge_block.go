@@ -44,10 +44,8 @@ const knowledgeBody = knowledgeOpen + "\n" +
 	"     - Otherwise, via CLI:           tu-agent graph context <file-or-symbol>\n" +
 	"   get_context returns blast radius (dependents), the relevant concept(s),\n" +
 	"   conventions, and tests to run — pointers, not source.\n" +
-	"3. The graph is authoritative for structure (callers, dependents, tests), but it\n" +
-	"   can miss framework/DI/inherited-from-compiled relationships. If it returns\n" +
-	"   \"(none)\" where you expect dependents, cross-check with a targeted search\n" +
-	"   before concluding.\n" +
+	"3. The graph can miss framework/DI/compiled relationships — if it returns \"(none)\"\n" +
+	"   for a symbol you can see used, cross-check with a targeted search.\n" +
 	"4. Only then read specific files if you still need detail.\n" +
 	"\n" +
 	"Do not skip step 2 for impact/dependency questions or before edits — the graph\n" +
@@ -99,7 +97,7 @@ func upsertMarkedBlock(mdPath, open, close, body string) error {
 	}
 	var out string
 	if re.Match(existing) {
-		out = re.ReplaceAllString(string(existing), body)
+		out = re.ReplaceAllLiteralString(string(existing), body)
 	} else {
 		out = strings.TrimRight(string(existing), "\n") + "\n\n" + body + "\n"
 	}

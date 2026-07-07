@@ -1,6 +1,7 @@
 package store
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -48,6 +49,41 @@ func TestOpenRebuildsOnVersionMismatch(t *testing.T) {
 	}
 	if v, _ := s2.Meta("extractor_version"); v != "v2" {
 		t.Errorf("extractor_version = %q, want v2", v)
+	}
+}
+
+func TestOpenRebuildRemovesSidecars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "graph.db")
+	s, err := Open(path, "v1")
+	if err != nil {
+		t.Fatalf("Open v1: %v", err)
+	}
+	s.Close()
+
+	walPath, shmPath := path+"-wal", path+"-shm"
+	if err := os.WriteFile(walPath, []byte("fake-wal"), 0o644); err != nil {
+		t.Fatalf("writing fake wal: %v", err)
+	}
+	if err := os.WriteFile(shmPath, []byte("fake-shm"), 0o644); err != nil {
+		t.Fatalf("writing fake shm: %v", err)
+	}
+
+	s2, err := Open(path, "v2") // version bump → rebuild must also clear stale sidecars
+	if err != nil {
+		t.Fatalf("Open v2: %v", err)
+	}
+	// WAL mode regenerates its own -wal/-shm while the connection is live (that's
+	// expected); close it so only genuinely leftover files would remain, then
+	// confirm the stale garbage written above didn't survive the rebuild.
+	if err := s2.Close(); err != nil {
+		t.Fatalf("Close v2: %v", err)
+	}
+
+	if _, err := os.Stat(walPath); !os.IsNotExist(err) {
+		t.Errorf("wal sidecar still present after rebuild: err=%v", err)
+	}
+	if _, err := os.Stat(shmPath); !os.IsNotExist(err) {
+		t.Errorf("shm sidecar still present after rebuild: err=%v", err)
 	}
 }
 

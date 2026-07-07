@@ -310,30 +310,46 @@ func (s *Store) Upsert(topicKey, content string, opts UpsertOpts) (Observation, 
 // terms are OR-joined and results are ranked by bm25 relevance; otherwise it
 // falls back to case-insensitive substring matching, most recent first.
 // Empty queries always take the fallback path (which lists everything).
-// typeFilter filters results by type when non-empty.
-func (s *Store) Search(query, typeFilter string) ([]Observation, error) {
+// typeFilter filters results by type when non-empty. limit caps the number of
+// rows returned (limit <= 0 means no cap); the second return is the total
+// number of matches before the cap, so a caller can disclose "showing N of M"
+// rather than silently truncating.
+func (s *Store) Search(query, typeFilter string, limit int) ([]Observation, int, error) {
 	if s.fts && strings.TrimSpace(query) != "" {
-		return s.searchFTS(query, typeFilter)
+		return s.searchFTS(query, typeFilter, limit)
 	}
-	q := "%" + strings.ToLower(query) + "%"
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.ToLower(query))
+	q := "%" + esc + "%"
+	countSQL := `SELECT count(*) FROM observations
+		WHERE deleted_at IS NULL
+		  AND (lower(title) LIKE ? ESCAPE '\' OR lower(content) LIKE ? ESCAPE '\' OR lower(topic_key) LIKE ? ESCAPE '\')`
 	sql := `SELECT ` + obsColumns + ` FROM observations
 		WHERE deleted_at IS NULL
-		  AND (lower(title) LIKE ? OR lower(content) LIKE ? OR lower(topic_key) LIKE ?)`
+		  AND (lower(title) LIKE ? ESCAPE '\' OR lower(content) LIKE ? ESCAPE '\' OR lower(topic_key) LIKE ? ESCAPE '\')`
 	args := []any{q, q, q}
 	if typeFilter != "" {
+		countSQL += ` AND type = ?`
 		sql += ` AND type = ?`
 		args = append(args, typeFilter)
 	}
+	var total int
+	if err := s.db.QueryRow(countSQL, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("memory.Store.Search: count: %w", err)
+	}
 	sql += ` ORDER BY updated_at DESC`
+	if limit > 0 {
+		sql += ` LIMIT ?`
+		args = append(args, limit)
+	}
 	rows, err := s.db.Query(sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("memory.Store.Search: %w", err)
+		return nil, 0, fmt.Errorf("memory.Store.Search: %w", err)
 	}
 	out, err := collectRows(rows)
 	if err != nil {
-		return nil, fmt.Errorf("memory.Store.Search: %w", err)
+		return nil, 0, fmt.Errorf("memory.Store.Search: %w", err)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // Recent returns the n most recently updated live observations, oldest

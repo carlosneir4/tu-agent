@@ -108,7 +108,7 @@ func TestJavaModuleDir_multiModuleGradle(t *testing.T) {
 		t.Fatal(err)
 	}
 	pkgDir := filepath.Join("core", "src", "main", "java", "com", "acme")
-	if got := javaModuleDir(repo, pkgDir); got != "core" {
+	if got := JavaModuleDir(repo, pkgDir); got != "core" {
 		t.Fatalf("javaModuleDir = %q, want core", got)
 	}
 	argv := javaEngine{}.Command(repo, pkgDir)
@@ -125,7 +125,7 @@ func TestJavaModuleDir_singleModuleRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "build.gradle"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := javaModuleDir(repo, "src/main/java/com/acme"); got != "." {
+	if got := JavaModuleDir(repo, "src/main/java/com/acme"); got != "." {
 		t.Fatalf("single-module javaModuleDir = %q, want .", got)
 	}
 	if got := gradleTask("."); got != "pitest" {
@@ -174,7 +174,7 @@ func TestJavaReportPath(t *testing.T) {
 
 func TestJavaModuleDir_absoluteGuard(t *testing.T) {
 	// An absolute pkgDir must not loop; it degrades to ".".
-	if got := javaModuleDir(t.TempDir(), "/abs/src/main/java/com/acme"); got != "." {
-		t.Fatalf("javaModuleDir(abs) = %q, want . (graceful degrade, no hang)", got)
+	if got := JavaModuleDir(t.TempDir(), "/abs/src/main/java/com/acme"); got != "." {
+		t.Fatalf("JavaModuleDir(abs) = %q, want . (graceful degrade, no hang)", got)
 	}
 }

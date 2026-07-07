@@ -40,7 +40,7 @@ func runLearn(ctx context.Context, opts learnOpts) error {
 	if err != nil {
 		return err
 	}
-	units, _, _, err := loadSourceUnits(s)
+	units, gEdges, weighted, err := loadSourceUnits(s)
 	if err != nil {
 		s.Close()
 		return err
@@ -63,7 +63,7 @@ func runLearn(ctx context.Context, opts learnOpts) error {
 		Depth: opts.Depth, MinFiles: opts.MinFiles, MaxFiles: opts.MaxFiles,
 		MinStandaloneFiles: opts.MinStandaloneFiles,
 	}
-	cards, err := buildConceptCardsFromUnits(units, nodes, nodeEdges, roots, mapOpts, opts.Cluster)
+	cards, err := buildConceptCardsFromUnits(units, gEdges, weighted, nodes, nodeEdges, roots, mapOpts, opts.Cluster)
 	if err != nil {
 		return err
 	}

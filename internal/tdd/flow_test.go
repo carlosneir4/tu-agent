@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -752,7 +754,10 @@ func TestRunResumeSkipsDoneFeatures(t *testing.T) {
 		"judge":     {jsonBlock(`{"stage":"judge","status":"pass","verdict":{"result":"pass"}}`)},
 	}}, &countingChatter{}, green, "resume\n")
 	// Seed a resumable state: f1 done, f2 pending.
-	st := BeginRun("t", "", []FeaturePlan{{Name: "f1"}, {Name: "f2"}})
+	st, err := BeginRun("t", "", []FeaturePlan{{Name: "f1"}, {Name: "f2"}})
+	if err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
 	st.Mark("f1", "pass")
 	if err := SaveState(filepath.Join(opts.WorkDir, "state.json"), st); err != nil {
 		t.Fatal(err)
@@ -868,5 +873,76 @@ func TestRunInjectsDesignSeed(t *testing.T) {
 	_, _ = Run(context.Background(), o)
 	if strings.Contains(analyst.got, "seed the spec") {
 		t.Fatalf("unexpected seed instruction with no DesignDoc: %q", analyst.got)
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// TestRunWarnsOnCorruptState guards flow.go:65 — a corrupt (not merely
+// missing) state.json must not fail silently. Run should warn on stderr and
+// still proceed as a fresh run instead of getting stuck.
+func TestRunWarnsOnCorruptState(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "state.json"), []byte("{not valid json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	analyst := &errChatter{}
+	o := Options{
+		Analyst: analyst,
+		In:      strings.NewReader(""),
+		Out:     &strings.Builder{},
+		Task:    "build the thing",
+		WorkDir: workDir,
+	}
+	stderr := captureStderr(t, func() {
+		_, _ = Run(context.Background(), o)
+	})
+	if !strings.Contains(stderr, "warning: tdd state unreadable") {
+		t.Errorf("expected a corrupt-state warning on stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "starting fresh") {
+		t.Errorf("warning should say it is starting fresh, got %q", stderr)
+	}
+}
+
+// TestRunNoWarningOnMissingState guards the other side: a plain missing
+// state.json (the normal case for a first run) is not an error and must not
+// print the corrupt-state warning.
+func TestRunNoWarningOnMissingState(t *testing.T) {
+	analyst := &errChatter{}
+	o := Options{
+		Analyst: analyst,
+		In:      strings.NewReader(""),
+		Out:     &strings.Builder{},
+		Task:    "build the thing",
+		WorkDir: t.TempDir(),
+	}
+	stderr := captureStderr(t, func() {
+		_, _ = Run(context.Background(), o)
+	})
+	if strings.Contains(stderr, "warning: tdd state unreadable") {
+		t.Errorf("missing state.json must not trigger the corrupt-state warning, got %q", stderr)
 	}
 }

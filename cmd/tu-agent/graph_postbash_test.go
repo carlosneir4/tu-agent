@@ -13,6 +13,13 @@ func TestMutatesTree(t *testing.T) {
 		"git checkout .", "git reset --hard", "git restore src/x.go",
 		"git stash", "git clean -fd", "git apply p.patch", "git revert HEAD", "git rm x",
 		"git switch main", "git merge feature", "git rebase main", "git pull",
+		"cp new.go internal/pkg/new.go",
+		"sed -i 's/a/b/' cmd/main.go",
+		"sed -e 's/x/y/' -i util.go",
+		"generate | tee internal/out.go",
+		"cat template > cmd/gen.go",
+		"echo done >> notes.py",
+		"ls -la\nrm stray.go", // multiline: verb at start of line 2
 	}
 	for _, c := range mutating {
 		if !mutatesTree(c) {
@@ -22,6 +29,10 @@ func TestMutatesTree(t *testing.T) {
 	nonMutating := []string{
 		"ls", "cat file", "git status", "git log --oneline", "git diff",
 		"go test ./...", "echo confirm", "grep rm file", "npm run build", "terraform plan",
+		"go test ./... 2>/dev/null",
+		"echo hi > /tmp/log.txt",
+		"sed 's/a/b/' file.go", // sed without -i is read-only
+		"grep cp README.md",
 	}
 	for _, c := range nonMutating {
 		if mutatesTree(c) {

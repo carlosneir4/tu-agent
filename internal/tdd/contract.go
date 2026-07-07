@@ -85,15 +85,29 @@ func ParseContract(text string) (Contract, error) {
 }
 
 // planFeatures returns the architect's feature list, synthesizing a single plan
-// from the legacy Handoff+Scenarios when no explicit list was emitted.
-func planFeatures(c Contract) []FeaturePlan {
+// from the legacy Handoff+Scenarios when no explicit list was emitted. Explicit
+// lists are deduped keep-first by name; dropped duplicate names are returned so
+// the caller can warn (the legacy Handoff path can't produce dupes, so it always
+// returns a nil dropped list).
+func planFeatures(c Contract) ([]FeaturePlan, []string) {
 	if len(c.Features) > 0 {
-		return c.Features
+		seen := make(map[string]bool, len(c.Features))
+		out := make([]FeaturePlan, 0, len(c.Features))
+		var dropped []string
+		for _, f := range c.Features {
+			if seen[f.Name] {
+				dropped = append(dropped, f.Name)
+				continue
+			}
+			seen[f.Name] = true
+			out = append(out, f)
+		}
+		return out, dropped
 	}
 	if c.Handoff != "" {
-		return []FeaturePlan{{Name: c.Handoff, Scenarios: c.Scenarios}}
+		return []FeaturePlan{{Name: c.Handoff, Scenarios: c.Scenarios}}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // lastJSONBlock returns the content of the last ```json ... ``` fence in text.

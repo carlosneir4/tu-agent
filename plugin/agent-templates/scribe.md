@@ -16,7 +16,7 @@ Decision scribe on **__PROJECT__**. When work completes, you record the durable 
 2. **Dedupe** — `mem_search` first; update an existing note rather than duplicate it.
 
 ## Report
-Call `mem_save` once with a `decision/<slug>` topic capturing WHAT changed and WHY: the decision, its rationale, and the files touched. Concise and durable.
+Call `mem_save` once with a `decision/<slug>` topic capturing WHAT changed and WHY: the decision and its rationale. Name the code symbols involved in prose — never list file paths (memory relink derives the links). Concise and durable.
 
 ## Definition of done
 - Exactly one durable `decision/<slug>` note saved (or an existing one updated).

@@ -16,10 +16,15 @@ const conceptMaxLandmarks = 10
 
 // buildConceptCardsFromUnits assembles concept cards: root-based discovery or
 // domain-map fallback, then landmarks/traits from node-level graph data.
-func buildConceptCardsFromUnits(units []codegen.SourceUnit, nodes []graph.Node, nodeEdges []graph.Edge, conceptRoots []string, opts codegen.DomainMapOptions, cluster string) ([]codegen.ConceptCard, error) {
+// edges/weighted are the import graph and file-coupling weights from
+// loadSourceUnits; they must reach buildDomains so `--cluster leiden` can
+// actually run topology clustering instead of always falling back to the
+// package-path heuristic (BuildDomainMapClustered falls back whenever
+// weighted is empty).
+func buildConceptCardsFromUnits(units []codegen.SourceUnit, edges []codegen.Edge, weighted []codegen.WeightedEdge, nodes []graph.Node, nodeEdges []graph.Edge, conceptRoots []string, opts codegen.DomainMapOptions, cluster string) ([]codegen.ConceptCard, error) {
 	concepts := codegen.DiscoverConcepts(units, conceptRoots)
 	if concepts == nil {
-		domains, err := buildDomains(units, nil, nil, opts, cluster)
+		domains, err := buildDomains(units, edges, weighted, opts, cluster)
 		if err != nil {
 			return nil, fmt.Errorf("concepts: domain fallback: %w", err)
 		}
@@ -38,7 +43,7 @@ func runConcepts(subpath string, conceptRoots []string, cluster string, opts cod
 	if err != nil {
 		return "", fmt.Errorf("concepts: opening store: %w", err)
 	}
-	units, _, _, err := loadSourceUnits(s)
+	units, edges, weighted, err := loadSourceUnits(s)
 	if err != nil {
 		s.Close()
 		return "", err
@@ -53,7 +58,7 @@ func runConcepts(subpath string, conceptRoots []string, cluster string, opts cod
 	if err != nil {
 		return "", fmt.Errorf("concepts: %w", err)
 	}
-	cards, err := buildConceptCardsFromUnits(units, nodes, nodeEdges, conceptRoots, opts, cluster)
+	cards, err := buildConceptCardsFromUnits(units, edges, weighted, nodes, nodeEdges, conceptRoots, opts, cluster)
 	if err != nil {
 		return "", err
 	}

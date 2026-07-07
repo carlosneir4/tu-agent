@@ -11,6 +11,9 @@ tool_subset:
   - list_dir
   - load_skill
   - dispatch_agent
+  - get_context
+  - get_impact
+  - find_symbol
   - mem_save
   - mem_search
   - mem_recent
@@ -66,4 +69,4 @@ Build: {{.BuildTool}}. Tests: `{{.TestCommand}}`.
 
 1. `{{.TestCommand}}` passes.
 2. `gofmt` and `go vet ./...` clean.
-3. `mem_save` called with change summary.
+3. `mem_save` called with change summary (standalone work only — in TDD the scribe archives).

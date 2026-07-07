@@ -28,6 +28,7 @@ var (
 	initPublic         bool
 	initAugmentAgents  bool
 	initAugmentExclude string
+	initPlugin         bool
 )
 
 // initSetupOpts controls the setup-only init path.
@@ -42,6 +43,7 @@ type initSetupOpts struct {
 	Private       bool
 	AugmentAgents bool
 	Exclude       string
+	Plugin        bool
 }
 
 // runInitSetup performs setup-only init: detect language/build tooling and
@@ -91,7 +93,9 @@ func runInitSetup(_ context.Context, opts initSetupOpts) error {
 		}
 	}
 	if !opts.NoHarden {
-		if err := applyHardening(lang, buildTool, opts.Private); err != nil {
+		home, _ := os.UserHomeDir()
+		plugin := pluginContext(opts.Plugin, os.Getenv, home)
+		if err := applyHardening(lang, buildTool, opts.Private, plugin); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: hardening: %v\n", err)
 		}
 	}
@@ -177,7 +181,7 @@ func generateClaudeMD(info *codegen.ProjectInfo, lang, buildTool, testCmd string
 	return nil
 }
 
-// generateAgents renders the five dev-flow agent files from per-language templates.
+// generateAgents renders the seven dev-flow agent files from per-language templates.
 func generateAgents(info *codegen.ProjectInfo, lang, buildTool, testCmd string, force bool) error {
 	fmt.Println("\nGenerating dev-flow agents...")
 	agentsDir := filepath.Join(".claude", "agents")
@@ -199,6 +203,19 @@ func generateAgents(info *codegen.ProjectInfo, lang, buildTool, testCmd string, 
 			continue
 		}
 		dest := filepath.Join(agentsDir, role+".md")
+		// Back up hand-tuned agents ONLY when the overwrite will actually
+		// happen (file exists AND force is set — writeAgentFile's own skip
+		// condition). Backing up whenever the file merely exists would, on a
+		// force=false run, clobber a meaningful older .bak from a prior
+		// --force run with a redundant copy while writing nothing. A failed
+		// backup hard-fails the whole step (mirrors applyHardening's
+		// settings.json backup) so a bad --force regen never destroys
+		// enrichment with no working backup.
+		if existing, readErr := os.ReadFile(dest); readErr == nil && force {
+			if bakErr := os.WriteFile(dest+".bak", existing, 0o644); bakErr != nil {
+				return fmt.Errorf("generateAgents: backing up %s: %w", role, bakErr)
+			}
+		}
 		skipped, writeErr := writeAgentFile(dest, rendered, force)
 		if writeErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not write agent %q: %v\n", role, writeErr)
@@ -222,8 +239,10 @@ func generateAgents(info *codegen.ProjectInfo, lang, buildTool, testCmd string, 
 // applyHardening writes a hardened .claude/settings.json for the detected
 // toolchain, deep-merging into any existing file (preserving user entries) and
 // backing the original up to settings.json.bak. It also upserts the tu-agent
-// managed block into .gitignore. Idempotent.
-func applyHardening(lang, buildTool string, private bool) error {
+// managed block into .gitignore. pluginPresent skips the SessionStart/Stop/
+// SessionEnd hooks the Claude Code plugin's own hooks.json already provides.
+// Idempotent.
+func applyHardening(lang, buildTool string, private, pluginPresent bool) error {
 	fmt.Println("\nHardening Claude Code settings...")
 	settingsPath := filepath.Join(".claude", "settings.json")
 
@@ -258,7 +277,7 @@ func applyHardening(lang, buildTool string, private bool) error {
 		return fmt.Errorf("applyHardening: reading settings.json: %w", readErr)
 	}
 
-	merged := codegen.MergeSettings(existing, codegen.HardenedSettings(lang, buildTool))
+	merged := codegen.MergeSettings(existing, codegen.HardenedSettings(lang, buildTool, pluginPresent))
 	out, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
 		return fmt.Errorf("applyHardening: marshaling settings: %w", err)
@@ -367,6 +386,7 @@ Claude Code, or run: tu-agent learn`,
 			Private:       resolvePrivate(initPrivate, initPublic),
 			AugmentAgents: initAugmentAgents,
 			Exclude:       initAugmentExclude,
+			Plugin:        initPlugin,
 		})
 	},
 }
@@ -419,6 +439,8 @@ func init() {
 		"augment existing .claude/agents/*.md with graph MCP tools + protocol (additive, idempotent)")
 	initCmd.Flags().StringVar(&initAugmentExclude, "exclude", "",
 		"comma-separated agent names to skip with --augment-agents")
+	initCmd.Flags().BoolVar(&initPlugin, "plugin", false,
+		"provisioning under the Claude Code plugin: skip hooks its hooks.json already provides")
 }
 
 // parseExtensions splits a comma-separated extension string, ensures each

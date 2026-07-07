@@ -19,12 +19,42 @@ func TestOpen_FallbackWithoutFTS(t *testing.T) {
 	if _, err := s.Add("auth", "JWT tokens expire hourly", "test"); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	got, err := s.Search("jwt", "")
+	got, _, err := s.Search("jwt", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 	if len(got) != 1 {
 		t.Errorf("LIKE fallback results = %d, want 1", len(got))
+	}
+}
+
+// TestSearchLiteralPercent guards the LIKE-escape fix: a query containing
+// SQL wildcard characters (%, _) must match them literally, not as
+// wildcards. Forced onto the substring fallback path (ftsDisabled) since
+// FTS5 tokenizes rather than pattern-matches.
+func TestSearchLiteralPercent(t *testing.T) {
+	ftsDisabled = true
+	t.Cleanup(func() { ftsDisabled = false })
+	s, err := Open(filepath.Join(t.TempDir(), "memory.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	if _, err := s.Add("progress", "100% done", "test"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if _, err := s.Add("progress", "100 x done", "test"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	got, total, err := s.Search("100%", "", 0)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if total != 1 || len(got) != 1 {
+		t.Fatalf("Search(%q) = %d results (total %d), want exactly 1 — an unescaped %% would also match \"100 x done\"", "100%", len(got), total)
+	}
+	if got[0].Content != "100% done" {
+		t.Errorf("Search(%q) matched %q, want the literal \"100%% done\" note", "100%", got[0].Content)
 	}
 }
 

@@ -5,19 +5,36 @@ import "testing"
 func TestPlanFeatures(t *testing.T) {
 	// Explicit list wins.
 	c := Contract{Features: []FeaturePlan{{Name: "a", Scenarios: []string{"@s1"}}, {Name: "b"}}}
-	got := planFeatures(c)
+	got, dups := planFeatures(c)
 	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" {
 		t.Fatalf("explicit features = %+v", got)
 	}
+	if len(dups) != 0 {
+		t.Fatalf("dups = %v, want none", dups)
+	}
 	// Legacy handoff is synthesized into a single plan.
 	c2 := Contract{Handoff: "count", Scenarios: []string{"@s1", "@s2"}}
-	got2 := planFeatures(c2)
+	got2, dups2 := planFeatures(c2)
 	if len(got2) != 1 || got2[0].Name != "count" || len(got2[0].Scenarios) != 2 {
 		t.Fatalf("legacy handoff = %+v", got2)
 	}
+	if len(dups2) != 0 {
+		t.Fatalf("dups2 = %v, want none", dups2)
+	}
 	// Nothing to do.
-	if got3 := planFeatures(Contract{}); len(got3) != 0 {
-		t.Fatalf("empty = %+v", got3)
+	if got3, dups3 := planFeatures(Contract{}); len(got3) != 0 || len(dups3) != 0 {
+		t.Fatalf("empty = %+v, dups = %+v", got3, dups3)
+	}
+}
+
+func TestPlanFeaturesDedupes(t *testing.T) {
+	c := Contract{Features: []FeaturePlan{{Name: "x"}, {Name: "x"}, {Name: "y"}}}
+	got, dups := planFeatures(c)
+	if len(got) != 2 || got[0].Name != "x" || got[1].Name != "y" {
+		t.Fatalf("planFeatures = %+v", got)
+	}
+	if len(dups) != 1 || dups[0] != "x" {
+		t.Errorf("dups = %v, want [x]", dups)
 	}
 }
 

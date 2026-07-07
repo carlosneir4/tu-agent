@@ -71,10 +71,12 @@ question and proceed.
    proceed. When a coverage report is available, call `test_gaps` with
    `coverage` (a report path) or `cover: true`; the result shows per-symbol
    covered%, so prefer high-risk, low-coverage symbols.
-2. **Scaffold:** call the `test_scaffold` MCP tool with the target. It
-   returns JSON: `context` (signature, body, real call sites, callees,
-   domain notes, blast radius), `test_path`, `run_command`, and
-   `prompt_fragment`.
+2. **Scaffold:** call the `test_scaffold` MCP tool with the target. It always
+   returns a JSON array of scaffolds (one element for a single function; one
+   per exported method for a class) — for a single-symbol target, use the
+   sole element. Each scaffold has `context` (signature, body, real call
+   sites, callees, domain notes, blast radius), `test_path`, `run_command`,
+   and `prompt_fragment`.
 3. **Generate** the test following `prompt_fragment` exactly — file name,
    package/class naming, the mandatory `_gen` test-name marker (Go
    `TestX_Gen`, Python `test_x_gen`, Java camelCase `xGen()`, TypeScript a
