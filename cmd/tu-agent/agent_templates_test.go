@@ -42,6 +42,91 @@ func TestDevFlowAgentMemoryTools(t *testing.T) {
 	}
 }
 
+// TestDevFlowAgentQARunsTests pins that qa carries Bash on the plugin surface:
+// its Verify step must be able to run the project's test command, and until
+// this matrix fix no surface (AgentTools, plugin skeleton, or codegen
+// tool_subset) granted it.
+func TestDevFlowAgentQARunsTests(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "plugin", "agent-templates", "qa.md"))
+	if err != nil {
+		t.Fatalf("qa: %v", err)
+	}
+	body := string(raw)
+	var toolsLine string
+	for _, ln := range strings.Split(body, "\n") {
+		if strings.HasPrefix(ln, "tools:") {
+			toolsLine = ln
+			break
+		}
+	}
+	if toolsLine == "" {
+		t.Fatal("qa: no tools: frontmatter line")
+	}
+	if !regexp.MustCompile(`(^|[ ,])Bash([ ,]|$)`).MatchString(toolsLine) {
+		t.Errorf("qa: tools line missing Bash (Verify step must be able to run tests): %s", toolsLine)
+	}
+}
+
+func TestAgentTemplatesProseWave2(t *testing.T) {
+	want := map[string][]string{
+		"qa":                {"narrowest package/module test"},
+		"security-reviewer": {"N/A — no such surface"},
+		"developer":         {"standalone work only"},
+		"architect":         {"standalone work only"},
+		"scribe":            {"never list file paths"},
+	}
+	for role, phrases := range want {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "plugin", "agent-templates", role+".md"))
+		if err != nil {
+			t.Fatalf("%s: %v", role, err)
+		}
+		body := string(raw)
+		for _, phrase := range phrases {
+			if !strings.Contains(body, phrase) {
+				t.Errorf("%s: missing wave-2 phrase %q", role, phrase)
+			}
+		}
+	}
+}
+
+func TestAgentTemplatesDoDGatingWave2(t *testing.T) {
+	// The "Record" step of architect/developer templates gates mem_save to
+	// standalone work (TDD dispatches let the scribe archive instead). The
+	// Definition of Done line must repeat that gate, or a reader following
+	// only the DoD checklist would still expect an unconditional mem_save.
+	cases := []struct {
+		path  string
+		phase string // substring anchoring the DoD line itself, not just any mention
+	}{
+		{
+			path:  filepath.Join("..", "..", "internal", "codegen", "templates", "base", "architect.md"),
+			phase: "`mem_save` called with topic `decision` (standalone work only",
+		},
+		{
+			path:  filepath.Join("..", "..", "internal", "codegen", "templates", "base", "developer.md"),
+			phase: "`mem_save` called when a durable decision was made (standalone work only)",
+		},
+		{
+			path:  filepath.Join("..", "..", "plugin", "agent-templates", "developer.md"),
+			phase: "A memory note saved when a durable decision was made (standalone work only)",
+		},
+	}
+	for _, c := range cases {
+		raw, err := os.ReadFile(c.path)
+		if err != nil {
+			t.Fatalf("%s: %v", c.path, err)
+		}
+		body := string(raw)
+		if !strings.Contains(body, "## Definition of done") {
+			t.Fatalf("%s: no Definition of done section found", c.path)
+		}
+		dod := body[strings.Index(body, "## Definition of done"):]
+		if !strings.Contains(dod, c.phase) {
+			t.Errorf("%s: Definition of done must gate mem_save to standalone work, want substring %q", c.path, c.phase)
+		}
+	}
+}
+
 func TestDevFlowAgentTddWriteTools(t *testing.T) {
 	// Roles the tdd plugin dispatches to write artifacts must carry the plain
 	// Claude Code tools, or the plugin path cannot write the .feature/review notes.

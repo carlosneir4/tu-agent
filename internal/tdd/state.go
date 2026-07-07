@@ -34,13 +34,20 @@ type State struct {
 	Features []FeatureState `json:"features"`
 }
 
-// BeginRun builds a fresh State with every feature pending.
-func BeginRun(task, branch string, features []FeaturePlan) State {
+// BeginRun builds a fresh State with every feature pending. It rejects
+// duplicate feature names as a second line of defense against a caller that
+// skipped planFeatures' dedup.
+func BeginRun(task, branch string, features []FeaturePlan) (State, error) {
+	seen := make(map[string]bool, len(features))
 	fs := make([]FeatureState, 0, len(features))
 	for _, f := range features {
+		if seen[f.Name] {
+			return State{}, fmt.Errorf("tdd.BeginRun: duplicate feature %q", f.Name)
+		}
+		seen[f.Name] = true
 		fs = append(fs, FeatureState{Name: f.Name, Status: "pending", Kind: f.Kind})
 	}
-	return State{Version: StateVersion, Task: task, Branch: branch, Features: fs}
+	return State{Version: StateVersion, Task: task, Branch: branch, Features: fs}, nil
 }
 
 // Feature returns the FeatureState for name, and whether it was found.
@@ -124,7 +131,28 @@ func LoadState(path string) (State, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return State{}, fmt.Errorf("tdd.LoadState: %w", err)
 	}
+	s.Features = dedupeFeatures(s.Features)
 	return s, nil
+}
+
+// dedupeFeatures drops later features that repeat an earlier one's Name,
+// keeping the first occurrence. It defends the resume path: BeginRun's
+// duplicate guard only covers construction, so a state.json written by an
+// older binary (or hand-edited) can still reach disk with duplicate names.
+// Without this, NextPending/Mark loop forever over the same stuck name
+// instead of erroring or brick-ing an existing run — so this is silent and
+// non-erroring by design.
+func dedupeFeatures(features []FeatureState) []FeatureState {
+	seen := make(map[string]bool, len(features))
+	out := make([]FeatureState, 0, len(features))
+	for _, f := range features {
+		if seen[f.Name] {
+			continue
+		}
+		seen[f.Name] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 // SaveState writes state to path atomically (temp file + rename), creating

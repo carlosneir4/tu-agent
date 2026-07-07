@@ -1,13 +1,14 @@
 package testgen
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -23,6 +24,12 @@ const (
 	genStart = "tu-agent:gen:start"
 	genEnd   = "tu-agent:gen:end"
 )
+
+// genStartFor and genEndFor are the per-target sentinel texts: the bare
+// constant plus this target's sentinelKey, so generating target B can never
+// match (and clobber) target A's region in the same file.
+func genStartFor(t Target) string { return genStart + ":" + sentinelKey(t) }
+func genEndFor(t Target) string   { return genEnd + ":" + sentinelKey(t) }
 
 // Merge folds the generated test file into existing conventional-file content
 // for one target, replacing the target's prior generated functions and
@@ -45,84 +52,184 @@ func Merge(language, existing, generated string, t Target) (string, error) {
 // --- stubs replaced in Tasks 2–5; until then every present-file merge falls
 // back to the safe FIXME append. ---
 
+// mergeGo splices the generated marker funcs into the existing file by byte
+// range: old marker funcs (incl. their doc comments) are cut from the original
+// text, missing imports are inserted into the existing import block, and the
+// generated funcs are appended. Everything hand-written — comments, build tags,
+// formatting — stays byte-identical (modulo a final gofmt pass). format.Source
+// (gofmt) never drops comments or build tags, which is why this splice is safe
+// where the old parse-and-reprint reassembly (splitGo) was not: reprinting an
+// *ast.File node with format.Node loses file-level comments (header, //go:build)
+// that are attached to the file rather than to any single declaration.
 func mergeGo(existing, generated string, t Target) (string, error) {
 	marker := goGenPrefix(t)
-	exPkg, exImports, exDecls, err := splitGo(existing, marker, false)
+	fset := token.NewFileSet()
+	exFile, err := parser.ParseFile(fset, "existing.go", existing, parser.ParseComments)
 	if err != nil {
 		return "", fmt.Errorf("%w: existing: %v", errUnmergeable, err)
 	}
-	_, genImports, genDecls, err := splitGo(generated, marker, true)
+	genFset := token.NewFileSet()
+	genFile, err := parser.ParseFile(genFset, "generated.go", generated, parser.ParseComments)
 	if err != nil {
 		return "", fmt.Errorf("%w: generated: %v", errUnmergeable, err)
 	}
-	if strings.TrimSpace(genDecls) == "" {
+
+	// 1. Collect generated marker funcs (text by byte range) + their imports.
+	// genImports is keyed by Path.Value (for membership/de-dup) but stores the
+	// full entry text (e.g. `x "strings"`, `_ "embed"`) so an alias, blank, or
+	// dot import survives the merge instead of being flattened to a bare path.
+	var genDecls []string
+	genImports := map[string]string{}
+	for _, d := range genFile.Decls {
+		switch dd := d.(type) {
+		case *ast.FuncDecl:
+			if dd.Recv == nil && isGenFuncName(dd.Name.Name, marker) {
+				start, end := declRange(genFset, dd)
+				genDecls = append(genDecls, strings.TrimSpace(generated[start:end]))
+			}
+		case *ast.GenDecl:
+			if dd.Tok == token.IMPORT {
+				for _, sp := range dd.Specs {
+					is := sp.(*ast.ImportSpec)
+					genImports[is.Path.Value] = importSpecText(is)
+				}
+			}
+		}
+	}
+	if len(genDecls) == 0 {
 		return "", fmt.Errorf("%w: generated has no %s* function", errUnmergeable, marker)
 	}
-	imports := unionStrings(exImports, genImports)
-	var b strings.Builder
-	b.WriteString(exPkg)
-	b.WriteString("\n\n")
-	if len(imports) > 0 {
-		b.WriteString("import (\n")
-		for _, im := range imports {
-			b.WriteString("\t")
-			b.WriteString(im)
-			b.WriteString("\n")
+
+	// 2. Cut old marker funcs from the ORIGINAL text (reverse order keeps offsets valid).
+	// existingImports is keyed by Path.Value the same way as genImports, so a
+	// path already present — in whatever aliased/blank/plain form the existing
+	// file uses — is never re-inserted; the existing file's form always wins on
+	// conflict.
+	type cut struct{ start, end int }
+	var cuts []cut
+	existingImports := map[string]string{}
+	var importDecl *ast.GenDecl
+	for _, d := range exFile.Decls {
+		switch dd := d.(type) {
+		case *ast.FuncDecl:
+			if dd.Recv == nil && isGenFuncName(dd.Name.Name, marker) {
+				start, end := declRange(fset, dd)
+				cuts = append(cuts, cut{start, end})
+			}
+		case *ast.GenDecl:
+			if dd.Tok == token.IMPORT {
+				importDecl = dd
+				for _, sp := range dd.Specs {
+					is := sp.(*ast.ImportSpec)
+					existingImports[is.Path.Value] = importSpecText(is)
+				}
+			}
 		}
-		b.WriteString(")\n\n")
 	}
-	if exDecls != "" {
-		b.WriteString(exDecls)
-		b.WriteString("\n\n")
+	out := existing
+	for i := len(cuts) - 1; i >= 0; i-- {
+		out = out[:cuts[i].start] + out[cuts[i].end:]
 	}
-	b.WriteString(genDecls)
-	out, err := format.Source([]byte(b.String()))
+
+	// 3. Insert missing imports into the existing block (or add one). missing
+	// holds full entry text (preserving any alias/blank/dot qualifier), not
+	// bare paths — a path already present in existingImports is skipped
+	// regardless of which form the generated side used.
+	var missing []string
+	for p, text := range genImports {
+		if _, ok := existingImports[p]; !ok {
+			missing = append(missing, text)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		hasBlock := importDecl != nil && importDecl.Lparen.IsValid()
+		out, err = insertImports(out, hasBlock, missing)
+		if err != nil {
+			return "", fmt.Errorf("%w: imports: %v", errUnmergeable, err)
+		}
+	}
+
+	// 4. Append the generated funcs and gofmt the result.
+	out = strings.TrimRight(out, "\n") + "\n\n" + strings.Join(genDecls, "\n\n") + "\n"
+	formatted, err := format.Source([]byte(out))
 	if err != nil {
 		return "", fmt.Errorf("%w: format: %v", errUnmergeable, err)
 	}
-	return string(out), nil
+	return string(formatted), nil
 }
 
-// splitGo parses src and returns the package clause, the import specs (source
-// fragments like `"fmt"` or `m "math"`), and the reprinted top-level
-// declarations. With onlyMarker true, decls holds only top-level funcs whose
-// name starts with marker; otherwise it holds every non-import decl EXCEPT
-// those marker funcs.
-func splitGo(src, marker string, onlyMarker bool) (pkg string, imports []string, decls string, err error) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "x.go", src, parser.ParseComments)
-	if err != nil {
-		return "", nil, "", err
+// declRange returns the byte offsets of d including its doc comment, so a cut
+// or extraction never leaves an orphaned doc comment behind (or, for the
+// generated side, always brings the doc comment along).
+func declRange(fset *token.FileSet, d *ast.FuncDecl) (int, int) {
+	start := d.Pos()
+	if d.Doc != nil {
+		start = d.Doc.Pos()
 	}
-	pkg = "package " + f.Name.Name
-	var buf bytes.Buffer
-	for _, d := range f.Decls {
-		if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.IMPORT {
-			for _, spec := range gd.Specs {
-				is := spec.(*ast.ImportSpec)
-				txt := is.Path.Value
-				if is.Name != nil {
-					txt = is.Name.Name + " " + txt
-				}
-				imports = append(imports, txt)
+	return fset.Position(start).Offset, fset.Position(d.End()).Offset
+}
+
+// importSpecText returns the full import entry text for sp: `name "path"`
+// when sp has a name (alias, blank `_`, or dot `.` import), else the bare
+// `"path"`. Keying import maps by Path.Value while storing this text is what
+// lets mergeGo de-dup on path but still emit the qualifier the generated or
+// existing file actually used, instead of silently flattening every import to
+// its bare path.
+func importSpecText(sp *ast.ImportSpec) string {
+	if sp.Name != nil {
+		return sp.Name.Name + " " + sp.Path.Value
+	}
+	return sp.Path.Value
+}
+
+// insertImports textually inserts entries (full import spec text, e.g.
+// `"fmt"` or `x "strings"` or `_ "embed"`) into src's import block, without
+// reprinting any AST. When hasBlock is true, src has a `import (...)` block:
+// insertImports re-parses src to find that GenDecl's closing paren and inserts
+// one entry per line just before it. Otherwise (a single `import "x"` line, or
+// no import at all) it inserts a brand-new `import (...)` block right after
+// the `package X` line.
+func insertImports(src string, hasBlock bool, entries []string) (string, error) {
+	if hasBlock {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "x.go", src, parser.ParseComments)
+		if err != nil {
+			return "", fmt.Errorf("insertImports: reparse: %w", err)
+		}
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.IMPORT || !gd.Lparen.IsValid() {
+				continue
 			}
-			continue
+			closeOffset := fset.Position(gd.Rparen).Offset
+			var ins strings.Builder
+			for _, e := range entries {
+				ins.WriteString("\t")
+				ins.WriteString(e)
+				ins.WriteString("\n")
+			}
+			return src[:closeOffset] + ins.String() + src[closeOffset:], nil
 		}
-		isMarker := false
-		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && isGenFuncName(fd.Name.Name, marker) {
-			isMarker = true
-		}
-		if isMarker != onlyMarker {
-			continue
-		}
-		var one bytes.Buffer
-		if err := format.Node(&one, fset, d); err != nil {
-			return "", nil, "", err
-		}
-		buf.WriteString(one.String())
-		buf.WriteString("\n\n")
+		return "", fmt.Errorf("insertImports: no import block found despite hasBlock=true")
 	}
-	return pkg, imports, strings.TrimRight(buf.String(), "\n"), nil
+
+	// Single non-paren import, or no import at all: add a fresh block after
+	// the package clause.
+	re := regexp.MustCompile(`(?m)^package \w+.*$`)
+	loc := re.FindStringIndex(src)
+	if loc == nil {
+		return "", fmt.Errorf("insertImports: no package clause found")
+	}
+	var b strings.Builder
+	b.WriteString("\n\nimport (\n")
+	for _, e := range entries {
+		b.WriteString("\t")
+		b.WriteString(e)
+		b.WriteString("\n")
+	}
+	b.WriteString(")")
+	return src[:loc[1]] + b.String() + src[loc[1]:], nil
 }
 
 // isGenFuncName reports whether name is a generated test func for this target:
@@ -138,12 +245,12 @@ func pyIsImport(line string) bool {
 }
 
 func mergePython(existing, generated string, t Target) (string, error) {
-	_, region, _, ok := splitRegion(generated)
+	_, region, _, ok := splitRegion(generated, "#", t)
 	if !ok {
-		return "", fmt.Errorf("%w: generated missing %s/%s sentinels", errUnmergeable, genStart, genEnd)
+		return "", fmt.Errorf("%w: generated missing %s/%s sentinels", errUnmergeable, genStartFor(t), genEndFor(t))
 	}
 	genImports, _ := stripLineImports(generated, pyIsImport)
-	exImports, exBody := stripLineImports(removeRegion(existing), pyIsImport)
+	exImports, exBody := stripLineImports(removeRegion(existing, "#", t), pyIsImport)
 	imports := unionStrings(exImports, genImports)
 
 	var b strings.Builder
@@ -162,12 +269,12 @@ func mergePython(existing, generated string, t Target) (string, error) {
 func tsIsImport(line string) bool { return strings.HasPrefix(line, "import ") }
 
 func mergeTS(existing, generated string, t Target) (string, error) {
-	_, region, _, ok := splitRegion(generated)
+	_, region, _, ok := splitRegion(generated, "//", t)
 	if !ok {
-		return "", fmt.Errorf("%w: generated missing %s/%s sentinels", errUnmergeable, genStart, genEnd)
+		return "", fmt.Errorf("%w: generated missing %s/%s sentinels", errUnmergeable, genStartFor(t), genEndFor(t))
 	}
 	genImports, _ := stripLineImports(generated, tsIsImport)
-	exImports, exBody := stripLineImports(removeRegion(existing), tsIsImport)
+	exImports, exBody := stripLineImports(removeRegion(existing, "//", t), tsIsImport)
 	imports := unionStrings(exImports, genImports)
 
 	var b strings.Builder
@@ -207,9 +314,9 @@ func javaPackageLine(src string) (pkg, rest string) {
 // fails to compile and the pipeline falls back to the FIXME marker rather than
 // silently shipping it.
 func mergeJava(existing, generated string, t Target) (string, error) {
-	_, region, _, ok := splitRegion(generated)
+	_, region, _, ok := splitRegion(generated, "//", t)
 	if !ok {
-		return "", fmt.Errorf("%w: generated missing %s/%s sentinels", errUnmergeable, genStart, genEnd)
+		return "", fmt.Errorf("%w: generated missing %s/%s sentinels", errUnmergeable, genStartFor(t), genEndFor(t))
 	}
 	exPkg, exNoPkg := javaPackageLine(existing)
 	genPkg, _ := javaPackageLine(generated)
@@ -221,10 +328,11 @@ func mergeJava(existing, generated string, t Target) (string, error) {
 	genImports, _ := stripLineImports(generated, javaIsImport)
 	imports := unionStrings(exImports, genImports)
 
-	// Class body: drop any prior gen region, then insert the new region before
-	// the final closing brace — methods stay inside the class without parsing
-	// method bodies.
-	body := removeRegion(exAfterImports)
+	// Class body: drop any prior gen region FOR THIS TARGET ONLY, then insert
+	// the new region before the final closing brace — methods stay inside the
+	// class without parsing method bodies. Another target's suffixed region
+	// (a different key) does not match and survives untouched.
+	body := removeRegion(exAfterImports, "//", t)
 	idx := strings.LastIndex(body, "}")
 	if idx < 0 {
 		return "", fmt.Errorf("%w: existing class has no closing brace", errUnmergeable)
@@ -245,28 +353,61 @@ func mergeJava(existing, generated string, t Target) (string, error) {
 	return b.String(), nil
 }
 
-// splitRegion locates the sentinel-delimited generated region in src.
-func splitRegion(src string) (before, region, after string, ok bool) {
+// splitRegion locates t's per-target sentinel-delimited region in src. A
+// region opens ONLY on a line whose strings.TrimSpace equals exactly
+// `<commentPrefix> <genStartFor(t)>` (and closes the same way for
+// genEndFor(t)) — a sentinel merely mentioned inside a string literal, prose,
+// or a fixmeAppend-neutralized FIXME block (which mangles the sentinel text
+// by construction) never matches. Only a BALANCED start/end pair counts: a
+// duplicate start before the matching end, or an end with no preceding start,
+// makes the region unbalanced and splitRegion fails closed (ok=false) rather
+// than guessing — callers surface that as errUnmergeable, never a delete.
+//
+// Back-compat: when src has no suffixed pair for t (checked first), a LEGACY
+// bare `<commentPrefix> tu-agent:gen:start` / `...:gen:end` pair (no suffix)
+// is treated as t's region — a one-time migration; the next merge re-emits
+// the suffixed form via genStartFor/genEndFor.
+func splitRegion(src, commentPrefix string, t Target) (before, region, after string, ok bool) {
+	start := commentPrefix + " " + genStartFor(t)
+	end := commentPrefix + " " + genEndFor(t)
+	if b, r, a, ok := splitRegionExact(src, start, end); ok {
+		return b, r, a, true
+	}
+	legacyStart := commentPrefix + " " + genStart
+	legacyEnd := commentPrefix + " " + genEnd
+	return splitRegionExact(src, legacyStart, legacyEnd)
+}
+
+// splitRegionExact implements the exact-trimmed-line, balanced-pair matching
+// splitRegion documents, for one concrete start/end line pair.
+func splitRegionExact(src, start, end string) (before, region, after string, ok bool) {
 	lines := strings.Split(src, "\n")
 	s, e := -1, -1
 	for i, ln := range lines {
-		if s < 0 && strings.Contains(ln, genStart) {
+		switch strings.TrimSpace(ln) {
+		case start:
+			if s >= 0 {
+				return src, "", "", false // duplicate start before a matching end: unbalanced
+			}
 			s = i
-		}
-		if strings.Contains(ln, genEnd) {
+		case end:
+			if s < 0 || e >= 0 {
+				return src, "", "", false // end with no open start, or a second end: unbalanced
+			}
 			e = i
 		}
 	}
-	if s < 0 || e < s {
+	if s < 0 || e < 0 {
 		return src, "", "", false
 	}
 	return strings.Join(lines[:s], "\n"), strings.Join(lines[s:e+1], "\n"), strings.Join(lines[e+1:], "\n"), true
 }
 
-// removeRegion returns src with any sentinel region removed; src unchanged when
-// none is present.
-func removeRegion(src string) string {
-	before, _, after, ok := splitRegion(src)
+// removeRegion returns src with t's sentinel region removed (per splitRegion's
+// per-target, exact-line, back-compat rules); src unchanged when none is
+// present. Another target's suffixed region never matches and is preserved.
+func removeRegion(src, commentPrefix string, t Target) string {
+	before, _, after, ok := splitRegion(src, commentPrefix, t)
 	if !ok {
 		return src
 	}

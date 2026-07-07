@@ -20,7 +20,7 @@ func TestSearch_FTSRanksByRelevance(t *testing.T) {
 	s := openFTSStore(t)
 	mustAdd(t, s, "auth-tokens", "tokens tokens tokens: rotation, signing, and expiry of tokens")
 	mustAdd(t, s, "deploy-secrets", "the vault holds one deploy credential and some tokens")
-	got, err := s.Search("tokens", "")
+	got, _, err := s.Search("tokens", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestSearch_FTSSpansMultipleObservations(t *testing.T) {
 	mustAdd(t, s, "auth", "JWT rotation is handled by the auth service")
 	mustAdd(t, s, "deploy", "the pipeline promotes builds to staging")
 	mustAdd(t, s, "storage", "the cache evicts entries after ten minutes")
-	got, err := s.Search("jwt pipeline cache", "")
+	got, _, err := s.Search("jwt pipeline cache", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestSearch_FTSSpansMultipleObservations(t *testing.T) {
 func TestSearch_FTSUnrelatedQueryReturnsNothing(t *testing.T) {
 	s := openFTSStore(t)
 	mustAdd(t, s, "auth", "JWT rotation is handled by the auth service")
-	got, err := s.Search("zeppelin", "")
+	got, _, err := s.Search("zeppelin", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -66,14 +66,14 @@ func TestSearch_FTSReflectsUpsertRevision(t *testing.T) {
 	if _, err := s.Upsert("arch/queue", "events flow through the dispatcher", memory.UpsertOpts{}); err != nil {
 		t.Fatalf("second Upsert: %v", err)
 	}
-	got, err := s.Search("dispatcher", "")
+	got, _, err := s.Search("dispatcher", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 	if len(got) != 1 {
 		t.Errorf("dispatcher results = %d, want 1", len(got))
 	}
-	stale, err := s.Search("broker", "")
+	stale, _, err := s.Search("broker", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestSearch_FTSReflectsUpsertRevision(t *testing.T) {
 func TestSearch_FTSQuotesOperatorSyntax(t *testing.T) {
 	s := openFTSStore(t)
 	mustAdd(t, s, "auth", "JWT rotation")
-	if _, err := s.Search(`AND NOT "broken`, ""); err != nil {
+	if _, _, err := s.Search(`AND NOT "broken`, "", 0); err != nil {
 		t.Errorf("Search with operator-looking input errored: %v, want graceful handling", err)
 	}
 }
@@ -94,7 +94,7 @@ func TestSearch_EmptyQueryReturnsAll(t *testing.T) {
 	s := openTestStore(t)
 	mustAdd(t, s, "a", "one")
 	mustAdd(t, s, "b", "two")
-	got, err := s.Search("", "")
+	got, _, err := s.Search("", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

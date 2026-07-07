@@ -147,6 +147,39 @@ func TestKnowledgeBlockMatchesSynthesizer(t *testing.T) {
 	}
 }
 
+func TestUpsertMarkedBlockLiteralDollar(t *testing.T) {
+	dir := t.TempDir()
+	md := filepath.Join(dir, "CLAUDE.md")
+	if err := os.WriteFile(md, []byte("# Title\n\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	open, close := "<!-- x:start -->", "<!-- x:end -->"
+	body := open + "\n" + "`$BASE` and $1 and $100\n" + close
+	if err := upsertMarkedBlock(md, open, close, body); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Re-run (upsert replaces an existing block): must stay byte-identical, and
+	// the $1-style token must survive — regexp.ReplaceAllString would treat it
+	// as a submatch reference and silently eat it.
+	if err := upsertMarkedBlock(md, open, close, body); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("re-run changed file:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+	if !strings.Contains(string(second), "$1") {
+		t.Errorf("literal $1 token was eaten by re-run:\n%s", second)
+	}
+}
+
 func TestKnowledgeBody_HasGroundworkDirective(t *testing.T) {
 	for _, want := range []string{
 		"## GROUNDWORK",

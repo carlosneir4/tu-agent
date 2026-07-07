@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,6 +149,47 @@ func TestMCP_memSaveUpsertRoundtrip(t *testing.T) {
 	out = callTool(t, session, "mem_recent", map[string]any{"n": 5})
 	if !strings.Contains(out, "v2") {
 		t.Errorf("mem_recent = %q, want latest content", out)
+	}
+}
+
+// TestMCP_memSearchLimitMarker guards the default LIMIT + disclosure for the
+// MCP tool: a broad query on a mature memory DB must not dump every match
+// into the caller's context, and the truncation must be disclosed.
+func TestMCP_memSearchLimitMarker(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	ms, err := memory.Open(memoryDBPath(repoRoot()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 25; i++ {
+		topic := fmt.Sprintf("decision/topic-%02d", i)
+		if _, err := ms.Upsert(topic, "caplimit body", memory.UpsertOpts{Type: "decision"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ms.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := t.Context()
+	clientT, serverT := mcp.NewInMemoryTransports()
+	srv := newMCPServer()
+	go func() { _ = srv.Run(ctx, serverT) }()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v0"}, nil)
+	session, err := client.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+
+	out := callTool(t, session, "mem_search", map[string]any{"query": "caplimit"})
+	if !strings.Contains(out, "showing 20 of 25") {
+		t.Errorf("mem_search = %q, want truncation marker 'showing 20 of 25'", out)
+	}
+	if !strings.Contains(out, "raise limit") {
+		t.Errorf("mem_search = %q, want 'raise limit' wording", out)
 	}
 }
 
@@ -549,6 +591,44 @@ func TestMCP_memRelateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMCP_memRelatedMarksStale(t *testing.T) {
+	t.Chdir(t.TempDir())
+	buildFixtureGraph(t) // gives the graph a real node so NodeCount() > 0.
+
+	ms, err := memory.Open(memoryDBPath("."))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	obs, err := ms.Upsert("gotcha/ghost", "linked to a node that no longer exists", memory.UpsertOpts{})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	ghostNode := "widget.go::Ghost"
+	if _, err := ms.Relate(obs.ID, ghostNode, "related"); err != nil {
+		t.Fatalf("relate: %v", err)
+	}
+	_ = ms.Close()
+
+	ctx := t.Context()
+	clientT, serverT := mcp.NewInMemoryTransports()
+	srv := newMCPServer()
+	go func() { _ = srv.Run(ctx, serverT) }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v0"}, nil)
+	session, err := client.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+
+	out := callTool(t, session, "mem_related", map[string]any{"node_id": ghostNode})
+	if !strings.Contains(out, "gotcha/ghost") {
+		t.Fatalf("mem_related should list the linked observation:\n%s", out)
+	}
+	if !strings.Contains(out, "possibly stale") {
+		t.Errorf("mem_related must mark a note linked to a deleted node as stale:\n%s", out)
+	}
+}
+
 func TestMemSessionToolsRegistered(t *testing.T) {
 	for _, want := range []string{"mem_session_start", "mem_session_end", "mem_session_list"} {
 		found := false
@@ -588,6 +668,57 @@ func TestMCP_memSessionRoundTrip(t *testing.T) {
 	out = callTool(t, session, "mem_session_start", map[string]any{})
 	if !strings.Contains(out, "x") {
 		t.Errorf("second mem_session_start should surface the previous summary %q:\n%s", "x", out)
+	}
+}
+
+// TestHandleMemSessionEnd_PassesProjectThrough locks in the fix for
+// mem_session_end dropping the project: it used to hardcode SessionEnd("",
+// ...), so a session started with a project could never be found (and ended)
+// by project. The stored session row must carry the project through to
+// mem_session_list / the store.
+func TestHandleMemSessionEnd_PassesProjectThrough(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	s, err := memory.Open(memoryDBPath(repoRoot()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.SessionStart("acme"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, out, err := handleMemSessionEnd(context.Background(), nil,
+		memSessionEndInput{Project: "acme", Summary: "wrapped up"})
+	if err != nil {
+		t.Fatalf("handleMemSessionEnd: %v", err)
+	}
+	if !strings.Contains(out.Result, "session ended") {
+		t.Errorf("mem_session_end output unexpected: %q", out.Result)
+	}
+
+	s2, err := memory.Open(memoryDBPath(repoRoot()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	sessions, err := s2.SessionList("acme", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session for project %q, got %d", "acme", len(sessions))
+	}
+	if sessions[0].Project != "acme" {
+		t.Errorf("stored session project = %q, want %q", sessions[0].Project, "acme")
+	}
+	if sessions[0].EndedAt.IsZero() {
+		t.Error("session should be ended")
+	}
+	if sessions[0].Summary != "wrapped up" {
+		t.Errorf("summary = %q, want %q", sessions[0].Summary, "wrapped up")
 	}
 }
 
@@ -633,7 +764,7 @@ func TestMCPMemExportImport(t *testing.T) {
 	}
 	d, _ := memory.Open(memoryDBPath("."))
 	defer d.Close()
-	got, _ := d.Search("mcp", "")
+	got, _, _ := d.Search("mcp", "", 0)
 	if len(got) != 1 {
 		t.Fatalf("imported observation not found: %+v", got)
 	}
@@ -697,13 +828,57 @@ func TestGetConceptFromStore(t *testing.T) {
 	}
 }
 
+func TestGetConceptListCapped(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".tu-agent"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	st, err := store.Open(filepath.Join(dir, ".tu-agent", "graph.db"), extract.ExtractorVersion)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	const n = 60
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("concept%02d", i)
+		if err := st.UpsertConcept(store.ConceptRow{
+			Name:        name,
+			Description: "desc " + name,
+			Content:     "---\nname: " + name + "\n---\nBODY",
+		}); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	t.Chdir(dir)
+
+	_, out, err := handleGetConcept(t.Context(), nil, getConceptInput{})
+	if err != nil {
+		t.Fatalf("handleGetConcept: %v", err)
+	}
+	if !strings.Contains(out.Result, "…and 10 more — pass a name to read one") {
+		t.Errorf("expected '…and 10 more' marker, got:\n%s", out.Result)
+	}
+	listed := 0
+	for _, l := range strings.Split(out.Result, "\n") {
+		if strings.HasPrefix(l, "- ") {
+			listed++
+		}
+	}
+	if listed > 50 {
+		t.Errorf("expected at most 50 listed concepts, got %d", listed)
+	}
+}
+
 func TestFormatObservationsStaleMarker(t *testing.T) {
 	obs := []memory.Observation{
 		{ID: "a", TopicKey: "decision/x", Revision: 2, Content: "body-x"},
 		{ID: "b", TopicKey: "decision/y", Revision: 1, Content: "body-y"},
 	}
 	out := formatObservations(obs, map[string]int{"a": 3})
-	if !strings.Contains(out, "posible stale: 3") {
+	if !strings.Contains(out, "possibly stale: 3") {
 		t.Errorf("missing stale marker for a:\n%s", out)
 	}
 	// The clean observation must NOT be flagged.
@@ -734,7 +909,7 @@ func TestHandleMemSavePersistsType(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ms.Close()
-	got, err := ms.Search("watch out", "")
+	got, _, err := ms.Search("watch out", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

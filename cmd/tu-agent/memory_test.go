@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -19,6 +20,7 @@ func resetMemoryCmds(t *testing.T) {
 	t.Helper()
 	memSaveTopic, memSaveContent, memSaveType, memSaveSource = "", "", "", ""
 	memSearchType = ""
+	memSearchLimit = 20
 	memShowIDs = false
 	memorySaveCmd.SetOut(nil)
 	memoryListCmd.SetOut(nil)
@@ -158,6 +160,32 @@ func TestMemoryCLI_Search(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "no observations") {
 		t.Errorf("expected no-match message, got:\n%s", buf.String())
+	}
+}
+
+// TestMemoryCLI_SearchLimitMarker guards the default LIMIT + disclosure: a
+// broad query on a mature memory DB must not dump every match, and the
+// truncation must be disclosed rather than silent.
+func TestMemoryCLI_SearchLimitMarker(t *testing.T) {
+	resetMemoryCmds(t)
+	t.Cleanup(func() { resetMemoryCmds(t) })
+	t.Chdir(t.TempDir())
+
+	for i := 0; i < 25; i++ {
+		runMemorySave(t, fmt.Sprintf("decision/topic-%02d", i), "caplimit body")
+	}
+
+	memSearchLimit = 20
+	t.Cleanup(func() { memSearchLimit = 20 })
+
+	var buf bytes.Buffer
+	memorySearchCmd.SetOut(&buf)
+	if err := memorySearchCmd.RunE(memorySearchCmd, []string{"caplimit"}); err != nil {
+		t.Fatalf("memory search: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "showing 20 of 25") {
+		t.Errorf("expected truncation marker 'showing 20 of 25', got:\n%s", out)
 	}
 }
 

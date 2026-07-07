@@ -51,14 +51,16 @@ func WithBaseDir(overlay, baseDir string) string {
 }
 
 const contractInstruction = "\n\nEnd your reply with a single fenced ```json block " +
-	"containing your contract: {stage, status, complexity?, artifacts[], scenarios[], " +
-	"risks[], assumptions[], handoff, verdict?}. Write all real output to files and " +
+	"containing your contract: {stage, status, complexity?, features[]?, artifacts[], " +
+	"scenarios[], risks[], assumptions[], handoff, verdict?}. Write all real output to files and " +
 	"reference them by path — never paste file contents into chat."
 
 // AnalystPrompt is the TDD-stage overlay for the interrogation stage. It is
 // appended to the project's analyst agent body at dispatch.
-const AnalystPrompt = `tu-agent TDD task — analyst stage. Ignore any default output format
-from your role definition; produce exactly what this task asks. BEFORE your first question,
+const AnalystPrompt = `tu-agent TDD task — analyst stage. Ignore any default output format,
+process steps, verification commands, and definition-of-done from your role definition — this
+stage's contract below replaces them; the role definition contributes only project context and
+conventions. Produce exactly what this task asks. BEFORE your first question,
 pre-load context: recall memory (mem_search) and load the graph for the affected area
 (get_concept/get_context) so you interrogate from real context, not from zero. If the task
 references an existing design doc or superpowers plan, read it FIRST and SEED the spec from
@@ -72,8 +74,10 @@ __TDDDIR__/spec.md (purpose, contract, edge cases, decisions+why) and only then 
 contract with status "pass".` + contractInstruction
 
 // ArchitectPrompt is the TDD-stage overlay for design + Gherkin + complexity.
-const ArchitectPrompt = `tu-agent TDD task — architect stage. Ignore any default output format
-from your role definition; produce exactly the contract below. Read __TDDDIR__/spec.md. You
+const ArchitectPrompt = `tu-agent TDD task — architect stage. Ignore any default output format,
+process steps, verification commands, and definition-of-done from your role definition — this
+stage's contract below replaces them; the role definition contributes only project context and
+conventions. Produce exactly the contract below. Read __TDDDIR__/spec.md. You
 MUST consult the graph for blast-radius before classifying: run get_impact/get_context on the
 affected symbols. You MUST ALSO consult existing test coverage of the affected area BEFORE
 writing scenarios — run "tu-agent test gaps" and/or the graph's tested_by — so you do not
@@ -95,8 +99,10 @@ coverage is thin. CLASSIFY the task complexity from that blast-radius and set th
 Keep slugs unique.` + contractInstruction
 
 // CraftsmanPrompt is the TDD-stage overlay for strict TDD with a test-gen safety net.
-const CraftsmanPrompt = `tu-agent TDD task — craftsman stage. Ignore any default output format
-from your role definition; produce exactly the contract below. Implement ONE approved feature
+const CraftsmanPrompt = `tu-agent TDD task — craftsman stage. Ignore any default output format,
+process steps, verification commands, and definition-of-done from your role definition — this
+stage's contract below replaces them; the role definition contributes only project context and
+conventions. Produce exactly the contract below. Implement ONE approved feature
 by strict TDD (Red -> Green -> Refactor, one test at a time). Work ONE @s scenario at a time:
 write its single failing test FIRST, run the suite and CONFIRM it fails (red) for the right
 reason, THEN write the minimal production code to make it pass (green), then refactor. Never
@@ -104,35 +110,43 @@ write production code before its failing test, and never batch several scenarios
 implementation and add tests afterward; that defeats TDD and leaves vacuous tests the mutation
 gate flags as survivors. Before the first scenario, check whether the code you will touch has
 tests ("tu-agent test gaps" / graph tested_by); if it has NONE, run "tu-agent test gen
-<target>" to lay a safety net BEFORE the cycle. Greenfield code is hand-written test-first.
+<target>" to lay a safety net BEFORE the cycle. If "tu-agent test gen" fails (e.g. no provider
+configured), write the safety-net test by hand instead. Greenfield code is hand-written test-first.
 Write a @s->test map to __TDDDIR__/progress/tdd_<name>.md. In the contract, "scenarios"
 MUST list every @s tag covered with a concrete test. Address each judge-feedback point if any.
 Report the primary source file as an artifact {"kind":"source","path":"<repo-relative>"} so
 the mutation gate can target it.` + contractInstruction
 
 // JudgePrompt is the TDD-stage overlay for gate 1 (design/discipline review).
-const JudgePrompt = `tu-agent TDD task — judge stage. Ignore any default output format from your
-role definition; produce exactly the contract below. The deterministic gate (tests green +
-every @s covered) already passed. Judge DESIGN and DISCIPLINE only: short functions, revealing
+const JudgePrompt = `tu-agent TDD task — judge stage. Ignore any default output format,
+process steps, verification commands, and definition-of-done from your role definition — this
+stage's contract below replaces them; the role definition contributes only project context and
+conventions. Produce exactly the contract below. The deterministic gate (tests green +
+every @s covered) already passed. Judge DESIGN and DISCIPLINE only:
+Do NOT re-review correctness or security — the gate proved them. short functions, revealing
 names, no duplication, correct error contract (stderr + exit code), and NO production code that
 no failing test demanded (scope creep). You do not edit code — you prune. Write your review to
 __TDDDIR__/progress/judge_<name>.md and set contract.verdict to {result: pass|revise|fail,
-feedback, score}. Be concrete: cite file:line.` + contractInstruction
+feedback, score 0-10}. Be concrete: cite file:line.` + contractInstruction
 
 // ScribePrompt is the TDD-stage overlay for phase 3 (archive to memory).
-const ScribePrompt = `tu-agent TDD task — scribe stage. Ignore any default output format from
-your role definition; produce exactly what this task asks. The feature is complete and all
+const ScribePrompt = `tu-agent TDD task — scribe stage. Ignore any default output format,
+process steps, verification commands, and definition-of-done from your role definition — this
+stage's contract below replaces them; the role definition contributes only project context and
+conventions. Produce exactly what this task asks. The feature is complete and all
 gates passed. Read __TDDDIR__/spec.md and the __TDDDIR__/progress/ notes, then call
 mem_save once with topic "decision/<feature-slug>" and content capturing WHAT changed and WHY
-(decision, rationale, scenarios covered, files touched). Be concise and durable. Do not edit
-code.` + contractInstruction
+(decision, rationale, scenarios covered; name code symbols in prose — never file paths, memory
+relink derives links). Be concise and durable. Do not edit code.` + contractInstruction
 
 // RefactorPrompt is the overlay for a refactor sub-feature: no new tests, no
 // behavior change; improve structure while keeping the whole suite green. Unlike
 // the implementer, it MAY touch test files (e.g. renames) as long as every test
 // still passes.
-const RefactorPrompt = `tu-agent TDD task — refactor stage. Ignore any default output format from
-your role definition; produce exactly the contract below. This is a REFACTOR: do not add new
+const RefactorPrompt = `tu-agent TDD task — refactor stage. Ignore any default output format,
+process steps, verification commands, and definition-of-done from your role definition — this
+stage's contract below replaces them; the role definition contributes only project context and
+conventions. Produce exactly the contract below. This is a REFACTOR: do not add new
 behavior and do not write new tests. Improve the structure/design of the code for the named
 feature while keeping the ENTIRE existing test suite green. You may adjust tests only as needed
 to follow a rename/signature change — never to weaken or delete coverage. Report the primary
@@ -142,7 +156,9 @@ source file as an artifact {"kind":"source","path":"<repo-relative>"}.` + contra
 // production. The orchestrator verifies the tests are red before dispatching the
 // implementer.
 const TestWriterPrompt = `tu-agent TDD task — test-writer (RED phase). Ignore any default output
-format from your role definition; produce exactly the contract below. Write ONLY the failing
+format, process steps, verification commands, and definition-of-done from your role definition —
+this stage's contract below replaces them; the role definition contributes only project context
+and conventions. Produce exactly the contract below. Write ONLY the failing
 tests for the listed @s scenarios. NO production code — tests only. Each test's Then must assert
 something measurable. Do NOT write, edit, or create any production/source code. The orchestrator
 will run the suite and CONFIRM these tests are red before any implementation; if you add
@@ -152,7 +168,9 @@ wrote a test for, and report each new test file as an artifact {"kind":"test","p
 // ImplementerPrompt is the GREEN-phase overlay: minimal production to pass the
 // already-red tests; never touch test files.
 const ImplementerPrompt = `tu-agent TDD task — implementer (GREEN phase). Ignore any default
-output format from your role definition; produce exactly the contract below. The tests for the
+output format, process steps, verification commands, and definition-of-done from your role
+definition — this stage's contract below replaces them; the role definition contributes only
+project context and conventions. Produce exactly the contract below. The tests for the
 listed @s scenarios already exist and are RED. Write the MINIMAL production code to make them
 pass. do NOT modify, add, or delete any test file — if you change a test the stage is rejected.
 Report the primary source file as an artifact {"kind":"source","path":"<repo-relative>"} so the

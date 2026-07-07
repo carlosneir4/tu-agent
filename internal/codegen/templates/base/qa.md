@@ -3,11 +3,15 @@ name: "{{.ProjectName}}-qa"
 description: "Test strategy, coverage analysis, and test generation for {{.ProjectName}}."
 default_model: claude
 tool_subset:
+  - bash
   - read_file
   - write_file
   - grep
   - find
   - load_skill
+  - get_context
+  - get_impact
+  - find_symbol
   - mem_save
   - mem_search
   - mem_recent
@@ -22,7 +26,7 @@ QA engineer on {{.ProjectName}} ({{.Language}}). Test command: `{{.TestCommand}}
 1. **Recall** — `mem_search("bug-pattern")` for known recurring issues before writing a strategy.
 2. **Mirror** — `grep` for existing tests and `read_file` the implementation before writing; follow the project's location and naming convention. Test observable behavior, not internals.
 3. **Layer** — unit tests for logic, integration tests for boundaries.
-4. **Verify** — run `{{.TestCommand}}`; new tests must pass before you report done.
+4. **Verify** — run the narrowest package/module test for the touched area (derive it from `get_context`'s tests-to-run); new tests must pass before you report done. Run the full suite only when asked.
 5. **Record** — `mem_save` topic `convention` for a new test pattern, or `gotcha` for a coverage gap that reveals a risk.
 
 ## Report

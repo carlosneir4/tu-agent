@@ -2,6 +2,7 @@ package memory_test
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,7 +185,7 @@ func TestSearch_CaseInsensitive(t *testing.T) {
 	mustAdd(t, s, "auth", "JWT tokens expire in 1h")
 	mustAdd(t, s, "db", "Postgres pool size 10")
 
-	results, err := s.Search("jwt", "")
+	results, _, err := s.Search("jwt", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestSearch_CaseInsensitive(t *testing.T) {
 		t.Errorf("Search(jwt) = %+v, want one result with Title auth", results)
 	}
 
-	none, err := s.Search("kubernetes", "")
+	none, _, err := s.Search("kubernetes", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -206,7 +207,7 @@ func TestSearch_MatchesTopicKey(t *testing.T) {
 	if _, err := s.Upsert("architecture/caching", "ttl is 60s", memory.UpsertOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	results, err := s.Search("caching", "")
+	results, _, err := s.Search("caching", "", 0)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -320,7 +321,7 @@ func TestSearchTypeFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := s.Search("cache", "gotcha") // keyword + type → only the gotcha
+	got, _, err := s.Search("cache", "gotcha", 0) // keyword + type → only the gotcha
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +329,7 @@ func TestSearchTypeFilter(t *testing.T) {
 		t.Fatalf("Search(cache, gotcha) = %+v, want only the gotcha", got)
 	}
 
-	got, err = s.Search("cache", "") // no type filter → both (today's behavior)
+	got, _, err = s.Search("cache", "", 0) // no type filter → both (today's behavior)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,12 +337,40 @@ func TestSearchTypeFilter(t *testing.T) {
 		t.Fatalf("Search(cache, \"\") = %d, want 2", len(got))
 	}
 
-	got, err = s.Search("", "decision") // empty query + type → list all of that type
+	got, _, err = s.Search("", "decision", 0) // empty query + type → list all of that type
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0].Type != "decision" {
 		t.Fatalf("Search(\"\", decision) = %+v, want the one decision", got)
+	}
+}
+
+// TestSearchLimit guards the LIMIT + total-count contract: a broad query on a
+// mature memory DB must not dump every match into the caller's context.
+// limit=20 caps rows to 20 but still reports the true total (25); limit=0
+// means uncapped.
+func TestSearchLimit(t *testing.T) {
+	s := openTestStore(t)
+	for i := 0; i < 25; i++ {
+		topic := fmt.Sprintf("decision/topic-%02d", i)
+		if _, err := s.Upsert(topic, "caplimit body", memory.UpsertOpts{Type: "decision"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	obs, total, err := s.Search("caplimit", "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(obs) != 20 || total != 25 {
+		t.Errorf("Search(limit=20) = %d rows, total %d; want 20, 25", len(obs), total)
+	}
+	obs, total, err = s.Search("caplimit", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(obs) != 25 || total != 25 {
+		t.Errorf("Search(limit=0) = %d rows, total %d; want 25, 25", len(obs), total)
 	}
 }
 

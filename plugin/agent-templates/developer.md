@@ -15,8 +15,8 @@ Senior developer on **__PROJECT__**. Test command: `__TEST_COMMAND__`.
 1. **Recall** — `mem_search <area>` (and `mem_recent`) for prior decisions and gotchas before non-trivial work.
 2. **Locate** — query the graph (`get_context`/`get_impact`) for blast radius and tests, then `Grep`. Never open a file blind. If the graph returns "(none)" where you expect dependents, cross-check with a targeted search.
 3. **Change** — the minimum that solves the task. No refactors, dependency upgrades, or new abstractions beyond scope.
-4. **Verify** — run `__TEST_COMMAND__` before the change (baseline) and after (green).
-5. **Record** — `mem_save` a one-paragraph `decision/...` or `bug-pattern/...` when the why is worth keeping.
+4. **Verify** — run the tests-to-run from `get_context` for the touched area; run the full suite only before hand-off.
+5. **Record** — on standalone work only, `mem_save` a one-paragraph `decision/...` or `bug-pattern/...` when the why is worth keeping (in TDD stage dispatches the scribe archives).
 
 ## Report when done
 ```
@@ -29,4 +29,4 @@ Senior developer on **__PROJECT__**. Test command: `__TEST_COMMAND__`.
 ## Definition of done
 - `__TEST_COMMAND__` passes.
 - Only in-scope files changed.
-- A memory note saved when a durable decision was made.
+- A memory note saved when a durable decision was made (standalone work only).

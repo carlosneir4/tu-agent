@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tu/tu-agent/internal/codegen"
 )
 
 func TestResolvePrivate(t *testing.T) {
@@ -131,6 +133,137 @@ func TestWriteAgentFile_CreatesParentDir(t *testing.T) {
 	_, err := writeAgentFile(path, "content", false)
 	if err != nil {
 		t.Fatalf("expected parent dir creation, got error: %v", err)
+	}
+}
+
+func TestGenerateAgentsBacksUpExisting(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(cwd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	agentsDir := filepath.Join(".claude", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "SENTINEL: hand-tuned developer agent, do not lose me"
+	developerPath := filepath.Join(agentsDir, "developer.md")
+	if err := os.WriteFile(developerPath, []byte(sentinel), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	info := &codegen.ProjectInfo{Name: "example-project"}
+	if err := generateAgents(info, "go", "go build ./...", "go test ./...", true); err != nil {
+		t.Fatalf("generateAgents: %v", err)
+	}
+
+	bak, err := os.ReadFile(developerPath + ".bak")
+	if err != nil {
+		t.Fatalf("expected developer.md.bak to exist: %v", err)
+	}
+	if string(bak) != sentinel {
+		t.Errorf("developer.md.bak = %q, want sentinel %q", bak, sentinel)
+	}
+
+	regenerated, err := os.ReadFile(developerPath)
+	if err != nil {
+		t.Fatalf("expected developer.md to exist: %v", err)
+	}
+	if string(regenerated) == sentinel {
+		t.Error("developer.md should have been regenerated, not left as the sentinel content")
+	}
+}
+
+// TestGenerateAgentsForceFalseDoesNotTouchBackup: when force=false,
+// writeAgentFile skips the write entirely, so generateAgents must not touch
+// dest.bak — otherwise a meaningful older backup (from a prior --force run)
+// gets clobbered with a redundant copy while nothing is actually written.
+func TestGenerateAgentsForceFalseDoesNotTouchBackup(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(cwd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	agentsDir := filepath.Join(".claude", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const current = "current hand-tuned developer agent"
+	const oldBackup = "OLD BACKUP: from a prior --force run, must survive untouched"
+	developerPath := filepath.Join(agentsDir, "developer.md")
+	if err := os.WriteFile(developerPath, []byte(current), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(developerPath+".bak", []byte(oldBackup), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	info := &codegen.ProjectInfo{Name: "example-project"}
+	if err := generateAgents(info, "go", "go build ./...", "go test ./...", false); err != nil {
+		t.Fatalf("generateAgents: %v", err)
+	}
+
+	bak, err := os.ReadFile(developerPath + ".bak")
+	if err != nil {
+		t.Fatalf("expected developer.md.bak to still exist: %v", err)
+	}
+	if string(bak) != oldBackup {
+		t.Errorf("developer.md.bak = %q, want untouched old backup %q", bak, oldBackup)
+	}
+
+	unchanged, err := os.ReadFile(developerPath)
+	if err != nil {
+		t.Fatalf("expected developer.md to exist: %v", err)
+	}
+	if string(unchanged) != current {
+		t.Errorf("developer.md = %q, want unchanged (write should have been skipped, force=false)", unchanged)
+	}
+}
+
+// TestGenerateAgentsBackupFailureAbortsOverwrite: if the backup write itself
+// fails (simulated here by making dest.bak an existing directory), the
+// overwrite must be aborted with an error and the live agent file must be
+// left unchanged — mirroring applyHardening's hard-fail-before-overwrite
+// behavior for settings.json.
+func TestGenerateAgentsBackupFailureAbortsOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(cwd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	agentsDir := filepath.Join(".claude", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "SENTINEL: hand-tuned developer agent, do not lose me"
+	developerPath := filepath.Join(agentsDir, "developer.md")
+	if err := os.WriteFile(developerPath, []byte(sentinel), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Make the backup destination an existing directory so os.WriteFile onto
+	// it fails.
+	if err := os.MkdirAll(developerPath+".bak", 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	info := &codegen.ProjectInfo{Name: "example-project"}
+	err := generateAgents(info, "go", "go build ./...", "go test ./...", true)
+	if err == nil {
+		t.Fatal("expected generateAgents to return an error when backup write fails")
+	}
+
+	unchanged, readErr := os.ReadFile(developerPath)
+	if readErr != nil {
+		t.Fatalf("expected developer.md to still exist: %v", readErr)
+	}
+	if string(unchanged) != sentinel {
+		t.Errorf("developer.md = %q, want unchanged sentinel %q (overwrite must be aborted on backup failure)", unchanged, sentinel)
 	}
 }
 

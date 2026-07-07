@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/tu/tu-agent/internal/config"
 	"github.com/tu/tu-agent/internal/tdd"
 )
 
@@ -28,6 +31,8 @@ func tddOverlay(stage string) (string, bool) {
 		return tdd.TestWriterPrompt, true
 	case "implementer":
 		return tdd.ImplementerPrompt, true
+	case "refactor":
+		return tdd.RefactorPrompt, true
 	default:
 		return "", false
 	}
@@ -110,10 +115,46 @@ var tddOverlayCmd = &cobra.Command{
 	},
 }
 
+// runVerify runs the resolved test command and reports whether it passed. It
+// returns an error only when the runner itself could not run (misconfigured
+// or missing test command) — a failing test suite is a normal (false, nil)
+// result, not an error, so `tdd verify` can print {"ok":false} with exit 0.
+func runVerify(ctx context.Context, cfg config.Config, root string) (bool, error) {
+	runner, err := resolveTestRunner(cfg, root)
+	if err != nil {
+		return false, fmt.Errorf("runVerify: %w", err)
+	}
+	passed, _, err := runner(ctx)
+	if err != nil {
+		return false, fmt.Errorf("runVerify: %w", err)
+	}
+	return passed, nil
+}
+
+var tddVerifyCmd = &cobra.Command{
+	Use:   "verify",
+	Short: `Run the project's resolved test command and print {"ok":bool} (trivial/refactor verification)`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		passed, err := runVerify(cmd.Context(), cfg, repoRoot())
+		if err != nil {
+			return fmt.Errorf("tdd verify: %w", err)
+		}
+		out, err := json.Marshal(struct {
+			OK bool `json:"ok"`
+		}{passed})
+		if err != nil {
+			return fmt.Errorf("tdd verify: marshal: %w", err)
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		return nil
+	},
+}
+
 func init() {
 	tddCmd.AddCommand(tddCheckCmd)
 	tddCmd.AddCommand(tddOverlayCmd)
 	tddCmd.AddCommand(tddPromptCmd)
+	tddCmd.AddCommand(tddVerifyCmd)
 	tddPromptCmd.Flags().StringVar(&tddPromptTicket, "ticket", "", "ticket id for the per-feature artifact dir")
 	tddOverlayCmd.Flags().StringVar(&tddOverlayTicket, "ticket", "", "ticket id for the per-feature artifact dir")
 	tddPromptCmd.Flags().StringVar(&tddPromptBase, "base", "", "explicit per-feature base dir (overrides --ticket/desc)")

@@ -135,6 +135,42 @@ func TestWithBaseDir(t *testing.T) {
 	}
 }
 
+func TestOverlayDisclaimerReplacesRoleProcess(t *testing.T) {
+	overlays := map[string]string{
+		"analyst": AnalystPrompt, "architect": ArchitectPrompt,
+		"craftsman": CraftsmanPrompt, "judge": JudgePrompt,
+		"scribe": ScribePrompt, "refactor": RefactorPrompt,
+		"test-writer": TestWriterPrompt, "implementer": ImplementerPrompt,
+	}
+	const want = "process steps, verification commands, and definition-of-done"
+	for name, o := range overlays {
+		if !strings.Contains(o, want) {
+			t.Errorf("%s overlay: disclaimer does not override the role's process/DoD", name)
+		}
+	}
+	if !strings.Contains(JudgePrompt, "Do NOT re-review correctness or security") {
+		t.Errorf("judge overlay lacks the explicit re-review prohibition")
+	}
+}
+
+func TestPromptBatchWave2(t *testing.T) {
+	if !strings.Contains(ArchitectPrompt, "features[]?") {
+		t.Error("contract schema must enumerate features[]? (contractInstruction is shared by every overlay)")
+	}
+	if !strings.Contains(CraftsmanPrompt, "write the safety-net test by hand") {
+		t.Error("CraftsmanPrompt must fall back to a hand-written safety-net test when \"tu-agent test gen\" fails")
+	}
+	if !strings.Contains(JudgePrompt, "score 0-10") {
+		t.Error("JudgePrompt must bound score to 0-10")
+	}
+	if strings.Contains(ScribePrompt, "files touched") {
+		t.Error("ScribePrompt must not tell the scribe to list file paths — memory relink derives links from code symbols named in prose")
+	}
+	if !strings.Contains(ScribePrompt, "never file paths") {
+		t.Error("ScribePrompt must instruct the scribe to name code symbols in prose, never file paths, per the scribe.md convention")
+	}
+}
+
 func TestOverlaysUseTokenNotLiteral(t *testing.T) {
 	overlays := map[string]string{
 		"analyst":   AnalystPrompt,

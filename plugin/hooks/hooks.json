@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --quiet"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --quiet || exit 0"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --post-bash"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --post-bash || exit 0"
           }
         ]
       }
@@ -25,23 +25,23 @@
         "hooks": [
           {
             "type": "command",
-            "command": "TU_AGENT_UPDATE_INTERVAL=0 ${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --quiet"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --quiet || exit 0"
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory import --quiet"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory import --quiet || exit 0"
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory relink --quiet"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory relink --quiet || exit 0"
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory materialize --quiet"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory materialize --quiet || exit 0"
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory crystallize --nudge"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory crystallize --nudge || exit 0"
           }
         ]
       }
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory export --quiet"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory export --quiet || exit 0"
           }
         ]
       }
@@ -61,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory export --quiet"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory export --quiet || exit 0"
           }
         ]
       }

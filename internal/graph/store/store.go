@@ -16,7 +16,7 @@ import (
 	"github.com/tu/tu-agent/internal/graph"
 )
 
-const schemaVersion = "5"
+const schemaVersion = "6"
 
 const schema = `
 CREATE TABLE IF NOT EXISTS nodes (
@@ -38,7 +38,8 @@ CREATE INDEX IF NOT EXISTS idx_refs_from ON refs(from_id);
 CREATE TABLE IF NOT EXISTS files (
   path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, language TEXT,
   status TEXT NOT NULL DEFAULT 'ok', package TEXT DEFAULT '',
-  imports TEXT DEFAULT '[]', size INT DEFAULT 0, parsed_at TEXT);
+  imports TEXT DEFAULT '[]', size INT DEFAULT 0, mtime_ns INT DEFAULT 0,
+  parsed_at TEXT);
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS concepts (
   name        TEXT PRIMARY KEY,
@@ -51,6 +52,7 @@ type FileRecord struct {
 	Path, SHA256, Language, Status, Package string
 	Imports                                 []string
 	Size                                    int
+	MtimeNS                                 int64
 }
 
 // Store wraps the SQLite connection.
@@ -61,7 +63,7 @@ type Store struct{ db *sql.DB }
 // derived data, so this is always safe.
 func Open(path, extractorVersion string) (*Store, error) {
 	for attempt := 0; ; attempt++ {
-		db, err := sql.Open("sqlite3", "file:"+path+"?_journal_mode=WAL&_foreign_keys=on")
+		db, err := sql.Open("sqlite3", "file:"+path+"?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000")
 		if err != nil {
 			return nil, fmt.Errorf("graph.Store.Open: %w", err)
 		}
@@ -69,6 +71,9 @@ func Open(path, extractorVersion string) (*Store, error) {
 			db.Close()
 			return nil, fmt.Errorf("graph.Store.Open: applying schema: %w", err)
 		}
+		// Serialize all writes through a single connection; SQLite does not support
+		// concurrent writers and WAL mode does not change that constraint.
+		db.SetMaxOpenConns(1)
 		s := &Store{db: db}
 		sv, _ := s.Meta("schema_version")
 		ev, _ := s.Meta("extractor_version")
@@ -94,6 +99,12 @@ func Open(path, extractorVersion string) (*Store, error) {
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return nil, fmt.Errorf("graph.Store.Open: removing stale db: %w", err)
+		}
+		if err := os.Remove(path + "-wal"); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("graph.Store.Open: removing stale wal sidecar: %w", err)
+		}
+		if err := os.Remove(path + "-shm"); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("graph.Store.Open: removing stale shm sidecar: %w", err)
 		}
 	}
 }
@@ -129,12 +140,12 @@ func (s *Store) UpsertFile(f FileRecord) error {
 	if err != nil {
 		return fmt.Errorf("graph.Store.UpsertFile: %w", err)
 	}
-	_, err = s.db.Exec(`INSERT INTO files(path,sha256,language,status,package,imports,size,parsed_at)
-		VALUES(?,?,?,?,?,?,?,datetime('now'))
+	_, err = s.db.Exec(`INSERT INTO files(path,sha256,language,status,package,imports,size,mtime_ns,parsed_at)
+		VALUES(?,?,?,?,?,?,?,?,datetime('now'))
 		ON CONFLICT(path) DO UPDATE SET sha256=excluded.sha256, language=excluded.language,
 		status=excluded.status, package=excluded.package, imports=excluded.imports,
-		size=excluded.size, parsed_at=excluded.parsed_at`,
-		f.Path, f.SHA256, f.Language, f.Status, f.Package, string(imp), f.Size)
+		size=excluded.size, mtime_ns=excluded.mtime_ns, parsed_at=excluded.parsed_at`,
+		f.Path, f.SHA256, f.Language, f.Status, f.Package, string(imp), f.Size, f.MtimeNS)
 	if err != nil {
 		return fmt.Errorf("graph.Store.UpsertFile: %w", err)
 	}
@@ -143,7 +154,7 @@ func (s *Store) UpsertFile(f FileRecord) error {
 
 // Files returns every files row keyed by path.
 func (s *Store) Files() (map[string]FileRecord, error) {
-	rows, err := s.db.Query(`SELECT path,sha256,language,status,package,imports,size FROM files`)
+	rows, err := s.db.Query(`SELECT path,sha256,language,status,package,imports,size,mtime_ns FROM files`)
 	if err != nil {
 		return nil, fmt.Errorf("graph.Store.Files: %w", err)
 	}
@@ -152,7 +163,7 @@ func (s *Store) Files() (map[string]FileRecord, error) {
 	for rows.Next() {
 		var f FileRecord
 		var imp string
-		if err := rows.Scan(&f.Path, &f.SHA256, &f.Language, &f.Status, &f.Package, &imp, &f.Size); err != nil {
+		if err := rows.Scan(&f.Path, &f.SHA256, &f.Language, &f.Status, &f.Package, &imp, &f.Size, &f.MtimeNS); err != nil {
 			return nil, fmt.Errorf("graph.Store.Files: %w", err)
 		}
 		if err := json.Unmarshal([]byte(imp), &f.Imports); err != nil {

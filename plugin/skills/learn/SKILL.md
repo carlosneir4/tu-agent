@@ -21,8 +21,10 @@ call below.
 
 Run: `"$TU" version`
 - If the command fails: STOP. Show the user the shim's install instructions.
-- Parse MAJOR.MINOR (a `-dev` suffix is fine). If older than 0.3: STOP and tell
-  the user to upgrade (`go install -tags sqlite_fts5 github.com/tu/tu-agent/cmd/tu-agent@latest`).
+- Parse MAJOR.MINOR (a `-dev` suffix is fine). If older than 0.3: the shim
+  auto-updates itself from the latest GitHub Release on every run, so this
+  should not happen. STOP and tell the user to check `TU_AGENT_NO_AUTO_UPDATE`
+  is not set, or delete `~/.tu-agent/bin/tu-agent` to force a fresh install.
 - The binary must support `concepts set-definition` (concepts in the store). If
   `"$TU" concepts set-definition --help` errors, the binary predates this flow —
   tell the user to upgrade.

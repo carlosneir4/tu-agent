@@ -43,11 +43,15 @@ func javaBin(repoRoot, wrapper, bare string) string {
 	return bare
 }
 
-// javaModuleDir walks up from repoRoot/pkgDir to the nearest directory holding
+// JavaModuleDir walks up from repoRoot/pkgDir to the nearest directory holding
 // a build file (build.gradle/.kts or pom.xml), bounded by repoRoot. Returns the
 // repo-relative module dir, or "." for a single-module repo / when none is
 // found. pkgDir is the source-file dir the caller passes (filepath.Dir(path)).
-func javaModuleDir(repoRoot, pkgDir string) string {
+//
+// Exported so internal/testgen can scope Java test run commands (mvn -pl,
+// gradle :module:test) to the same module a multi-module repo's mutation
+// runner already targets.
+func JavaModuleDir(repoRoot, pkgDir string) string {
 	if filepath.IsAbs(pkgDir) {
 		// Callers must pass a repo-relative dir; degrade gracefully rather than loop.
 		return "."
@@ -79,7 +83,7 @@ func gradleTask(moduleDir string) string {
 }
 
 func (javaEngine) Command(repoRoot, pkgDir string) []string {
-	mod := javaModuleDir(repoRoot, pkgDir)
+	mod := JavaModuleDir(repoRoot, pkgDir)
 	if javaBuildTool(repoRoot) == "gradle" {
 		return []string{javaBin(repoRoot, "gradlew", "gradle"), gradleTask(mod)}
 	}
@@ -91,7 +95,7 @@ func (javaEngine) Command(repoRoot, pkgDir string) []string {
 }
 
 func (javaEngine) ReportPath(repoRoot, pkgDir string) string {
-	mod := javaModuleDir(repoRoot, pkgDir)
+	mod := JavaModuleDir(repoRoot, pkgDir)
 	if javaBuildTool(repoRoot) == "gradle" {
 		return filepath.Join(repoRoot, mod, "build", "reports", "pitest", "mutations.xml")
 	}

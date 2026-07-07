@@ -104,8 +104,10 @@ In a session opened on your repo:
 | `/tu-agent:learn` | Build the graph + per-domain concept index + architecture overview |
 | `/tu-agent:synthesize` | Regenerate the architecture overview from the concept index in the graph store |
 | `/tu-agent:status` | Progress, card staleness, and graph health |
-| `/tu-agent:tdd` | End-to-end TDD dev-flow (interrogation → spec → strict TDD → review) |
+| `/tu-agent:groundwork` | Anchor-before-build protocol: graph + memory recall, gap questions, confirmed approach |
+| `/tu-agent:tdd` | End-to-end TDD dev-flow (interrogation → spec → deterministic RED/GREEN gates → review) |
 | `/tu-agent:test-gen` | Generate a verified unit test for a function, or for the riskiest untested code |
+| `/tu-agent:crystallize` | Consolidate a dense cluster of memory notes into a reusable skill |
 
 **MCP tools the agent calls automatically:** `get_impact`, `get_context`,
 `find_symbol`, `get_flow`, `get_traits`, `get_concept`, `get_bridges`, the
@@ -132,11 +134,13 @@ tu-agent test gaps                  # rank untested code by risk (fan-in × blas
 | Group | Commands |
 |-------|----------|
 | Knowledge | `learn`, `concepts`, `map` |
-| Graph | `graph build \| status \| context \| impact \| find \| flow \| traits \| bridges` |
-| Memory | `memory save \| search \| list \| link \| links` |
+| Graph | `graph build \| status \| context \| impact \| find \| flow \| traits \| bridges \| cycles` |
+| Memory | `memory save \| search \| list \| link \| links \| relink \| rescope \| delete \| crystallize \| materialize` |
+| Team memory | `memory export \| import \| pending \| chunks` — share curated notes through git-committed chunks; `pending` is the human pre-commit review gate |
+| TDD dev-flow | `tdd run \| status \| state \| gate \| verify \| prompt \| path \| check` |
 | Sessions | `session start \| end \| list` |
-| Tests | `test gaps \| gen` |
-| Setup / misc | `init`, `setup`, `scan`, `mcp`, `stats`, `bench`, `version` |
+| Tests | `test gaps \| gen \| mutation` |
+| Setup / misc | `prepare` (alias `init`), `setup`, `scan`, `skill`, `mcp`, `stats`, `bench`, `version` |
 
 Run `tu-agent <command> --help` for flags. The deterministic commands need no API
 key. Generative subcommands (`learn` without `--skip-llm`, `test gen`, `chat`)
@@ -194,11 +198,20 @@ API keys are never stored in config — set them as environment variables
 ```
 .tu-agent/
 ├── graph.db                 ← code graph + concept index (derived; safe to delete + rebuild)
-├── memory.db                ← durable observations + relations + sessions (NOT derived — never delete)
+├── memory.db                ← durable observations + relations + sessions (NOT derived — never delete; gitignored)
+├── memory/chunks/           ← per-author exported note chunks (committed — this is how teams share memory)
 └── telemetry.jsonl          ← one row per model call (gitignored; CLI only)
-.claude/skills/architecture/SKILL.md   ← the synthesized architecture overview
+.claude/skills/architecture/SKILL.md   ← the synthesized architecture overview (carries a generated marker)
 CLAUDE.md                    ← includes a tu-agent:knowledge pointer block
 ```
+
+**Team memory** flows through git: `memory export` writes your curated notes to a
+per-author chunk under `.tu-agent/memory/chunks/` (and tells you on stderr when
+new or updated notes landed there), you review what's about to be shared with
+`memory pending`, commit the chunk, and teammates absorb it with
+`memory import` (the plugin runs export/import automatically at session
+boundaries). `memory.db` itself is never shared — the committed chunks are the
+transport.
 
 **Concept cards** are rows in `graph.db` (the `concepts` table), read with
 `get_concept` and rebuilt by `learn` — they are not files. The only generated

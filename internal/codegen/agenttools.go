@@ -9,7 +9,7 @@ import "strings"
 func AgentTools(role string) (string, bool) {
 	const (
 		developer        = "Read, Write, Edit, Grep, Glob, Bash, Skill, mcp__tu-agent-graph__get_context, mcp__tu-agent-graph__get_impact, mcp__tu-agent-graph__find_symbol, mcp__tu-agent-graph__mem_save, mcp__tu-agent-graph__mem_search, mcp__tu-agent-graph__mem_recent"
-		qa               = "Read, Write, Grep, Glob, mcp__tu-agent-graph__get_context, mcp__tu-agent-graph__get_impact, mcp__tu-agent-graph__find_symbol, mcp__tu-agent-graph__mem_save, mcp__tu-agent-graph__mem_search, mcp__tu-agent-graph__mem_recent"
+		qa               = "Read, Write, Grep, Glob, Bash, mcp__tu-agent-graph__get_context, mcp__tu-agent-graph__get_impact, mcp__tu-agent-graph__find_symbol, mcp__tu-agent-graph__mem_save, mcp__tu-agent-graph__mem_search, mcp__tu-agent-graph__mem_recent"
 		design           = "Read, Grep, Glob, Bash, Skill, Write, mcp__tu-agent-graph__get_context, mcp__tu-agent-graph__get_impact, mcp__tu-agent-graph__find_symbol, mcp__tu-agent-graph__mem_save, mcp__tu-agent-graph__mem_search, mcp__tu-agent-graph__mem_recent"
 		review           = "Read, Grep, Glob, Bash, Skill, Write, mcp__tu-agent-graph__get_context, mcp__tu-agent-graph__get_impact, mcp__tu-agent-graph__find_symbol, mcp__tu-agent-graph__mem_search, mcp__tu-agent-graph__mem_recent"
 		securityReviewer = "Read, Grep, Glob, mcp__tu-agent-graph__get_context, mcp__tu-agent-graph__get_impact, mcp__tu-agent-graph__find_symbol, mcp__tu-agent-graph__mem_search, mcp__tu-agent-graph__mem_recent"

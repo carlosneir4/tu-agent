@@ -68,6 +68,48 @@ func TestMergeGoCleanMerge(t *testing.T) {
 	}
 }
 
+// TestMergeGoPreservesImportAlias: a generated file importing a package under
+// an alias (`x "strings"`) must keep that alias in the merged output — keying
+// the import union by bare Path.Value alone (the pre-fix behavior) collapses
+// it to a bare `"strings"` import while the generated func body still calls
+// `x.Contains`, producing a file that does not compile.
+func TestMergeGoPreservesImportAlias(t *testing.T) {
+	tgt, _ := goTarget() // marker "TestStoreSave_Gen"
+	existing := "package s\n\nimport \"testing\"\n\nfunc TestExisting(t *testing.T) { _ = 1 }\n"
+	generated := "package s\n\nimport (\n\tx \"strings\"\n\t\"testing\"\n)\n\nfunc TestStoreSave_Gen(t *testing.T) { _ = x.Contains(\"a\", \"b\") }\n"
+	out, err := mergeGo(existing, generated, tgt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `x "strings"`) {
+		t.Fatalf("aliased import was dropped:\n%s", out)
+	}
+	if strings.Contains(out, "\t\"strings\"\n") {
+		t.Fatalf("import collapsed to bare path, losing the alias:\n%s", out)
+	}
+	if !strings.Contains(out, "x.Contains") {
+		t.Fatalf("generated func body missing:\n%s", out)
+	}
+}
+
+// TestMergeGoPreservesDotImport: same as above but for a dot import, which
+// must also survive as `.` rather than being flattened to a bare path.
+func TestMergeGoPreservesDotImport(t *testing.T) {
+	tgt, _ := goTarget() // marker "TestStoreSave_Gen"
+	existing := "package s\n\nimport \"testing\"\n\nfunc TestExisting(t *testing.T) { _ = 1 }\n"
+	generated := "package s\n\nimport (\n\t. \"strings\"\n\t\"testing\"\n)\n\nfunc TestStoreSave_Gen(t *testing.T) { _ = Contains(\"a\", \"b\") }\n"
+	out, err := mergeGo(existing, generated, tgt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `. "strings"`) {
+		t.Fatalf("dot import was dropped:\n%s", out)
+	}
+	if strings.Contains(out, "\t\"strings\"\n") {
+		t.Fatalf("import collapsed to bare path, losing the dot qualifier:\n%s", out)
+	}
+}
+
 func TestMergeGoPreservesHandwrittenNearMarker(t *testing.T) {
 	tgt, _ := goTarget() // marker TestStoreSave_Gen
 	// Hand-written func shares the marker as a prefix but is NOT a generated func.
@@ -85,6 +127,55 @@ func TestMergeGoPreservesHandwrittenNearMarker(t *testing.T) {
 	}
 }
 
+// TestMergeGoPreservesCommentsAndBuildTags: mergeGo must splice by byte range
+// over the original text — file-header comments, //go:build tags, doc comments,
+// and trailing comments on hand-written code must survive byte-identical. The
+// marker is "TestStoreSave_Gen" (goGenPrefix(goTarget()'s Target)); generated
+// func names use the marker+"_"+suffix form recognized by isGenFuncName, same
+// as every other test in this file.
+func TestMergeGoPreservesCommentsAndBuildTags(t *testing.T) {
+	tgt, _ := goTarget() // marker "TestStoreSave_Gen"
+	existing := `//go:build integration
+
+// Package-level doc comment that must survive.
+package s
+
+import "testing"
+
+// handHelper has a doc comment.
+func handHelper() int { return 1 } // trailing comment survives too
+
+func TestStoreSave_Gen_Old(t *testing.T) { t.Skip("old generated") }
+
+// TestHand is hand-written and untouchable.
+func TestHand(t *testing.T) {
+	if handHelper() != 1 {
+		t.Fatal("nope")
+	}
+}
+`
+	generated := "package s\n\nimport \"testing\"\n\nfunc TestStoreSave_Gen_New(t *testing.T) { t.Fatal(\"red\") }\n"
+	out, err := mergeGo(existing, generated, tgt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"//go:build integration", "// Package-level doc comment that must survive.",
+		"// handHelper has a doc comment.", "// trailing comment survives too",
+		"// TestHand is hand-written and untouchable.", "TestStoreSave_Gen_New"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("merge lost %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "TestStoreSave_Gen_Old") {
+		t.Errorf("old generated func not replaced:\n%s", out)
+	}
+}
+
+// TestMergePython pins back-compat: the generated fixture uses the LEGACY
+// bare "# tu-agent:gen:start"/"# tu-agent:gen:end" pair (no per-target
+// suffix) — splitRegion's fallback must still treat it as this target's
+// region when no suffixed pair exists yet, and the re-merge must re-emit
+// (accept) the same bare form without erroring.
 func TestMergePython(t *testing.T) {
 	tgt := Target{Name: "Store.Save", Path: "store.py", Language: "python"}
 	existing := "import pytest\n\n\ndef test_existing():\n    assert True\n"
@@ -110,10 +201,12 @@ func TestMergePython(t *testing.T) {
 	}
 }
 
+// TestMergeTS uses the per-target suffixed sentinel form ("Store_save" from
+// sentinelKey), the normal path for newly generated content.
 func TestMergeTS(t *testing.T) {
 	tgt := Target{Name: "Store.save", Path: "store.ts", Language: "typescript"}
 	existing := "import { describe, it, expect } from \"vitest\";\n\ndescribe(\"hand\", () => {\n  it(\"keeps\", () => { expect(1).toBe(1); });\n});\n"
-	generated := "import { describe, it, expect } from \"vitest\";\nimport { Store } from \"./store\";\n\n// tu-agent:gen:start\ndescribe(\"Store.save (gen)\", () => {\n  it(\"saves\", () => { expect(new Store().save()).toBeUndefined(); });\n});\n// tu-agent:gen:end\n"
+	generated := "import { describe, it, expect } from \"vitest\";\nimport { Store } from \"./store\";\n\n// tu-agent:gen:start:Store_save\ndescribe(\"Store.save (gen)\", () => {\n  it(\"saves\", () => { expect(new Store().save()).toBeUndefined(); });\n});\n// tu-agent:gen:end:Store_save\n"
 	out, err := mergeTS(existing, generated, tgt)
 	if err != nil {
 		t.Fatal(err)
@@ -135,10 +228,13 @@ func TestMergeTS(t *testing.T) {
 	}
 }
 
+// TestMergeJava uses the per-target suffixed sentinel form ("placeOrderGen"
+// from javaGenPrefix, via sentinelKey), the normal path for newly generated
+// content.
 func TestMergeJava(t *testing.T) {
 	tgt := Target{Name: "OrderService.placeOrder", Path: "src/main/java/OrderService.java", Language: "java"}
 	existing := "package o;\n\nimport org.junit.jupiter.api.Test;\n\npublic class OrderServiceTest {\n    @Test void existing() { }\n}\n"
-	generated := "package o;\n\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.*;\n\npublic class OrderServiceTest {\n    // tu-agent:gen:start\n    @Test void placeOrderGen() { assertTrue(true); }\n    // tu-agent:gen:end\n}\n"
+	generated := "package o;\n\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.*;\n\npublic class OrderServiceTest {\n    // tu-agent:gen:start:placeOrderGen\n    @Test void placeOrderGen() { assertTrue(true); }\n    // tu-agent:gen:end:placeOrderGen\n}\n"
 	out, err := mergeJava(existing, generated, tgt)
 	if err != nil {
 		t.Fatal(err)
@@ -160,6 +256,122 @@ func TestMergeJava(t *testing.T) {
 	}
 	if strings.Count(out2, "void placeOrderGen()") != 1 {
 		t.Fatalf("gen method duplicated on re-merge:\n%s", out2)
+	}
+}
+
+// TestMergeSentinelsCrossTargetPreserved: the old global sentinel pair let
+// generating tests for one target delete a DIFFERENT target's region in the
+// same file. With per-target suffixed sentinels ("placeOrderGen" vs
+// "cancelOrderGen", both from javaGenPrefix via sentinelKey), merging target
+// B's generated tests must never touch target A's already-merged region —
+// the output must contain BOTH.
+func TestMergeSentinelsCrossTargetPreserved(t *testing.T) {
+	tgtB := Target{Name: "OrderService.cancelOrder", Path: "src/main/java/OrderService.java", Language: "java"}
+	// existing already holds target A's ("placeOrder") merged region.
+	existing := "package o;\n\n" +
+		"import org.junit.jupiter.api.Test;\n\n" +
+		"public class OrderServiceTest {\n" +
+		"    @Test void existing() { }\n" +
+		"    // tu-agent:gen:start:placeOrderGen\n" +
+		"    @Test void placeOrderGen() { }\n" +
+		"    // tu-agent:gen:end:placeOrderGen\n" +
+		"}\n"
+	generatedB := "package o;\n\n" +
+		"import org.junit.jupiter.api.Test;\n\n" +
+		"public class OrderServiceTest {\n" +
+		"    // tu-agent:gen:start:cancelOrderGen\n" +
+		"    @Test void cancelOrderGen() { }\n" +
+		"    // tu-agent:gen:end:cancelOrderGen\n" +
+		"}\n"
+	out, err := mergeJava(existing, generatedB, tgtB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"void existing()",
+		"void placeOrderGen()", // target A's region — must survive generating B
+		"void cancelOrderGen()",
+		"tu-agent:gen:start:placeOrderGen",
+		"tu-agent:gen:start:cancelOrderGen",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cross-target clobber: missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "public class OrderServiceTest") != 1 {
+		t.Fatalf("class duplicated:\n%s", out)
+	}
+}
+
+// TestMergeSentinelsIgnoresCommentedFixmeBlock: a prior fixmeAppend left a
+// neutralized (commented-out, sentinel-mangled) dead region ABOVE a
+// hand-written method, which sits above the LIVE generated region for the
+// same target. Re-merging that target must replace only the live region —
+// the hand-written method and the dead FIXME block must be untouched.
+// Without exact-line matching and neutralization, the old strings.Contains
+// scan would pair the dead block's mangled start with the live region's end
+// (or vice-versa) and delete everything in between, including the
+// hand-written method.
+func TestMergeSentinelsIgnoresCommentedFixmeBlock(t *testing.T) {
+	tgt := Target{Name: "OrderService.placeOrder", Path: "src/main/java/OrderService.java", Language: "java"}
+	// A previously failed generation, neutralized + commented by fixmeAppend.
+	failedGen := "// tu-agent:gen:start:placeOrderGen\n@Test void placeOrderGen() { fail(\"boom\"); }\n// tu-agent:gen:end:placeOrderGen\n"
+	fixmeBlock := fixmeAppend("", failedGen, "java", 2)
+	existing := "package o;\n\n" +
+		"import org.junit.jupiter.api.Test;\n\n" +
+		"public class OrderServiceTest {\n" +
+		fixmeBlock +
+		"    @Test void handWritten() { }\n" +
+		"    // tu-agent:gen:start:placeOrderGen\n" +
+		"    @Test void placeOrderGenOld() { }\n" +
+		"    // tu-agent:gen:end:placeOrderGen\n" +
+		"}\n"
+	generated := "package o;\n\n" +
+		"import org.junit.jupiter.api.Test;\n\n" +
+		"public class OrderServiceTest {\n" +
+		"    // tu-agent:gen:start:placeOrderGen\n" +
+		"    @Test void placeOrderGenNew() { }\n" +
+		"    // tu-agent:gen:end:placeOrderGen\n" +
+		"}\n"
+	out, err := mergeJava(existing, generated, tgt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "void handWritten()") {
+		t.Fatalf("hand-written method between the FIXME block and the live region was deleted (spanning delete):\n%s", out)
+	}
+	if strings.Count(out, "void placeOrderGenNew()") != 1 {
+		t.Fatalf("new gen method missing or duplicated:\n%s", out)
+	}
+	if strings.Contains(out, "void placeOrderGenOld()") {
+		t.Fatalf("old live region for this target was not replaced:\n%s", out)
+	}
+	if !strings.Contains(out, "FIXME") || !strings.Contains(out, "placeOrderGen() { fail(\"boom\"); }") {
+		t.Fatalf("dead FIXME block was disturbed by the re-merge:\n%s", out)
+	}
+}
+
+// TestSplitRegionExactLineMatch: a line that merely CONTAINS the sentinel
+// text inside a string literal (or any other prose) must not open a region —
+// matching is by the FULL trimmed line, not a substring scan.
+func TestSplitRegionExactLineMatch(t *testing.T) {
+	tgt := Target{Name: "OrderService.placeOrder", Path: "src/main/java/OrderService.java", Language: "java"}
+	src := "String s = \"tu-agent:gen:start:placeOrderGen\";\n" +
+		"// tu-agent:gen:start:placeOrderGen\n" +
+		"@Test void placeOrderGen() { }\n" +
+		"// tu-agent:gen:end:placeOrderGen\n"
+	before, region, _, ok := splitRegion(src, "//", tgt)
+	if !ok {
+		t.Fatalf("expected the real comment-line sentinels to match:\n%s", src)
+	}
+	if strings.Contains(before, "@Test void placeOrderGen") {
+		t.Fatalf("region opened on the string-literal line, not the real sentinel comment:\nbefore=%q", before)
+	}
+	if !strings.Contains(before, `String s = "tu-agent:gen:start:placeOrderGen";`) {
+		t.Fatalf("string-literal line should remain in 'before' untouched:\nbefore=%q", before)
+	}
+	if !strings.Contains(region, "@Test void placeOrderGen") {
+		t.Fatalf("region missing the generated method:\nregion=%q", region)
 	}
 }
 

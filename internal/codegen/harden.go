@@ -42,10 +42,12 @@ func CommandTouchesSecret(command string) bool {
 }
 
 // HardenedSettings returns the tu-agent-owned Claude Code settings.json content
-// as a generic map, scoped to the detected language and build tool. Pure: no I/O.
+// as a generic map, scoped to the detected language and build tool. pluginPresent
+// signals that the Claude Code plugin's own hooks.json already supplies the
+// graph/memory hooks, so hardenHooks omits the duplicates. Pure: no I/O.
 // Types mirror encoding/json output ([]any, float64, ...) so the result merges
 // cleanly with a settings file round-tripped through json.Unmarshal.
-func HardenedSettings(lang, buildTool string) map[string]any {
+func HardenedSettings(lang, buildTool string, pluginPresent bool) map[string]any {
 	return map[string]any{
 		"permissions": map[string]any{
 			"defaultMode": "default",
@@ -53,7 +55,7 @@ func HardenedSettings(lang, buildTool string) map[string]any {
 			"ask":         hardenAsk(),
 			"allow":       hardenAllow(lang, buildTool),
 		},
-		"hooks":                 hardenHooks(lang),
+		"hooks":                 hardenHooks(lang, pluginPresent),
 		"enabledMcpjsonServers": []any{"tu-agent-graph"},
 		"includeCoAuthoredBy":   true,
 		"cleanupPeriodDays":     float64(30),
@@ -142,9 +144,10 @@ func toolchainAllow(lang, buildTool string) []string {
 }
 
 // hardenHooks builds the PreToolUse secret guard (always), a PostToolUse
-// formatter (when the language has a nameable formatter), a SessionStart refresh
-// (graph update + memory import), and Stop/SessionEnd memory export.
-func hardenHooks(lang string) map[string]any {
+// formatter (when the language has a nameable formatter), and — unless
+// pluginPresent — a SessionStart refresh (graph update + memory import) and
+// Stop/SessionEnd memory export.
+func hardenHooks(lang string, pluginPresent bool) map[string]any {
 	hooks := map[string]any{
 		"PreToolUse": []any{
 			map[string]any{
@@ -161,35 +164,39 @@ func hardenHooks(lang string) map[string]any {
 			},
 		}
 	}
-	// On session start, refresh the graph (so structural queries are not stale
-	// after an external `git pull` that the PostToolUse edit hook never saw),
-	// import teammates' shared memory, materialize crystallized skills to local
-	// .claude/skills files, and surface the crystallize nudge. All are
-	// incremental/idempotent and degrade to a no-op without the binary. One entry,
-	// multiple commands — keeps the single tu-agent-managed SessionStart entry the
-	// migration logic expects.
-	hooks["SessionStart"] = []any{
-		map[string]any{
-			"hooks": []any{
-				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent graph update --quiet"},
-				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory import --quiet"},
-				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory relink --quiet"},
-				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory materialize --quiet"},
-				map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory crystallize --nudge"},
+	// the plugin's hooks.json already provides these; registering them again
+	// would run every export twice per event.
+	if !pluginPresent {
+		// On session start, refresh the graph (so structural queries are not stale
+		// after an external `git pull` that the PostToolUse edit hook never saw),
+		// import teammates' shared memory, materialize crystallized skills to local
+		// .claude/skills files, and surface the crystallize nudge. All are
+		// incremental/idempotent and degrade to a no-op without the binary. One entry,
+		// multiple commands — keeps the single tu-agent-managed SessionStart entry the
+		// migration logic expects.
+		hooks["SessionStart"] = []any{
+			map[string]any{
+				"hooks": []any{
+					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent graph update --quiet"},
+					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory import --quiet"},
+					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory relink --quiet"},
+					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory materialize --quiet"},
+					map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory crystallize --nudge"},
+				},
 			},
-		},
+		}
+		// Auto-export captured memory to the author's chunk on every turn end (Stop)
+		// and at session end (SessionEnd). Export is idempotent (skip-if-unchanged),
+		// so running it on both events causes no git churn. Publishing the chunk
+		// (git commit/push) stays manual.
+		autoExport := []any{
+			map[string]any{
+				"hooks": []any{map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory export --quiet"}},
+			},
+		}
+		hooks["Stop"] = autoExport
+		hooks["SessionEnd"] = autoExport
 	}
-	// Auto-export captured memory to the author's chunk on every turn end (Stop)
-	// and at session end (SessionEnd). Export is idempotent (skip-if-unchanged),
-	// so running it on both events causes no git churn. Publishing the chunk
-	// (git commit/push) stays manual.
-	autoExport := []any{
-		map[string]any{
-			"hooks": []any{map[string]any{"type": "command", "command": binaryGuardClause + "tu-agent memory export --quiet"}},
-		},
-	}
-	hooks["Stop"] = autoExport
-	hooks["SessionEnd"] = autoExport
 	return hooks
 }
 
@@ -249,8 +256,30 @@ func MergeSettings(existing, generated map[string]any) map[string]any {
 		if eh == nil {
 			eh = map[string]any{}
 		}
-		for event, gentries := range gh {
-			eh[event] = unionHookEntries(asAnySlice(eh[event]), asAnySlice(gentries))
+		// Visit the UNION of event keys (existing ∪ generated), not just the
+		// generated set. hardenHooks(pluginPresent=true) omits SessionStart/
+		// Stop/SessionEnd entirely (the plugin's hooks.json owns those), so an
+		// existing settings.json hardened STANDALONE still has tu-agent-managed
+		// entries under those keys that generated never re-visits. Skipping
+		// them here would leave stale hooks in place, double-firing alongside
+		// the plugin's own hooks on every upgrade.
+		events := make(map[string]struct{}, len(eh)+len(gh))
+		for event := range eh {
+			events[event] = struct{}{}
+		}
+		for event := range gh {
+			events[event] = struct{}{}
+		}
+		for event := range events {
+			merged := unionHookEntries(asAnySlice(eh[event]), asAnySlice(gh[event]))
+			if len(merged) == 0 {
+				// Stripping tu-agent-managed entries left nothing behind (no user
+				// entries, no fresh generated ones): drop the key entirely rather
+				// than leave an empty "Event": [] husk in settings.json.
+				delete(eh, event)
+				continue
+			}
+			eh[event] = merged
 		}
 		out["hooks"] = eh
 	}

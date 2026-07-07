@@ -95,7 +95,7 @@ func (t *MemSearchTool) Run(_ context.Context, raw json.RawMessage) (string, err
 	if in.Query == "" && in.Type == "" {
 		return "", fmt.Errorf("mem_search: query cannot be empty")
 	}
-	results, err := t.store.Search(in.Query, in.Type)
+	results, _, err := t.store.Search(in.Query, in.Type, 0)
 	if err != nil {
 		return "", fmt.Errorf("mem_search: %w", err)
 	}

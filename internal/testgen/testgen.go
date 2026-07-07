@@ -227,10 +227,16 @@ func (p Pipeline) Generate(ctx context.Context, t Target, opts Options) (*Result
 
 // fixmeAppend leaves hand-written content untouched and appends the failing
 // generated test, commented out under a FIXME note so the file still compiles.
+// Before commenting out, any sentinel text in generated is neutralized so this
+// dead FIXME block can never be mistaken for a live gen region on a later
+// merge — commentOut alone is not enough, since a commented sentinel line's
+// trimmed text would otherwise still equal a live start/end line exactly.
 func fixmeAppend(original, generated, language string, attempts int) string {
 	cp := commentPrefix(language)
 	header := fmt.Sprintf("\n\n%s FIXME: generated tests failed verification (after %d attempts); review and uncomment.\n", cp, attempts)
-	return strings.TrimRight(original, "\n") + header + commentOut(generated, cp) + "\n"
+	neutralized := strings.ReplaceAll(generated, genStart, genStart+" (disabled)")
+	neutralized = strings.ReplaceAll(neutralized, genEnd, genEnd+" (disabled)")
+	return strings.TrimRight(original, "\n") + header + commentOut(neutralized, cp) + "\n"
 }
 
 // commentOut prefixes every line of code with the language's line comment.

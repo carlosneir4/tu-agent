@@ -84,6 +84,29 @@ func TestPluginHooksConfig(t *testing.T) {
 	}
 }
 
+// TestPluginHooksDegradeSafely asserts every plugin hook command fails safe:
+// each command line must end in " || exit 0" (so a version-skewed or missing
+// binary never surfaces a hook error into the session), and none may force a
+// network check every run via TU_AGENT_UPDATE_INTERVAL=0 (the shim's default
+// 24h throttle must govern instead).
+func TestPluginHooksDegradeSafely(t *testing.T) {
+	cfg := loadPluginHooks(t)
+
+	for event, entries := range cfg.Hooks {
+		for _, entry := range entries {
+			for _, h := range entry.Hooks {
+				cmd := h.Command
+				if !strings.HasSuffix(cmd, " || exit 0") {
+					t.Errorf("%s: command %q must end in %q to degrade safely", event, cmd, " || exit 0")
+				}
+				if strings.Contains(cmd, "TU_AGENT_UPDATE_INTERVAL=0") {
+					t.Errorf("%s: command %q must not force a check every run via TU_AGENT_UPDATE_INTERVAL=0", event, cmd)
+				}
+			}
+		}
+	}
+}
+
 // TestPluginHasPostBashHook asserts the plugin installs the Bash reconcile
 // hook (Task 2), mirroring the CLI setup path's postToolUseHooks list.
 func TestPluginHasPostBashHook(t *testing.T) {

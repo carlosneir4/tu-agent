@@ -67,6 +67,24 @@ func TestTSAdapterTestPath(t *testing.T) {
 			t.Fatalf("got %q, %v", got, err)
 		}
 	})
+
+	t.Run("js source keeps .js extension", func(t *testing.T) {
+		root := t.TempDir()
+		tgt := Target{Name: "add", Path: "src/a.js", Language: "typescript"}
+		got, err := a.TestPath(root, tgt)
+		if err != nil || got != "src/a.test.js" {
+			t.Fatalf("got %q, %v", got, err)
+		}
+	})
+
+	t.Run("jsx source keeps .jsx extension", func(t *testing.T) {
+		root := t.TempDir()
+		tgt := Target{Name: "Widget", Path: "src/b.jsx", Language: "typescript"}
+		got, err := a.TestPath(root, tgt)
+		if err != nil || got != "src/b.test.jsx" {
+			t.Fatalf("got %q, %v", got, err)
+		}
+	})
 }
 
 func TestTSAdapterRunCommand(t *testing.T) {

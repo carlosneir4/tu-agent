@@ -8,6 +8,18 @@ import (
 	"github.com/tu/tu-agent/internal/graph/query"
 )
 
+// hasHit reports whether nodeID appears among result's Hits. ImpactResult no
+// longer exposes a Contains method (dead code, only ever called from tests);
+// this is the direct .Hits-membership check that replaced it.
+func hasHit(result *query.ImpactResult, nodeID string) bool {
+	for _, h := range result.Hits {
+		if h.Node.ID == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
 func buildGraph() *query.Graph {
 	nodes := []graph.Node{
 		{ID: "a/A.java::A", Kind: graph.KindClass, Name: "A", Path: "a/A.java"},
@@ -35,19 +47,19 @@ func TestImpact(t *testing.T) {
 	}
 
 	// Direct callers/extends/implements of A should be found.
-	if !result.Contains("b/B.java::B") {
+	if !hasHit(result, "b/B.java::B") {
 		t.Errorf("expected B in impact of A; got %+v", result.NodeIDs())
 	}
 	// Depth 2: C calls B which extends A.
-	if !result.Contains("c/C.java::C") {
+	if !hasHit(result, "c/C.java::C") {
 		t.Errorf("expected C in depth-2 impact of A; got %+v", result.NodeIDs())
 	}
 	// tested_by should NOT be traversed in impact (test nodes aren't "callers").
-	if result.Contains("t/ATest.java::ATest") {
+	if hasHit(result, "t/ATest.java::ATest") {
 		t.Errorf("test node should not appear in impact; got %+v", result.NodeIDs())
 	}
 	// Source node itself should not be in result.
-	if result.Contains("a/A.java::A") {
+	if hasHit(result, "a/A.java::A") {
 		t.Errorf("source node should not be in impact result")
 	}
 }
@@ -119,7 +131,7 @@ func TestImpactBridgesToContainingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Impact: %v", err)
 	}
-	if !result.Contains("w/Ctrl.java") {
+	if !hasHit(result, "w/Ctrl.java") {
 		t.Errorf("expected w/Ctrl.java (file-level importer) in impact of class Svc; got %+v", result.NodeIDs())
 	}
 }

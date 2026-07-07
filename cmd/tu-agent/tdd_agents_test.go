@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/tu/tu-agent/internal/config"
 	"github.com/tu/tu-agent/internal/subagent"
 	"github.com/tu/tu-agent/internal/tdd"
 )
@@ -154,6 +156,78 @@ func TestComposeStagePrompt(t *testing.T) {
 	}
 	if _, err := composeStagePrompt(root, "architect", tddRelBase("", "x")); err == nil {
 		t.Fatal("missing agent file must error")
+	}
+}
+
+func TestTddOverlayRefactor(t *testing.T) {
+	o, ok := tddOverlay("refactor")
+	if !ok || !strings.Contains(o, "REFACTOR") {
+		t.Fatalf("refactor overlay missing: ok=%v", ok)
+	}
+}
+
+func TestComposeStagePromptRefactor(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "agents")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "developer.md"), []byte("---\nname: x\n---\nBODY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := composeStagePrompt(root, "refactor", ".tu-agent/tdd/x")
+	if err != nil {
+		t.Fatalf("composeStagePrompt(refactor): %v", err)
+	}
+	if !strings.Contains(out, "BODY") || !strings.Contains(out, "REFACTOR") {
+		t.Errorf("composed refactor prompt incomplete")
+	}
+}
+
+func TestRunVerify(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+
+	passed, err := runVerify(ctx, config.Config{Tdd: config.TddConfig{TestCommand: "true"}}, root)
+	if err != nil {
+		t.Fatalf("runVerify(true): %v", err)
+	}
+	if !passed {
+		t.Fatalf("runVerify(true) should report passed")
+	}
+
+	passed, err = runVerify(ctx, config.Config{Tdd: config.TddConfig{TestCommand: "false"}}, root)
+	if err != nil {
+		t.Fatalf("runVerify(false): %v", err)
+	}
+	if passed {
+		t.Fatalf("runVerify(false) should report not passed")
+	}
+}
+
+func TestTddVerifyCmd(t *testing.T) {
+	orig := cfg
+	defer func() { cfg = orig }()
+
+	var buf bytes.Buffer
+	tddVerifyCmd.SetOut(&buf)
+	tddVerifyCmd.SetContext(context.Background())
+
+	cfg = config.Config{Tdd: config.TddConfig{TestCommand: "true"}}
+	if err := tddVerifyCmd.RunE(tddVerifyCmd, nil); err != nil {
+		t.Fatalf("tdd verify (true): %v", err)
+	}
+	if got := strings.TrimSpace(buf.String()); got != `{"ok":true}` {
+		t.Fatalf("tdd verify (true) output = %q", got)
+	}
+
+	buf.Reset()
+	cfg = config.Config{Tdd: config.TddConfig{TestCommand: "false"}}
+	if err := tddVerifyCmd.RunE(tddVerifyCmd, nil); err != nil {
+		t.Fatalf("tdd verify (false): %v", err)
+	}
+	if got := strings.TrimSpace(buf.String()); got != `{"ok":false}` {
+		t.Fatalf("tdd verify (false) output = %q", got)
 	}
 }
 

@@ -163,11 +163,8 @@ func (a *TSAdapter) TestPath(repoRoot string, t Target) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ext := ".ts"
-	if strings.HasSuffix(strings.ToLower(t.Path), ".tsx") {
-		ext = ".tsx"
-	}
-	return t.Path[:len(t.Path)-len(ext)] + r.suffix + ext, nil
+	ext := filepath.Ext(t.Path) // .ts .tsx .js .jsx — keep whatever the source uses
+	return strings.TrimSuffix(t.Path, ext) + r.suffix + ext, nil
 }
 
 func (a *TSAdapter) PromptFragment(t Target, testPath string) string {
@@ -182,15 +179,16 @@ func (a *TSAdapter) PromptFragment(t Target, testPath string) string {
 	if fw == "jest" {
 		importRule = "Use the jest globals (describe/it/expect); do not import them."
 	}
+	start, end := genStartFor(t), genEndFor(t)
 	return fmt.Sprintf(`Write a %s test file at %s.
 Rules:
 - %s
 - Put ALL generated tests inside a single describe block titled exactly %q.
-- Wrap that describe block between a line "// tu-agent:gen:start" and a line "// tu-agent:gen:end".
+- Wrap that describe block between a line "// %s" and a line "// %s", EXACTLY as shown (no other text on those two lines) — these keys belong only to this target, never reuse another target's keys.
 - Import the module under test by relative path, exactly as the call sites in the context do.
 - Cover real branches and error paths, not just the happy path: use the framework's mocking and spies (vi.mock/vi.fn for vitest, jest.mock/jest.fn for jest) to stub collaborators and drive each conditional.
 - Output one complete runnable file: imports first, then the wrapped describe. No explanations.`,
-		fw, testPath, importRule, tsGenTitle(t))
+		fw, testPath, importRule, tsGenTitle(t), start, end)
 }
 
 func (a *TSAdapter) RunCommand(repoRoot, testPath string, t Target) ([]string, error) {

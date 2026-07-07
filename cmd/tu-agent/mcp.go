@@ -49,6 +49,7 @@ type memSaveMCPInput struct {
 type memSearchMCPInput struct {
 	Query string `json:"query" jsonschema:"keyword to search in memory"`
 	Type  string `json:"type,omitempty" jsonschema:"restrict to one observation type: bug-pattern | decision | architecture | testing | reference | gotcha | skill"`
+	Limit int    `json:"limit,omitempty" jsonschema:"max results (default 20; raise for more)"`
 }
 
 // memRecentMCPInput holds the parameters for the mem_recent tool.
@@ -63,8 +64,9 @@ type memClustersMCPInput struct {
 
 // crystallizeSaveMCPInput holds the parameters for the crystallize_save tool.
 type crystallizeSaveMCPInput struct {
-	Label string `json:"label" jsonschema:"the cluster label to crystallize (from mem_clusters)"`
-	Body  string `json:"body"  jsonschema:"the generated SKILL.md body (frontmatter + standard; no provenance marker)"`
+	Label string `json:"label"         jsonschema:"the cluster label to crystallize (from mem_clusters)"`
+	Body  string `json:"body"          jsonschema:"the generated SKILL.md body (frontmatter + standard; no provenance marker)"`
+	Min   int    `json:"min,omitempty" jsonschema:"minimum cluster size (default 5; pass 3 to match mem_clusters min:3)"`
 }
 
 // memExportMCPInput is the (empty) parameter set for mem_export.
@@ -95,6 +97,7 @@ type memSessionStartInput struct {
 
 // memSessionEndInput holds the parameters for the mem_session_end tool.
 type memSessionEndInput struct {
+	Project string `json:"project,omitempty" jsonschema:"project name (same value passed to mem_session_start)"`
 	Summary string `json:"summary,omitempty" jsonschema:"explicit summary (composed from observations if omitted)"`
 }
 
@@ -193,6 +196,10 @@ func handleMemSearch(_ context.Context, _ *mcp.CallToolRequest, in memSearchMCPI
 	if in.Query == "" {
 		return nil, queryOutput{}, fmt.Errorf("mem_search: query is required")
 	}
+	limit := in.Limit
+	if limit == 0 {
+		limit = 20
+	}
 	s, err := memory.Open(memoryDBPath(repoRoot()))
 	if err != nil {
 		return nil, queryOutput{}, err
@@ -202,11 +209,15 @@ func handleMemSearch(_ context.Context, _ *mcp.CallToolRequest, in memSearchMCPI
 			slog.Warn("mem_search: store close failed", "err", cerr)
 		}
 	}()
-	obs, err := s.Search(in.Query, in.Type)
+	obs, total, err := s.Search(in.Query, in.Type, limit)
 	if err != nil {
 		return nil, queryOutput{}, err
 	}
-	return nil, queryOutput{Result: formatObservations(obs, recallStale(s, obs))}, nil
+	result := formatObservations(obs, recallStale(s, obs))
+	if total > len(obs) {
+		result += fmt.Sprintf("\n\nshowing %d of %d — refine the query or raise limit", len(obs), total)
+	}
+	return nil, queryOutput{Result: result}, nil
 }
 
 func handleMemRecent(_ context.Context, _ *mcp.CallToolRequest, in memRecentMCPInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -276,7 +287,7 @@ func handleCrystallizeSave(_ context.Context, _ *mcp.CallToolRequest, in crystal
 	if in.Label == "" || in.Body == "" {
 		return nil, queryOutput{}, fmt.Errorf("crystallize_save: label and body are required")
 	}
-	path, err := saveCrystallizedSkill(in.Label, in.Body)
+	path, err := saveCrystallizedSkill(in.Label, in.Body, in.Min)
 	if err != nil {
 		return nil, queryOutput{}, err
 	}
@@ -376,7 +387,7 @@ func handleMemRelated(_ context.Context, _ *mcp.CallToolRequest, in memRelatedIn
 	if err != nil {
 		return nil, queryOutput{}, err
 	}
-	return nil, queryOutput{Result: formatObservations(obs, nil)}, nil
+	return nil, queryOutput{Result: formatObservations(obs, recallStale(s, obs))}, nil
 }
 
 func handleMemSessionStart(_ context.Context, _ *mcp.CallToolRequest, in memSessionStartInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -410,7 +421,7 @@ func handleMemSessionEnd(_ context.Context, _ *mcp.CallToolRequest, in memSessio
 			slog.Warn("mem_session_end: store close failed", "err", cerr)
 		}
 	}()
-	sess, err := s.SessionEnd("", in.Summary)
+	sess, err := s.SessionEnd(in.Project, in.Summary)
 	if err != nil {
 		return nil, queryOutput{}, err
 	}
@@ -512,7 +523,7 @@ func formatObservations(obs []memory.Observation, stale map[string]int) string {
 		}
 		fmt.Fprintf(&sb, "[%s] rev:%d %s\n", key, o.Revision, o.UpdatedAt.Format("2006-01-02"))
 		if n := stale[o.ID]; n > 0 {
-			fmt.Fprintf(&sb, "⚠ posible stale: %d símbolo(s) linkeado(s) ya no existe(n) en el grafo — verificá antes de confiar\n", n)
+			fmt.Fprintf(&sb, "⚠ possibly stale: %d linked symbol(s) no longer in the graph — verify before trusting\n", n)
 		}
 		fmt.Fprintf(&sb, "%s\n\n", o.Content)
 	}
@@ -532,7 +543,7 @@ func refreshGraph() {
 			slog.Warn("mcp: graph store close failed", "err", err)
 		}
 	}()
-	if _, err := extract.Build(".", extract.Extensions(), s); err != nil {
+	if _, err := extract.Build(repoRoot(), extract.Extensions(), s); err != nil {
 		slog.Warn("mcp: graph refresh failed; queries may return stale data", "err", err)
 	}
 }
@@ -588,8 +599,13 @@ func handleGetConcept(_ context.Context, _ *mcp.CallToolRequest, in getConceptIn
 	if err != nil {
 		return nil, queryOutput{}, fmt.Errorf("get_concept: %w", err)
 	}
+	const conceptListCap = 50
 	var sb strings.Builder
-	for _, r := range rows {
+	for i, r := range rows {
+		if i == conceptListCap {
+			fmt.Fprintf(&sb, "…and %d more — pass a name to read one\n", len(rows)-conceptListCap)
+			break
+		}
 		fmt.Fprintf(&sb, "- %s: %s\n", r.Name, r.Description)
 	}
 	return nil, queryOutput{Result: sb.String()}, nil

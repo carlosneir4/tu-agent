@@ -9,7 +9,9 @@ tool_subset:
   - find
   - list_dir
   - load_skill
-  - mem_save
+  - get_context
+  - get_impact
+  - find_symbol
   - mem_search
   - mem_recent
 ---

@@ -39,15 +39,12 @@ func TestSanitizeTicket(t *testing.T) {
 	}
 }
 
-func TestTddRelBaseAndBaseDir(t *testing.T) {
+func TestTddRelBase(t *testing.T) {
 	if got := tddRelBase("ABC-123", "user-login"); got != filepath.Join(".tu-agent", "tdd", "ABC-123-user-login") {
 		t.Errorf("tddRelBase with ticket = %q", got)
 	}
 	if got := tddRelBase("", "user-login"); got != filepath.Join(".tu-agent", "tdd", "user-login") {
 		t.Errorf("tddRelBase no ticket = %q", got)
-	}
-	if got := tddBaseDir("/repo", "ABC-123", "user-login"); got != filepath.Join("/repo", ".tu-agent", "tdd", "ABC-123-user-login") {
-		t.Errorf("tddBaseDir = %q", got)
 	}
 }
 

@@ -10,7 +10,10 @@ import (
 	"github.com/tu/tu-agent/internal/tdd"
 )
 
-var tddStateTicket string
+var (
+	tddStateTicket   string
+	tddStateBaseFlag string
+)
 
 // tddStatePath resolves the state.json for the addressed run: by ticket, else
 // the newest run, else a legacy flat run. Falls back to the flat path so a
@@ -20,6 +23,20 @@ func tddStatePath(root, ticket string) string {
 		return filepath.Join(base, "state.json")
 	}
 	return filepath.Join(root, ".tu-agent", "tdd", "state.json")
+}
+
+// tddStateFile resolves the state.json for state/status commands: an explicit
+// --base wins (relative is joined to root); otherwise falls back to
+// --ticket/mtime resolution via tddStatePath.
+func tddStateFile(root string) string {
+	if tddStateBaseFlag != "" {
+		b := tddStateBaseFlag
+		if !filepath.IsAbs(b) {
+			b = filepath.Join(root, filepath.FromSlash(b))
+		}
+		return filepath.Join(b, "state.json")
+	}
+	return tddStatePath(root, tddStateTicket)
 }
 
 // tddStateBaseRel is the repo-relative dir that holds the resolved state.json.
@@ -36,7 +53,7 @@ var tddStatusCmd = &cobra.Command{
 	Short: "Print the current tdd run state as JSON (features, statuses, resumable)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		root := repoRoot()
-		sp := tddStatePath(root, tddStateTicket)
+		sp := tddStateFile(root)
 		st, err := tdd.LoadState(sp)
 		if err != nil {
 			return fmt.Errorf("tdd status: %w", err)
@@ -79,8 +96,11 @@ var tddStateBeginCmd = &cobra.Command{
 		for _, name := range tddStateFeatures {
 			feats = append(feats, tdd.FeaturePlan{Name: name})
 		}
-		st := tdd.BeginRun(tddStateTask, tddStateBranch, feats)
-		if err := tdd.SaveState(tddStatePath(repoRoot(), tddStateTicket), st); err != nil {
+		st, err := tdd.BeginRun(tddStateTask, tddStateBranch, feats)
+		if err != nil {
+			return fmt.Errorf("tdd state begin: %w", err)
+		}
+		if err := tdd.SaveState(tddStateFile(repoRoot()), st); err != nil {
 			return fmt.Errorf("tdd state begin: %w", err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "began run with %d feature(s)\n", len(tddStateFeatures))
@@ -97,7 +117,7 @@ var tddStateMarkCmd = &cobra.Command{
 		if status != "pass" && status != "blocked" && status != "pending" {
 			return fmt.Errorf("tdd state mark: status must be pass|blocked|pending, got %q", status)
 		}
-		st, err := tdd.LoadState(tddStatePath(repoRoot(), tddStateTicket))
+		st, err := tdd.LoadState(tddStateFile(repoRoot()))
 		if err != nil {
 			return fmt.Errorf("tdd state mark: %w", err)
 		}
@@ -112,7 +132,7 @@ var tddStateMarkCmd = &cobra.Command{
 			return fmt.Errorf("tdd state mark: unknown feature %q", name)
 		}
 		st.Mark(name, status)
-		if err := tdd.SaveState(tddStatePath(repoRoot(), tddStateTicket), st); err != nil {
+		if err := tdd.SaveState(tddStateFile(repoRoot()), st); err != nil {
 			return fmt.Errorf("tdd state mark: %w", err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "marked %s %s\n", name, status)
@@ -124,7 +144,12 @@ func init() {
 	tddStateBeginCmd.Flags().StringArrayVar(&tddStateFeatures, "feature", nil, "feature slug (repeatable)")
 	tddStateBeginCmd.Flags().StringVar(&tddStateTask, "task", "", "the run's task description")
 	tddStateBeginCmd.Flags().StringVar(&tddStateBranch, "branch", "", "the feature branch")
+	tddStateBeginCmd.Flags().StringVar(&tddStateTicket, "ticket", "", "ticket id to address a specific run")
+	tddStateBeginCmd.Flags().StringVar(&tddStateBaseFlag, "base", "", "explicit per-feature base dir (overrides --ticket/mtime resolution)")
+	tddStateMarkCmd.Flags().StringVar(&tddStateTicket, "ticket", "", "ticket id to address a specific run")
+	tddStateMarkCmd.Flags().StringVar(&tddStateBaseFlag, "base", "", "explicit per-feature base dir (overrides --ticket/mtime resolution)")
 	tddStatusCmd.Flags().StringVar(&tddStateTicket, "ticket", "", "ticket id to address a specific run")
+	tddStatusCmd.Flags().StringVar(&tddStateBaseFlag, "base", "", "explicit per-feature base dir (overrides --ticket/mtime resolution)")
 	tddStateCmd.AddCommand(tddStateBeginCmd)
 	tddStateCmd.AddCommand(tddStateMarkCmd)
 	tddCmd.AddCommand(tddStatusCmd)

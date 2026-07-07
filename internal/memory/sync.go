@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -196,6 +198,22 @@ func canonicalChunkJSON(records []ChunkRecord) ([]byte, error) {
 	return data, nil
 }
 
+// ChunkPath returns the path where the given author's chunk file lives under
+// dir. Shared by WriteChunk and callers (export summary, `memory pending`)
+// that need to locate the file before it is (re)written.
+func ChunkPath(dir, author string) string {
+	return filepath.Join(dir, "chunk-"+authorSlug(author)+".jsonl.gz")
+}
+
+// RelChunkPath returns the repo-relative, forward-slash path to the given
+// author's chunk file (e.g. ".tu-agent/memory/chunks/chunk-alice.jsonl.gz"),
+// suitable as a git pathspec (`git show HEAD:<path>`) on every platform
+// regardless of the OS path separator convention ChunkPath uses. Built with
+// path.Join (not filepath.Join) so it never picks up a backslash.
+func RelChunkPath(author string) string {
+	return path.Join(".tu-agent", "memory", "chunks", "chunk-"+authorSlug(author)+".jsonl.gz")
+}
+
 // WriteChunk writes this author's records to dir/chunk-<slug>.jsonl.gz. It is
 // idempotent: if the file already holds identical records, nothing is written
 // (written=false) and the bytes are left untouched, so git sees no change.
@@ -203,7 +221,7 @@ func WriteChunk(dir, author string, records []ChunkRecord) (string, bool, error)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", false, fmt.Errorf("memory.WriteChunk: mkdir: %w", err)
 	}
-	path := filepath.Join(dir, "chunk-"+authorSlug(author)+".jsonl.gz")
+	path := ChunkPath(dir, author)
 	want, err := canonicalChunkJSON(records)
 	if err != nil {
 		return "", false, err
@@ -263,12 +281,61 @@ func ReadAllChunks(dir string) ([]ChunkRecord, error) {
 		if err != nil {
 			return nil, fmt.Errorf("memory.ReadAllChunks: %s: %w", e.Name(), err)
 		}
-		var cf chunkFile
-		if err := json.Unmarshal(raw, &cf); err != nil {
+		recs, err := parseChunkJSON(raw)
+		if err != nil {
 			return nil, fmt.Errorf("memory.ReadAllChunks: %s: %w", e.Name(), err)
 		}
-		all = append(all, cf.Observations...)
+		all = append(all, recs...)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].SyncID < all[j].SyncID })
 	return all, nil
+}
+
+// ReadChunkFile reads and parses a single chunk file, returning its records
+// sorted by sync_id. A missing file yields no records and no error — the
+// natural "nothing exported yet" state for a brand-new author.
+func ReadChunkFile(path string) ([]ChunkRecord, error) {
+	raw, err := readChunkRaw(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("memory.ReadChunkFile: %w", err)
+	}
+	recs, err := parseChunkJSON(raw)
+	if err != nil {
+		return nil, fmt.Errorf("memory.ReadChunkFile: %w", err)
+	}
+	return recs, nil
+}
+
+// ParseChunk parses a gzip-compressed chunk document read from r — e.g. the
+// blob bytes returned by `git show HEAD:<path>`, which are still gzipped
+// since git stores the chunk file's bytes verbatim.
+func ParseChunk(r io.Reader) ([]ChunkRecord, error) {
+	gr, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, fmt.Errorf("memory.ParseChunk: gzip: %w", err)
+	}
+	defer gr.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(gr); err != nil {
+		return nil, fmt.Errorf("memory.ParseChunk: read: %w", err)
+	}
+	recs, err := parseChunkJSON(buf.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("memory.ParseChunk: %w", err)
+	}
+	return recs, nil
+}
+
+// parseChunkJSON unmarshals a chunk document's decompressed JSON bytes,
+// returning its records sorted by sync_id.
+func parseChunkJSON(raw []byte) ([]ChunkRecord, error) {
+	var cf chunkFile
+	if err := json.Unmarshal(raw, &cf); err != nil {
+		return nil, fmt.Errorf("memory.parseChunkJSON: %w", err)
+	}
+	sort.Slice(cf.Observations, func(i, j int) bool { return cf.Observations[i].SyncID < cf.Observations[j].SyncID })
+	return cf.Observations, nil
 }

@@ -3,11 +3,15 @@ name: "{{.ProjectName}}-qa"
 description: "Test strategy, coverage, and test generation for {{.ProjectName}} (Java)."
 default_model: claude
 tool_subset:
+  - bash
   - read_file
   - write_file
   - grep
   - find
   - load_skill
+  - get_context
+  - get_impact
+  - find_symbol
   - mem_save
   - mem_search
   - mem_recent

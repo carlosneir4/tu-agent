@@ -22,11 +22,26 @@ type BuildResult struct {
 	Failed    int
 }
 
-// Build does a full parse + resolve pass over root. Only files whose SHA-256
-// has changed since the last build are re-parsed. Files no longer on disk are
-// deleted from the store. After parsing, a project-wide resolve runs and
-// persists all non-contains edges.
+// Build does a full parse + resolve pass over root. See BuildScoped.
 func Build(root string, exts []string, st *store.Store) (BuildResult, error) {
+	return BuildScoped(root, "", exts, st)
+}
+
+// underScope reports whether the slash-separated repo-relative path rel lies
+// under scope (a slash-separated dir prefix). Empty scope matches everything.
+func underScope(rel, scope string) bool {
+	if scope == "" {
+		return true
+	}
+	return rel == scope || strings.HasPrefix(rel, scope+"/")
+}
+
+// BuildScoped parses + resolves files under root. A non-empty scope restricts
+// the pass to that repo-relative subtree: only in-scope files are enumerated,
+// and only in-scope store entries whose file vanished are deleted — entries
+// outside the scope are never touched. Only files whose SHA-256 changed are
+// re-parsed. After parsing, a project-wide resolve runs.
+func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResult, error) {
 	var result BuildResult
 	extSet := map[string]struct{}{}
 	for _, e := range exts {
@@ -38,6 +53,13 @@ func Build(root string, exts []string, st *store.Store) (BuildResult, error) {
 	if err != nil {
 		return result, err
 	}
+	if scope != "" {
+		for path := range onDisk {
+			if !underScope(path, scope) {
+				delete(onDisk, path)
+			}
+		}
+	}
 
 	// 2. Load known files from the store.
 	known, err := st.Files()
@@ -47,6 +69,9 @@ func Build(root string, exts []string, st *store.Store) (BuildResult, error) {
 
 	// 3. Delete files removed from disk.
 	for path := range known {
+		if !underScope(path, scope) {
+			continue
+		}
 		if _, exists := onDisk[path]; !exists {
 			if err := st.DeleteFile(path); err != nil {
 				return result, fmt.Errorf("graph.Build: deleting %s: %w", path, err)
@@ -58,21 +83,37 @@ func Build(root string, exts []string, st *store.Store) (BuildResult, error) {
 	// 4. Parse changed or new files.
 	for relPath := range onDisk {
 		full := filepath.Join(root, filepath.FromSlash(relPath))
+		rec, knownFile := known[relPath]
+		if fi, err := os.Stat(full); err == nil && knownFile &&
+			rec.MtimeNS == fi.ModTime().UnixNano() && rec.Size == int(fi.Size()) {
+			result.Unchanged++
+			continue // stat-identical: skip read + hash entirely
+		}
 		src, err := os.ReadFile(full)
 		if err != nil {
 			return result, fmt.Errorf("graph.Build: reading %s: %w", relPath, err)
 		}
+		fi, err := os.Stat(full)
+		if err != nil {
+			return result, fmt.Errorf("graph.Build: stat %s: %w", relPath, err)
+		}
 		sum := fileSHA256(src)
-		if rec, ok := known[relPath]; ok && rec.SHA256 == sum {
+		if knownFile && rec.SHA256 == sum {
+			// touched but identical: refresh the stat so the next run fast-paths.
+			rec.MtimeNS = fi.ModTime().UnixNano()
+			rec.Size = int(fi.Size())
+			if err := st.UpsertFile(rec); err != nil {
+				return result, fmt.Errorf("graph.Build: refresh stat %s: %w", relPath, err)
+			}
 			result.Unchanged++
-			continue // unchanged
+			continue
 		}
 		facts, err := dispatchParse(relPath, src)
 		if err != nil {
 			slog.Warn("graph.Build: parse failed", "path", relPath, "err", err)
 			_ = st.UpsertFile(store.FileRecord{
 				Path: relPath, SHA256: sum, Language: strings.ToLower(strings.TrimPrefix(filepath.Ext(relPath), ".")),
-				Status: "failed",
+				Status: "failed", Size: len(src), MtimeNS: fi.ModTime().UnixNano(),
 			})
 			result.Failed++
 			continue
@@ -80,7 +121,7 @@ func Build(root string, exts []string, st *store.Store) (BuildResult, error) {
 		if err := st.UpsertFile(store.FileRecord{
 			Path: relPath, SHA256: sum, Language: facts.Meta.Language,
 			Status: facts.Meta.Status, Package: facts.Meta.Package,
-			Imports: facts.Meta.Imports, Size: len(src),
+			Imports: facts.Meta.Imports, Size: len(src), MtimeNS: fi.ModTime().UnixNano(),
 		}); err != nil {
 			return result, fmt.Errorf("graph.Build: upsert file %s: %w", relPath, err)
 		}
