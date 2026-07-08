@@ -69,7 +69,14 @@ than interrogating from zero; if the document is complete, write the spec and em
 contract with no questions. Then converse with the user to produce __TDDDIR__/spec.md
 before any design or code. Ask exactly ONE
 question per turn. On non-trivial decisions propose >=2 options and record the chosen one with
-its reason; mark unresolved points "OPEN QUESTION". When the spec is complete, write
+its reason; mark unresolved points "OPEN QUESTION". When you present options or explain a
+decision, write for a working developer in plain language: avoid jargon, or if a term is
+unavoidable define it in the same breath (e.g. "opt-in — off by default, the user turns it on").
+Illustrate each option with a concrete example — a short code snippet, a sample input and
+output, or a command — whenever code makes the choice clearer than prose. The first time you use
+a domain term, acronym, or coined name the user may not know (e.g. "surplus", "opt-in", or a
+class name like SurplusReport), gloss it in one plain phrase — "surplus (the fields produced but
+never consumed)". Assume a strong engineer who may not share your domain vocabulary. When the spec is complete, write
 __TDDDIR__/spec.md (purpose, contract, edge cases, decisions+why) and only then emit a
 contract with status "pass".` + contractInstruction
 
@@ -96,7 +103,9 @@ coverage is thin. CLASSIFY the task complexity from that blast-radius and set th
   "features" with one entry per sub-feature. A sub-feature that is a pure refactor (no new
   behavior/tests) may be emitted with "kind":"refactor" in its features entry; it still gets a
   .feature file (which may have no @s scenarios).
-Keep slugs unique.` + contractInstruction
+Keep slugs unique. When you coin a name or use a domain term in the design doc or a scenario
+(e.g. a class name like SurplusReport), gloss it in plain language on first use so a reader who
+does not share the domain vocabulary can follow.` + contractInstruction
 
 // CraftsmanPrompt is the TDD-stage overlay for strict TDD with a test-gen safety net.
 const CraftsmanPrompt = `tu-agent TDD task — craftsman stage. Ignore any default output format,
@@ -112,6 +121,11 @@ gate flags as survivors. Before the first scenario, check whether the code you w
 tests ("tu-agent test gaps" / graph tested_by); if it has NONE, run "tu-agent test gen
 <target>" to lay a safety net BEFORE the cycle. If "tu-agent test gen" fails (e.g. no provider
 configured), write the safety-net test by hand instead. Greenfield code is hand-written test-first.
+Name each test after the production symbol it exercises, spelled as that symbol actually exists
+in the code (confirm with find_symbol), and follow the repo's own test-naming convention — Grep
+neighbouring tests and mirror how they map a test to its target. The name must trace straight
+back to the unit under test; never invent a test name from a scenario title or domain phrase
+that has no matching class or function.
 Write a @s->test map to __TDDDIR__/progress/tdd_<name>.md. In the contract, "scenarios"
 MUST list every @s tag covered with a concrete test. Address each judge-feedback point if any.
 Report the primary source file as an artifact {"kind":"source","path":"<repo-relative>"} so

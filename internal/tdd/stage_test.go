@@ -105,6 +105,31 @@ func TestAnalystPromptSeedsFromDesign(t *testing.T) {
 	}
 }
 
+func TestAnalystPromptDemandsPlainLanguageAndExamples(t *testing.T) {
+	for _, want := range []string{"plain language", "concrete example"} {
+		if !strings.Contains(AnalystPrompt, want) {
+			t.Errorf("AnalystPrompt must guide developer-friendly options; missing %q", want)
+		}
+	}
+}
+
+func TestPromptsGlossUnfamiliarTerms(t *testing.T) {
+	if !strings.Contains(AnalystPrompt, "gloss it") {
+		t.Error("AnalystPrompt must require glossing unfamiliar domain terms/coined names")
+	}
+	if !strings.Contains(ArchitectPrompt, "gloss it") {
+		t.Error("ArchitectPrompt must require glossing coined names it introduces")
+	}
+}
+
+func TestCraftsmanPromptDemandsSymbolDerivedTestNames(t *testing.T) {
+	for _, want := range []string{"find_symbol", "unit under test"} {
+		if !strings.Contains(CraftsmanPrompt, want) {
+			t.Errorf("CraftsmanPrompt must tie test names to the real symbol; missing %q", want)
+		}
+	}
+}
+
 func TestSandwichOverlays(t *testing.T) {
 	if !strings.Contains(TestWriterPrompt, "NO production") {
 		t.Error("TestWriterPrompt must forbid production code")

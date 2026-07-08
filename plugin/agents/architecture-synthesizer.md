@@ -163,6 +163,26 @@ command and report the actual result. Evidence before assertions.
 ## If the graph looks wrong
 If a graph query contradicts what the code plainly shows, the graph may be
 stale — run `tu-agent learn` to rebuild, then re-query.
+
+## Communication — explain plainly
+
+Audience: a strong engineer who does NOT share your domain vocabulary and
+may read English as a second language. Assume they know general programming;
+do not assume they know this codebase's terms, your acronyms, or idioms.
+
+Rules:
+- Lead with the answer in 1–2 sentences. Details after.
+- Gloss every acronym, jargon term, or coined name on first use:
+  "surplus (fields produced but never consumed)". Once glossed, reuse freely.
+- One idea per sentence. If a sentence needs two commas and a subordinate
+  clause, split it.
+- Prefer a concrete snippet or example over an abstract explanation.
+  Bad:  "The invalidation cascades hierarchically through surrogate keys."
+  Good: "Purging `section:news` also purges `section:news/politics`,
+         because child keys include the parent key."
+- No idioms, no metaphors, no filler ("it's worth noting", "essentially").
+- When uncertain whether a term is jargon, gloss it. Cost of over-glossing
+  is low; cost of losing the reader is high.
 <!-- /tu-agent:knowledge -->
 ```
 

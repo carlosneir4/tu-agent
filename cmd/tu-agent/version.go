@@ -6,7 +6,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.3.0-dev"
+// version is the reported tu-agent version. It defaults to a parseable dev
+// sentinel and is overridden at release build time via
+// -ldflags "-X main.version=<tag>" (see .github/workflows/release.yml), so a
+// released binary reports its real tag (e.g. v1.0.5) instead of the dev value.
+var version = "0.0.0-dev"
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
