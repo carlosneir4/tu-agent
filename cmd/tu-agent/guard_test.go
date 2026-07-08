@@ -11,6 +11,8 @@ func TestGuardFromHook(t *testing.T) {
 		`{"tool_input":{"file_path":"/home/u/.ssh/id_ed25519"}}`,
 		`{"tool_input":{"command":"cat ~/.ssh/id_rsa"}}`,
 		`{"tool_input":{"command":"ls -la ~/.ssh/ && cat ~/.ssh/*.pub"}}`,
+		`{"tool_input":{"command":"echo \"key=${ANTHROPIC_API_KEY:-UNSET}\""}}`,
+		`{"tool_input":{"command":"printenv OPENAI_API_KEY"}}`,
 	}
 	for _, p := range block {
 		if !guardFromHook(strings.NewReader(p)) {

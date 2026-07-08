@@ -49,6 +49,11 @@ Build: {{.BuildTool}}. Tests: `{{.TestCommand}}`.
 - Activate virtual environment before running commands. Dependencies in `pyproject.toml`.
 - Mutable default arguments are a bug: `def f(x=[])` → use `def f(x=None): x = x or []`.
 
+## Doc-comments — keep them minimal
+- Write a doc-comment only when it says something the code cannot: the WHY or a non-obvious contract. One line. Never restate the signature.
+- No boilerplate Javadoc/JSDoc/docstring: no `@param`/`@return` that just echo the types, no doc on private or self-evident methods.
+- A revealing name and a short function beat a paragraph of docs. Docs that repeat the code hurt readability — omit them.
+
 ## Output format
 
 ```

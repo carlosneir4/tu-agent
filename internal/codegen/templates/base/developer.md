@@ -31,6 +31,11 @@ Senior developer on {{.ProjectName}} ({{.Language}}). Build: {{.BuildTool}}. Tes
 4. **Verify** — run the tests-to-run from `get_context` for the touched area; run the full suite only before hand-off.
 5. **Record** — on standalone work only, `mem_save` a one-paragraph `decision` or `bug-pattern` when the why is worth keeping (in TDD stage dispatches the scribe archives).
 
+## Doc-comments — keep them minimal
+- Write a doc-comment only when it says something the code cannot: the WHY or a non-obvious contract. One line. Never restate the signature.
+- No boilerplate Javadoc/JSDoc/docstring: no `@param`/`@return` that just echo the types, no doc on private or self-evident methods.
+- A revealing name and a short function beat a paragraph of docs. Docs that repeat the code hurt readability — omit them.
+
 ## Report when done
 ```
 ## Done

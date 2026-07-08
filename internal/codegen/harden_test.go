@@ -427,6 +427,37 @@ func TestCommandTouchesSecret(t *testing.T) {
 	}
 }
 
+func TestCommandExposesEnvSecret(t *testing.T) {
+	// Must block: commands that could print a secret env var's VALUE to stdout.
+	for _, c := range []string{
+		`echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:+SET}${ANTHROPIC_API_KEY:-UNSET}"`, // the real leak
+		"echo $GITHUB_TOKEN",
+		`printf '%s\n' "$AWS_SECRET_ACCESS_KEY"`,
+		`echo "${DATABASE_PASSWORD}"`,
+		"printenv OPENAI_API_KEY",
+		"env", // bare dump of every var
+		"env | grep -i key",
+		"printenv",
+	} {
+		if !CommandExposesEnvSecret(c) {
+			t.Errorf("CommandExposesEnvSecret(%q) = false, want true", c)
+		}
+	}
+	// Must NOT block: legit uses that never print a secret to stdout.
+	for _, c := range []string{
+		"go test ./...",
+		`git commit -m "add API_TOKEN support"`,                   // literal mention, no expansion
+		`curl -H "Authorization: Bearer $API_KEY" https://api.x/`, // uses, does not print
+		"echo $HOME", "echo \"deploy done\"", // echo of a non-secret
+		"env FOO=bar go test ./...", // env to RUN a command
+		"printenv PATH",             // non-secret var
+	} {
+		if CommandExposesEnvSecret(c) {
+			t.Errorf("CommandExposesEnvSecret(%q) = true, want false", c)
+		}
+	}
+}
+
 func TestHardenHooksGuardMatchesBash(t *testing.T) {
 	s := HardenedSettings("go", "go", false)
 	hooks := s["hooks"].(map[string]any)

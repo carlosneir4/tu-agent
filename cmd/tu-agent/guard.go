@@ -34,7 +34,8 @@ func guardFromHook(r io.Reader) bool {
 	if p != "" && codegen.IsSecretPath(p) {
 		return true
 	}
-	if c := payload.ToolInput.Command; c != "" && codegen.CommandTouchesSecret(c) {
+	if c := payload.ToolInput.Command; c != "" &&
+		(codegen.CommandTouchesSecret(c) || codegen.CommandExposesEnvSecret(c)) {
 		return true
 	}
 	return false
@@ -50,7 +51,7 @@ var guardPathCmd = &cobra.Command{
 	Args:   cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if guardFromHook(cmd.InOrStdin()) {
-			fmt.Fprintln(cmd.ErrOrStderr(), "tu-agent: refusing to read or modify secret/credential files")
+			fmt.Fprintln(cmd.ErrOrStderr(), "tu-agent: refusing to read/modify secret files or print environment secrets")
 			os.Exit(2)
 		}
 		return nil

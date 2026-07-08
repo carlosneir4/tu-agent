@@ -83,6 +83,64 @@ func TestBuildFull(t *testing.T) {
 	}
 }
 
+func TestBuildReparsesWhenNodesWiped(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "graph.db")
+	writeFixture(t, dir, "src/Service.java", serviceJava)
+	writeFixture(t, dir, "src/ServiceTest.java", serviceTestJava)
+
+	st, err := store.Open(dbPath, ExtractorVersion)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	if _, err := Build(dir, []string{".java"}, st); err != nil {
+		t.Fatalf("first Build: %v", err)
+	}
+	before, err := st.NodeCount()
+	if err != nil {
+		t.Fatalf("NodeCount: %v", err)
+	}
+	if before == 0 {
+		t.Fatal("expected nodes after first build")
+	}
+
+	// Simulate an external node-store wipe that leaves the file-state table
+	// intact (a mid-session graph.db reset / lost -wal sidecar): drop every
+	// file's nodes but keep its files row, so the reconcile would see all files
+	// stat/SHA "unchanged".
+	files, err := st.Files()
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	for path := range files {
+		if err := st.ReplaceFileNodes(path, nil, nil, nil); err != nil {
+			t.Fatalf("wipe nodes for %s: %v", path, err)
+		}
+	}
+	if n, _ := st.NodeCount(); n != 0 {
+		t.Fatalf("expected 0 nodes after wipe, got %d", n)
+	}
+
+	// Re-build: the files table matches disk, so without the empty-node guard
+	// every file is skipped and the graph stays permanently empty.
+	res, err := Build(dir, []string{".java"}, st)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	if res.Parsed == 0 {
+		t.Errorf("expected files re-parsed after node wipe, got Parsed=0 (unchanged=%d)", res.Unchanged)
+	}
+	after, err := st.NodeCount()
+	if err != nil {
+		t.Fatalf("NodeCount after rebuild: %v", err)
+	}
+	if after == 0 {
+		t.Error("graph still empty after rebuild: empty-node reconcile guard did not fire")
+	}
+}
+
 func TestBuildIncremental(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "graph.db")

@@ -41,6 +41,40 @@ func CommandTouchesSecret(command string) bool {
 	return secretCommandRe.MatchString(command) || secretCommandExtRe.MatchString(command)
 }
 
+// sensitiveEnvMarker matches the secret-bearing segment of an environment
+// variable name (API_KEY, TOKEN, SECRET, …). Kept as a fragment so it can be
+// reused inside the expansion, printenv, and dump patterns below.
+const sensitiveEnvMarker = `(?:API_?KEY|APIKEY|SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|PRIVATE_?KEY|ACCESS_?KEY|CREDENTIALS?)`
+
+var (
+	// printBuiltinRe matches echo/printf appearing as a command word (start, or
+	// after a separator), i.e. a command that writes its arguments to stdout.
+	printBuiltinRe = regexp.MustCompile("(?i)(^|[\\s;&|(`])(echo|printf)([\\s]|$)")
+	// envSecretExpansionRe matches a $VAR / ${VAR…} expansion whose name carries a
+	// secret marker — the value that would reach stdout if printed.
+	envSecretExpansionRe = regexp.MustCompile(`(?i)\$\{?[A-Z0-9_]*` + sensitiveEnvMarker)
+	// printenvSecretRe matches `printenv <SECRET_NAME>`, a direct value print.
+	printenvSecretRe = regexp.MustCompile("(?i)(^|[\\s;&|(`])printenv\\s+[A-Z0-9_]*" + sensitiveEnvMarker)
+	// envDumpRe matches a bare `env`/`printenv` that dumps EVERY variable (no
+	// run-target follows): end-of-command, a pipe, a redirect, or a separator.
+	// `env FOO=bar cmd` / `env cmd` (a run-target follows) do not match.
+	envDumpRe = regexp.MustCompile("(?i)(^|[;&|(`])[ \\t]*(env|printenv)[ \\t]*($|[|>;&\\n])")
+)
+
+// CommandExposesEnvSecret reports whether a Bash command could print a secret
+// environment variable's VALUE to stdout — the exposure class CommandTouchesSecret
+// (secret FILES) does not cover. Deny-wins on the pattern, not a shell parse.
+// It blocks: a dump of the whole environment (`env`, `printenv`, `env | …`);
+// `printenv <SECRET_NAME>`; and echo/printf combined with a $-expansion of a
+// secret-named variable. It deliberately does NOT block merely USING a secret
+// (e.g. passing $API_KEY to curl), only printing it.
+func CommandExposesEnvSecret(command string) bool {
+	if envDumpRe.MatchString(command) || printenvSecretRe.MatchString(command) {
+		return true
+	}
+	return envSecretExpansionRe.MatchString(command) && printBuiltinRe.MatchString(command)
+}
+
 // HardenedSettings returns the tu-agent-owned Claude Code settings.json content
 // as a generic map, scoped to the detected language and build tool. pluginPresent
 // signals that the Claude Code plugin's own hooks.json already supplies the
