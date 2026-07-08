@@ -134,22 +134,34 @@ func (s *Store) setMeta(key, value string) error {
 	return nil
 }
 
+// execer is the subset of *sql.DB / *sql.Tx used by the row-writing helpers, so
+// the same SQL runs either standalone (autocommit) or inside a caller's tx.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 // UpsertFile inserts or replaces one files row.
 func (s *Store) UpsertFile(f FileRecord) error {
-	imp, err := json.Marshal(f.Imports)
-	if err != nil {
+	if err := upsertFileRow(s.db, f); err != nil {
 		return fmt.Errorf("graph.Store.UpsertFile: %w", err)
 	}
-	_, err = s.db.Exec(`INSERT INTO files(path,sha256,language,status,package,imports,size,mtime_ns,parsed_at)
+	return nil
+}
+
+// upsertFileRow writes one files row via x (a *sql.DB for autocommit, or an open
+// *sql.Tx to fold the write into a caller's transaction).
+func upsertFileRow(x execer, f FileRecord) error {
+	imp, err := json.Marshal(f.Imports)
+	if err != nil {
+		return err
+	}
+	_, err = x.Exec(`INSERT INTO files(path,sha256,language,status,package,imports,size,mtime_ns,parsed_at)
 		VALUES(?,?,?,?,?,?,?,?,datetime('now'))
 		ON CONFLICT(path) DO UPDATE SET sha256=excluded.sha256, language=excluded.language,
 		status=excluded.status, package=excluded.package, imports=excluded.imports,
 		size=excluded.size, mtime_ns=excluded.mtime_ns, parsed_at=excluded.parsed_at`,
 		f.Path, f.SHA256, f.Language, f.Status, f.Package, string(imp), f.Size, f.MtimeNS)
-	if err != nil {
-		return fmt.Errorf("graph.Store.UpsertFile: %w", err)
-	}
-	return nil
+	return err
 }
 
 // Files returns every files row keyed by path.
@@ -182,35 +194,71 @@ func (s *Store) ReplaceFileNodes(path string, nodes []graph.Node, refs []graph.R
 		return fmt.Errorf("graph.Store.ReplaceFileNodes: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := replaceFileNodesTx(tx, path, nodes, refs, contains); err != nil {
+		return fmt.Errorf("graph.Store.ReplaceFileNodes: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("graph.Store.ReplaceFileNodes: commit: %w", err)
+	}
+	return nil
+}
+
+// ReplaceFileAndNodes upserts a file's state row together with its nodes, refs,
+// and contains edges in ONE transaction. The reconcile in graph.Build keys
+// change-detection off the files row (matching stored mtime/size/sha against
+// disk), so the files row must never be persisted ahead of the nodes it
+// summarises. Were the two written in separate transactions, an interrupted
+// build (Ctrl-C, CI timeout, OOM kill) could commit the files row with no
+// nodes, and every later build would then skip that file as "unchanged",
+// orphaning it permanently. Written together, an interrupted build leaves
+// neither or both.
+func (s *Store) ReplaceFileAndNodes(f FileRecord, nodes []graph.Node, refs []graph.Ref, contains []graph.Edge) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("graph.Store.ReplaceFileAndNodes: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := upsertFileRow(tx, f); err != nil {
+		return fmt.Errorf("graph.Store.ReplaceFileAndNodes: file row: %w", err)
+	}
+	if err := replaceFileNodesTx(tx, f.Path, nodes, refs, contains); err != nil {
+		return fmt.Errorf("graph.Store.ReplaceFileAndNodes: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("graph.Store.ReplaceFileAndNodes: commit: %w", err)
+	}
+	return nil
+}
+
+// replaceFileNodesTx clears and rewrites one file's nodes, refs, and contains
+// edges via tx. Shared by ReplaceFileNodes and ReplaceFileAndNodes.
+func replaceFileNodesTx(tx execer, path string, nodes []graph.Node, refs []graph.Ref, contains []graph.Edge) error {
 	if _, err := tx.Exec(`DELETE FROM refs WHERE from_id IN (SELECT id FROM nodes WHERE path = ?)`, path); err != nil {
-		return fmt.Errorf("graph.Store.ReplaceFileNodes: clearing refs: %w", err)
+		return fmt.Errorf("clearing refs: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM edges WHERE kind = 'contains' AND from_id IN (SELECT id FROM nodes WHERE path = ?)`, path); err != nil {
-		return fmt.Errorf("graph.Store.ReplaceFileNodes: clearing contains: %w", err)
+		return fmt.Errorf("clearing contains: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM nodes WHERE path = ?`, path); err != nil {
-		return fmt.Errorf("graph.Store.ReplaceFileNodes: clearing nodes: %w", err)
+		return fmt.Errorf("clearing nodes: %w", err)
 	}
 	for _, n := range nodes {
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO nodes(id,kind,name,path,line,end_line,language,params,return_type,exported) VALUES(?,?,?,?,?,?,?,?,?,?)`,
 			n.ID, string(n.Kind), n.Name, n.Path, n.Line, n.EndLine, n.Language, n.Params, n.ReturnType, n.Exported); err != nil {
-			return fmt.Errorf("graph.Store.ReplaceFileNodes: inserting node %s: %w", n.ID, err)
+			return fmt.Errorf("inserting node %s: %w", n.ID, err)
 		}
 	}
 	for _, r := range refs {
 		if _, err := tx.Exec(`INSERT INTO refs(from_id,kind,name,line,recv) VALUES(?,?,?,?,?)`,
 			r.FromID, string(r.Kind), r.Name, r.Line, r.Recv); err != nil {
-			return fmt.Errorf("graph.Store.ReplaceFileNodes: inserting ref: %w", err)
+			return fmt.Errorf("inserting ref: %w", err)
 		}
 	}
 	for _, e := range contains {
 		if _, err := tx.Exec(`INSERT OR REPLACE INTO edges(from_id,to_id,kind,confidence) VALUES(?,?,?,?)`,
 			e.From, e.To, string(e.Kind), string(e.Confidence)); err != nil {
-			return fmt.Errorf("graph.Store.ReplaceFileNodes: inserting edge: %w", err)
+			return fmt.Errorf("inserting edge: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("graph.Store.ReplaceFileNodes: commit: %w", err)
 	}
 	return nil
 }
@@ -408,6 +456,16 @@ func (s *Store) NodeCount() (int, error) {
 	var n int
 	if err := s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("graph.Store.NodeCount: %w", err)
+	}
+	return n, nil
+}
+
+// FileCount returns the total number of files rows. Paired with NodeCount to
+// detect the silent-empty-graph state (files present, zero nodes).
+func (s *Store) FileCount() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM files`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("graph.Store.FileCount: %w", err)
 	}
 	return n, nil
 }

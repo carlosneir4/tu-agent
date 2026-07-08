@@ -128,6 +128,47 @@ func TestReplaceFileNodesIsIdempotentPerFile(t *testing.T) {
 	}
 }
 
+func TestFileCount(t *testing.T) {
+	s := openTest(t)
+	if n, err := s.FileCount(); err != nil || n != 0 {
+		t.Fatalf("FileCount on empty store = %d, %v; want 0, nil", n, err)
+	}
+	for _, p := range []string{"a.java", "b.java"} {
+		if err := s.UpsertFile(FileRecord{Path: p, SHA256: "x", Language: "java", Status: "ok"}); err != nil {
+			t.Fatalf("UpsertFile %s: %v", p, err)
+		}
+	}
+	if n, err := s.FileCount(); err != nil || n != 2 {
+		t.Errorf("FileCount = %d, %v; want 2, nil", n, err)
+	}
+}
+
+func TestReplaceFileAndNodesIsAtomic(t *testing.T) {
+	s := openTest(t)
+	rec := FileRecord{Path: "a.java", SHA256: "x", Language: "java", Status: "ok", Size: 10}
+	nodes := []graph.Node{{ID: "a.java", Kind: graph.KindFile, Name: "a.java", Path: "a.java", Language: "java"}}
+
+	// Force the node-writing half of the transaction to fail after the file row
+	// is staged: drop the nodes table so the first statement that touches it (the
+	// refs-clear subquery selecting from nodes) errors. An atomic method must roll
+	// back the file row too — never leaving a files row ahead of its nodes (the
+	// interrupted-build orphan this method exists to prevent).
+	if _, err := s.db.Exec(`DROP TABLE nodes`); err != nil {
+		t.Fatalf("drop nodes: %v", err)
+	}
+	if err := s.ReplaceFileAndNodes(rec, nodes, nil, nil); err == nil {
+		t.Fatal("expected error when the node write fails, got nil")
+	}
+
+	var cnt int
+	if err := s.db.QueryRow(`SELECT count(*) FROM files WHERE path = ?`, rec.Path).Scan(&cnt); err != nil {
+		t.Fatalf("count files: %v", err)
+	}
+	if cnt != 0 {
+		t.Errorf("file row persisted despite node-write failure: files=%d, want 0 (not atomic)", cnt)
+	}
+}
+
 func TestDeleteFileRemovesNodesRefsAndEdges(t *testing.T) {
 	s := openTest(t)
 	nodes := []graph.Node{{ID: "b.java", Kind: graph.KindFile, Name: "b.java", Path: "b.java", Language: "java"}}

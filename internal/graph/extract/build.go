@@ -67,6 +67,26 @@ func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResul
 		return result, fmt.Errorf("graph.Build: loading files: %w", err)
 	}
 
+	// A node-store wipe that leaves the file-state table intact (an external
+	// graph.db reset, a lost -wal sidecar) would otherwise make every file look
+	// "unchanged" below, so nothing re-parses and the graph stays silently
+	// empty. If the store claims successfully-parsed files yet holds zero nodes,
+	// force a full re-parse to rebuild them.
+	//
+	// Only for a full (unscoped) build: a scoped build can repopulate just its
+	// own subtree, so forcing it would partially refill the node store, push
+	// NodeCount above zero, and thereby suppress both this guard and the
+	// empty-graph warning for the other subtrees that stay node-less. A scoped
+	// build over a wiped store is left to be healed by a full learn/graph update.
+	forceReparse := false
+	if scope == "" {
+		if n, err := st.NodeCount(); err != nil {
+			return result, fmt.Errorf("graph.Build: node count: %w", err)
+		} else if n == 0 && anyParsed(known) {
+			forceReparse = true
+		}
+	}
+
 	// 3. Delete files removed from disk.
 	for path := range known {
 		if !underScope(path, scope) {
@@ -84,7 +104,7 @@ func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResul
 	for relPath := range onDisk {
 		full := filepath.Join(root, filepath.FromSlash(relPath))
 		rec, knownFile := known[relPath]
-		if fi, err := os.Stat(full); err == nil && knownFile &&
+		if fi, err := os.Stat(full); err == nil && knownFile && !forceReparse &&
 			rec.MtimeNS == fi.ModTime().UnixNano() && rec.Size == int(fi.Size()) {
 			result.Unchanged++
 			continue // stat-identical: skip read + hash entirely
@@ -98,7 +118,7 @@ func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResul
 			return result, fmt.Errorf("graph.Build: stat %s: %w", relPath, err)
 		}
 		sum := fileSHA256(src)
-		if knownFile && rec.SHA256 == sum {
+		if knownFile && !forceReparse && rec.SHA256 == sum {
 			// touched but identical: refresh the stat so the next run fast-paths.
 			rec.MtimeNS = fi.ModTime().UnixNano()
 			rec.Size = int(fi.Size())
@@ -118,15 +138,15 @@ func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResul
 			result.Failed++
 			continue
 		}
-		if err := st.UpsertFile(store.FileRecord{
+		// Persist the file-state row and its nodes in one transaction: the file
+		// row is this loop's change-detection key, so it must never land ahead of
+		// its nodes (see store.ReplaceFileAndNodes).
+		if err := st.ReplaceFileAndNodes(store.FileRecord{
 			Path: relPath, SHA256: sum, Language: facts.Meta.Language,
 			Status: facts.Meta.Status, Package: facts.Meta.Package,
 			Imports: facts.Meta.Imports, Size: len(src), MtimeNS: fi.ModTime().UnixNano(),
-		}); err != nil {
-			return result, fmt.Errorf("graph.Build: upsert file %s: %w", relPath, err)
-		}
-		if err := st.ReplaceFileNodes(relPath, facts.Nodes, facts.Refs, facts.Contains); err != nil {
-			return result, fmt.Errorf("graph.Build: replace nodes %s: %w", relPath, err)
+		}, facts.Nodes, facts.Refs, facts.Contains); err != nil {
+			return result, fmt.Errorf("graph.Build: persist %s: %w", relPath, err)
 		}
 		result.Parsed++
 	}
@@ -187,6 +207,19 @@ func dispatchParse(relPath string, src []byte) (*FileFacts, error) {
 		return p(relPath, src)
 	}
 	return nil, fmt.Errorf("no parser for %s", strings.ToLower(filepath.Ext(relPath)))
+}
+
+// anyParsed reports whether any known file record is a successful parse (status
+// "ok"). It distinguishes a wiped node store (parsed files but zero nodes) from
+// a repo that legitimately yields no nodes — files that failed to parse carry
+// status "failed" and never contributed nodes, so they must not trip the guard.
+func anyParsed(known map[string]store.FileRecord) bool {
+	for _, r := range known {
+		if r.Status == "ok" {
+			return true
+		}
+	}
+	return false
 }
 
 func fileSHA256(data []byte) string {

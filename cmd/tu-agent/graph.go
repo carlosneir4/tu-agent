@@ -81,6 +81,17 @@ func runGraphBuildQuiet(subpath string, quiet bool) error {
 	}
 	fmt.Printf("graph: parsed=%d unchanged=%d deleted=%d failed=%d\n",
 		res.Parsed, res.Unchanged, res.Deleted, res.Failed)
+	nodes, err := s.NodeCount()
+	if err != nil {
+		return fmt.Errorf("graph update: node count: %w", err)
+	}
+	files, err := s.FileCount()
+	if err != nil {
+		return fmt.Errorf("graph update: file count: %w", err)
+	}
+	if w := graphEmptyWarning(nodes, files); w != "" {
+		fmt.Fprint(os.Stderr, w)
+	}
 	// Off by default: the plugin (marketplace) already provides the tu-agent-graph
 	// MCP server via its shim, which auto-updates. Writing .mcp.json here would
 	// add a duplicate server pinned to this binary's path (no auto-update). CLI-only
@@ -603,10 +614,34 @@ func announceGraph() error {
 	if err != nil {
 		return fmt.Errorf("graph announce: %w", err)
 	}
+	files, err := s.FileCount()
+	if err != nil {
+		return fmt.Errorf("graph announce: %w", err)
+	}
+	// A graph with file records but zero nodes is broken, not ready: get_context
+	// and find_symbol would silently return nothing. Surface it loudly in the
+	// SessionStart context instead of a reassuring "graph ready (0 nodes)".
+	if w := graphEmptyWarning(n, files); w != "" {
+		fmt.Print(w)
+		return nil
+	}
 	fmt.Printf(`tu-agent: graph ready (%d nodes). Follow the PROTOCOL in CLAUDE.md: query get_context BEFORE editing any file (also get_impact, find_symbol, get_concept), and call mem_recent now to recall prior decisions.
 NOTE: the tu-agent-graph MCP tools may be DEFERRED — absent from your active tool list. If so, load them with your tool-search mechanism (e.g. ToolSearch query "tu-agent-graph") instead of concluding they are unavailable. CLI fallback: tu-agent graph context <file-or-symbol>.
 `, n)
 	return nil
+}
+
+// graphEmptyWarning returns a loud warning when the graph holds file records but
+// zero nodes — the silent-empty-graph state (a wiped node store, or every file
+// failing to parse). It returns "" when the graph is healthy or genuinely
+// unbuilt (no files at all), so callers can print it unconditionally. Without
+// this the only signal is a benign-looking "parsed=0 unchanged=N" line, so a
+// broken graph goes unnoticed until someone inspects it.
+func graphEmptyWarning(nodes, files int) string {
+	if nodes == 0 && files > 0 {
+		return fmt.Sprintf("⚠ tu-agent: graph is EMPTY (%d files, 0 nodes) — get_context/find_symbol will return NOTHING. Run `tu-agent learn` to rebuild the graph.\n", files)
+	}
+	return ""
 }
 
 var graphUpdateCmd = &cobra.Command{
