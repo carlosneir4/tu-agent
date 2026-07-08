@@ -1,8 +1,9 @@
 // Package crystallize finds dense clusters of related memory observations so
 // they can be consolidated into a project skill. It is deterministic and pure:
-// clustering is by shared domain tokens drawn from each note's topic-key slug,
-// title, and content (the in-memory equivalent of an FTS keyword overlap), so
-// it needs no database or FTS index.
+// clustering is by COHESION — the Jaccard similarity of each note's
+// "specific" tokens (domain tokens drawn from the topic-key slug, title, and
+// content, with stopwords and broad "umbrella" tokens removed) — so it needs
+// no database or FTS index.
 package crystallize
 
 import (
@@ -15,13 +16,46 @@ import (
 
 // Cluster is a group of related observations dense enough to crystallize.
 type Cluster struct {
-	Label   string               // dominant domain token
+	Label   string               // dominant specific token among members
 	Members []memory.Observation // newest first
 	Size    int
 }
 
+// cohesionThreshold is the minimum Jaccard similarity of two notes' specific-
+// token sets for an edge to form between them in the note-similarity graph.
+// The design doc's starting default was 0.15; validating against the
+// existing "three short notes sharing one domain word" integration fixtures
+// (cmd/tu-agent's seedCluster / materialize checkout fixtures) showed 0.15
+// under-splits real short notes: a single genuinely shared word (e.g.
+// "checkout") between two ~4-5-specific-token notes naturally lands in the
+// 0.11-0.17 Jaccard range, below 0.15, and those notes must still cohere.
+// 0.125 is the smallest adjustment that keeps every such fixture connected
+// (each note reaches at least one same-Jaccard-or-higher neighbor) while
+// every cross-theme pair the design requires to stay separate has exactly
+// zero specific-token overlap (not a near-miss), so lowering the threshold
+// does not risk merging them.
+const cohesionThreshold = 0.125
+
+// umbrellaCutoff is the document-frequency ratio (df/len(obs)) above which a
+// token is considered an "umbrella" token — broad enough to be shared by many
+// otherwise-unrelated notes — and is demoted out of every note's specific-token
+// set. It only applies once the corpus is large enough to judge (see
+// umbrellaMinCorpus): on a tiny corpus no token is demoted.
+const umbrellaCutoff = 0.4
+
+// umbrellaMinCorpus is the minimum filtered-observation count before umbrella
+// demotion applies at all. Below it, no token is demoted: on a small corpus a
+// 40%-of-notes ratio can come from one dense sub-cluster's own vocabulary
+// rather than genuine cross-theme breadth (in a 7-note two-cluster corpus a
+// token shared by a dominant 4-of-7 cluster trips 0.4 purely from corpus size —
+// see TestDetect_RanksLargerFirstThenLabel), which would wrongly erase that
+// cluster's own specific tokens.
+const umbrellaMinCorpus = 8
+
 // stopTokens are structural words and note-type words that carry no domain
-// signal, so they must never become a cluster label.
+// signal, so they must never become a cluster label or drive clustering.
+// Includes English structural words, note-type/generic memory vocabulary, and
+// common Spanish function words (users write notes in both languages).
 var stopTokens = map[string]bool{
 	"the": true, "and": true, "for": true, "with": true, "that": true, "this": true,
 	"when": true, "from": true, "into": true, "per": true, "are": true, "was": true,
@@ -29,13 +63,26 @@ var stopTokens = map[string]bool{
 	// note-type / generic memory vocabulary
 	"bug": true, "pattern": true, "decision": true, "architecture": true,
 	"testing": true, "reference": true, "gotcha": true, "test": true, "note": true,
+	// Spanish structural words
+	"que": true, "para": true, "con": true, "los": true, "las": true, "del": true,
+	"una": true, "por": true, "como": true, "este": true, "esta": true, "esto": true,
+	"pero": true, "desde": true, "sobre": true, "entre": true, "sin": true, "hay": true,
+	"son": true, "más": true,
 }
 
-// Detect groups observations into crystallizable clusters of at least minSize.
-// Clusters are disjoint: each note is assigned to its single strongest domain
-// token (the valid token it shares with the most other notes). Token selection
-// ties are broken by source priority (slug before title before content);
-// cluster ranking ties are broken by label for determinism.
+// Detect groups observations into crystallizable clusters of at least
+// minSize, using cohesion: two notes join the same cluster only when the
+// Jaccard similarity of their specific-token sets (domain tokens minus
+// stopwords minus umbrella tokens) is at least cohesionThreshold. Clusters are
+// the connected components of that note-similarity graph; a note with no
+// qualifying edge to any other note is a loose note and is left out of every
+// cluster (not force-assigned to the nearest one). Each cluster is labeled by
+// its most-common specific token among members, alphabetical tie-break — never
+// a stopword or umbrella token, since both are excluded from the specific set.
+//
+// Detect is pure, in-memory, and deterministic: notes are processed in a fixed
+// order (TopicKey, then Title, then original index) so the same input always
+// yields the same clusters, members, and ordering regardless of input order.
 //
 // Skill records (Type == "skill") are excluded from clustering: they are the
 // output of crystallization, not candidate input notes.
@@ -44,6 +91,8 @@ func Detect(obs []memory.Observation, minSize int) []Cluster {
 		minSize = 1
 	}
 	// Filter out skill records — they are crystallization output, not input.
+	// This happens before any document-frequency computation so skill notes
+	// never count toward corpus size or umbrella-token detection.
 	filtered := obs[:0:0]
 	for _, o := range obs {
 		if o.Type != "skill" {
@@ -51,7 +100,30 @@ func Detect(obs []memory.Observation, minSize int) []Cluster {
 		}
 	}
 	obs = filtered
-	tokensOf := make([][]string, len(obs))
+	n := len(obs)
+	if n == 0 {
+		return nil
+	}
+
+	// Deterministic processing order: (TopicKey, Title, original index).
+	order := make([]int, n)
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		ia, ib := order[a], order[b]
+		if obs[ia].TopicKey != obs[ib].TopicKey {
+			return obs[ia].TopicKey < obs[ib].TopicKey
+		}
+		if obs[ia].Title != obs[ib].Title {
+			return obs[ia].Title < obs[ib].Title
+		}
+		return ia < ib
+	})
+
+	// Raw domain tokens (post stopword/length filter, pre-umbrella-demotion)
+	// and their document frequency across the corpus.
+	tokensOf := make([][]string, n)
 	df := map[string]int{}
 	for i, o := range obs {
 		toks := domainTokens(o)
@@ -60,47 +132,120 @@ func Detect(obs []memory.Observation, minSize int) []Cluster {
 			df[t]++
 		}
 	}
-	// A token present in more than 60% of all notes is too generic to be a
-	// domain signal; only apply this once the corpus is big enough to judge.
-	cutoff := 0
-	if len(obs) >= 5 {
-		cutoff = (len(obs) * 6) / 10
-	}
-	valid := func(t string) bool {
-		if df[t] < 2 {
-			return false // shared with no other note — cannot cluster
+
+	isUmbrella := func(string) bool { return false }
+	if n >= umbrellaMinCorpus {
+		isUmbrella = func(t string) bool {
+			return float64(df[t])/float64(n) > umbrellaCutoff
 		}
-		if cutoff > 0 && df[t] > cutoff {
-			return false // ubiquitous — not distinguishing
-		}
-		return true
 	}
-	byToken := map[string][]memory.Observation{}
-	for i, o := range obs {
-		best, bestN := "", 0
-		for _, t := range tokensOf[i] {
-			if !valid(t) {
-				continue
-			}
-			// First valid token wins on a DF tie; tokens are ordered slug→title→content.
-			if df[t] > bestN {
-				best, bestN = t, df[t]
+
+	// Specific-token set per note: domain tokens minus umbrella tokens.
+	// Umbrella demotion happens here, before similarity is computed, so an
+	// umbrella-only note ends with an empty specific set.
+	sets := make([]map[string]bool, n)
+	for i, toks := range tokensOf {
+		m := map[string]bool{}
+		for _, t := range toks {
+			if !isUmbrella(t) {
+				m[t] = true
 			}
 		}
-		if best == "" {
+		sets[i] = m
+	}
+
+	// Note-similarity graph: an edge when Jaccard(specific sets) >= threshold.
+	adj := make([][]int, n)
+	for ai := range n {
+		i := order[ai]
+		for bi := ai + 1; bi < n; bi++ {
+			j := order[bi]
+			if jaccard(sets[i], sets[j]) >= cohesionThreshold {
+				adj[i] = append(adj[i], j)
+				adj[j] = append(adj[j], i)
+			}
+		}
+	}
+
+	// Connected components, visited in the fixed deterministic order. A note
+	// with no qualifying edge forms its own singleton component and is left
+	// out once the minSize filter below runs (unless minSize is 1).
+	visited := make([]bool, n)
+	var components [][]int
+	for _, start := range order {
+		if visited[start] {
 			continue
 		}
-		byToken[best] = append(byToken[best], o)
+		visited[start] = true
+		comp := []int{start}
+		queue := []int{start}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			neighbors := append([]int{}, adj[cur]...)
+			sort.Ints(neighbors)
+			for _, nb := range neighbors {
+				if visited[nb] {
+					continue
+				}
+				visited[nb] = true
+				comp = append(comp, nb)
+				queue = append(queue, nb)
+			}
+		}
+		components = append(components, comp)
 	}
-	clusters := make([]Cluster, 0, len(byToken))
-	for tok, members := range byToken {
-		if len(members) < minSize {
+
+	// Build each qualifying component, then assign labels. The label is a
+	// LOAD-BEARING key: downstream storage addresses a single cluster by it
+	// (crystallize.SkillName/SkillTopic, and the status map in
+	// FormatWithStatus), so labels MUST be unique across clusters. The old
+	// token-keyed grouping guaranteed uniqueness by construction; cohesion
+	// clustering does not — two disconnected components can share their
+	// most-common specific token — so uniqueness is enforced here.
+	type pending struct {
+		members  []memory.Observation
+		ranked   []string // specific tokens, most-common first (alpha tie-break)
+		firstKey string   // smallest member TopicKey — deterministic order key
+	}
+	pend := make([]pending, 0, len(components))
+	for _, comp := range components {
+		if len(comp) < minSize {
 			continue
+		}
+		members := make([]memory.Observation, len(comp))
+		tokenCount := map[string]int{}
+		firstKey := ""
+		for k, idx := range comp {
+			members[k] = obs[idx]
+			if firstKey == "" || obs[idx].TopicKey < firstKey {
+				firstKey = obs[idx].TopicKey
+			}
+			for t := range sets[idx] {
+				tokenCount[t]++
+			}
 		}
 		sort.SliceStable(members, func(a, b int) bool {
 			return members[a].UpdatedAt.After(members[b].UpdatedAt)
 		})
-		clusters = append(clusters, Cluster{Label: tok, Members: members, Size: len(members)})
+		pend = append(pend, pending{members: members, ranked: rankedTokens(tokenCount), firstKey: firstKey})
+	}
+
+	// Assign labels in a deterministic order — larger clusters first (they earn
+	// the stronger token), smallest member TopicKey breaking ties — giving each
+	// cluster its highest-ranked specific token not already taken.
+	sort.SliceStable(pend, func(a, b int) bool {
+		if len(pend[a].members) != len(pend[b].members) {
+			return len(pend[a].members) > len(pend[b].members)
+		}
+		return pend[a].firstKey < pend[b].firstKey
+	})
+	used := map[string]bool{}
+	clusters := make([]Cluster, 0, len(pend))
+	for _, p := range pend {
+		label := uniqueLabel(p.ranked, used)
+		used[label] = true
+		clusters = append(clusters, Cluster{Label: label, Members: p.members, Size: len(p.members)})
 	}
 	sort.SliceStable(clusters, func(a, b int) bool {
 		if clusters[a].Size != clusters[b].Size {
@@ -109,6 +254,71 @@ func Detect(obs []memory.Observation, minSize int) []Cluster {
 		return clusters[a].Label < clusters[b].Label
 	})
 	return clusters
+}
+
+// jaccard returns |a∩b| / |a∪b| for two token sets. Two empty sets (or one
+// empty set) have zero similarity — never a divide-by-zero.
+func jaccard(a, b map[string]bool) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	small, big := a, b
+	if len(a) > len(b) {
+		small, big = b, a
+	}
+	inter := 0
+	for t := range small {
+		if big[t] {
+			inter++
+		}
+	}
+	union := len(a) + len(b) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
+
+// rankedTokens orders a cluster's specific tokens by membership count
+// descending, then alphabetically — the cluster's label-preference order. The
+// result is independent of map iteration order (a total order breaks every
+// tie).
+func rankedTokens(counts map[string]int) []string {
+	toks := make([]string, 0, len(counts))
+	for t := range counts {
+		toks = append(toks, t)
+	}
+	sort.Slice(toks, func(a, b int) bool {
+		if counts[toks[a]] != counts[toks[b]] {
+			return counts[toks[a]] > counts[toks[b]]
+		}
+		return toks[a] < toks[b]
+	})
+	return toks
+}
+
+// uniqueLabel returns the highest-ranked specific token not already used by an
+// earlier cluster, so no two clusters share a label. If every candidate is
+// taken — or the cluster has no specific tokens at all (a degenerate empty set,
+// only reachable when the caller passes minSize < 2) — it appends the smallest
+// free numeric suffix to the primary token, or to "cluster" when there are no
+// tokens (e.g. "checkout-2", "cluster-2"). Deterministic given the candidate
+// order and the used set.
+func uniqueLabel(ranked []string, used map[string]bool) string {
+	for _, t := range ranked {
+		if !used[t] {
+			return t
+		}
+	}
+	base := "cluster"
+	if len(ranked) > 0 {
+		base = ranked[0]
+	}
+	for i := 2; ; i++ {
+		if cand := fmt.Sprintf("%s-%d", base, i); !used[cand] {
+			return cand
+		}
+	}
 }
 
 // domainTokens returns the deduped lowercase domain tokens of one note: the

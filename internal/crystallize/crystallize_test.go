@@ -27,10 +27,15 @@ func labels(cs []Cluster) []string {
 }
 
 func TestDetect_GroupsAcrossTypesByDomainToken(t *testing.T) {
+	// NEW cohesion behavior: notes cluster only when they share MORE than one
+	// specific token. These three notes share two specific tokens (checkout,
+	// order) across three types, so they form one cross-type cluster; the label
+	// is the alphabetically-first most-common specific token. The logging note
+	// shares nothing specific and stays out.
 	in := []memory.Observation{
-		obs("testing/checkout-flow-pattern", "testing", "checkout flow", "cover the checkout order total branches", 1),
-		obs("gotcha/checkout-null-cart", "gotcha", "checkout null cart", "checkout panics when cart is empty", 2),
-		obs("decision/checkout-tax-rules", "decision", "checkout tax", "apply tax during checkout per region", 3),
+		obs("testing/checkout-order", "testing", "checkout order", "checkout order flow", 1),
+		obs("gotcha/checkout-order", "gotcha", "checkout order", "checkout order flow", 2),
+		obs("decision/checkout-order", "decision", "checkout order", "checkout order flow", 3),
 		obs("reference/logging-setup", "reference", "logging", "configure the structured logger", 4),
 	}
 	got := Detect(in, 3)
@@ -38,7 +43,7 @@ func TestDetect_GroupsAcrossTypesByDomainToken(t *testing.T) {
 		t.Fatalf("want 1 cluster, got %d: %v", len(got), labels(got))
 	}
 	if got[0].Label != "checkout" {
-		t.Errorf("want label checkout, got %q", got[0].Label)
+		t.Errorf("want label checkout (alphabetically-first shared token), got %q", got[0].Label)
 	}
 	if got[0].Size != 3 {
 		t.Errorf("want size 3, got %d", got[0].Size)
@@ -67,18 +72,21 @@ func TestDetect_BelowThresholdNotReturned(t *testing.T) {
 
 func TestDetect_RanksLargerFirstThenLabel(t *testing.T) {
 	var in []memory.Observation
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		in = append(in, obs("testing/payment-"+string(rune('a'+i)), "testing", "payment", "payment gateway charge", i))
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		in = append(in, obs("testing/auth-"+string(rune('a'+i)), "testing", "auth", "auth login session", i))
 	}
 	got := Detect(in, 3)
 	if len(got) != 2 {
 		t.Fatalf("want 2 clusters, got %d: %v", len(got), labels(got))
 	}
-	if got[0].Label != "payment" || got[1].Label != "auth" {
-		t.Errorf("want [payment auth] (larger first), got %v", labels(got))
+	// Larger cluster ranks first (size desc). Its label is the alphabetical
+	// winner of the payment/gateway/charge tie (all df=4) → "charge", per the
+	// retired slug-priority rule being replaced by alphabetical tie-break.
+	if got[0].Label != "charge" || got[1].Label != "auth" {
+		t.Errorf("want [charge auth] (larger first, alphabetical tie-break), got %v", labels(got))
 	}
 }
 
@@ -98,11 +106,11 @@ func TestFormat_ListsClustersWithMembers(t *testing.T) {
 	}
 }
 
-func TestDetect_SlugTokenWinsOnDFTie(t *testing.T) {
-	// All three notes share slug token "zebra" and content tokens "alpha" and
-	// "shared" — every shared token has DF=3. The slug-derived token must win
-	// the tie (token order is slug -> title -> content), so the cluster label
-	// is the slug token, never an incidental content word.
+func TestDetect_LabelBreaksDFTieAlphabetically(t *testing.T) {
+	// NEW behavior: on a document-frequency tie the label is the
+	// alphabetically-first specific token; the old slug-priority rule is gone.
+	// All three notes share {zebra, alpha, shared}, each with DF=3, so the label
+	// is "alpha" (a < s < z), not the slug token "zebra".
 	in := []memory.Observation{
 		obs("testing/zebra-one", "testing", "", "alpha shared", 1),
 		obs("gotcha/zebra-two", "gotcha", "", "alpha shared", 2),
@@ -112,8 +120,8 @@ func TestDetect_SlugTokenWinsOnDFTie(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("want 1 cluster, got %d: %v", len(got), labels(got))
 	}
-	if got[0].Label != "zebra" {
-		t.Errorf("want slug token zebra to win the DF tie, got %q", got[0].Label)
+	if got[0].Label != "alpha" {
+		t.Errorf("want alphabetically-first token alpha to win the DF tie, got %q", got[0].Label)
 	}
 }
 
