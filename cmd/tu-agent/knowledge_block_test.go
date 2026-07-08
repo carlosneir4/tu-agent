@@ -115,6 +115,8 @@ func TestKnowledgeBodyHasMemoryAndVerify(t *testing.T) {
 		"OUTSIDE the tu-agent:knowledge markers",
 		"type `gotcha`",
 		"memory search --type gotcha",
+		"## Communication — explain plainly",
+		"Gloss every acronym, jargon term, or coined name on first use",
 	} {
 		if !strings.Contains(knowledgeBody, want) {
 			t.Errorf("knowledgeBody missing %q", want)

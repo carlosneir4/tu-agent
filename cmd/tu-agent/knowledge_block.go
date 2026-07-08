@@ -81,6 +81,26 @@ const knowledgeBody = knowledgeOpen + "\n" +
 	"## If the graph looks wrong\n" +
 	"If a graph query contradicts what the code plainly shows, the graph may be\n" +
 	"stale — run `tu-agent learn` to rebuild, then re-query.\n" +
+	"\n" +
+	"## Communication — explain plainly\n" +
+	"\n" +
+	"Audience: a strong engineer who does NOT share your domain vocabulary and\n" +
+	"may read English as a second language. Assume they know general programming;\n" +
+	"do not assume they know this codebase's terms, your acronyms, or idioms.\n" +
+	"\n" +
+	"Rules:\n" +
+	"- Lead with the answer in 1–2 sentences. Details after.\n" +
+	"- Gloss every acronym, jargon term, or coined name on first use:\n" +
+	"  \"surplus (fields produced but never consumed)\". Once glossed, reuse freely.\n" +
+	"- One idea per sentence. If a sentence needs two commas and a subordinate\n" +
+	"  clause, split it.\n" +
+	"- Prefer a concrete snippet or example over an abstract explanation.\n" +
+	"  Bad:  \"The invalidation cascades hierarchically through surrogate keys.\"\n" +
+	"  Good: \"Purging `section:news` also purges `section:news/politics`,\n" +
+	"         because child keys include the parent key.\"\n" +
+	"- No idioms, no metaphors, no filler (\"it's worth noting\", \"essentially\").\n" +
+	"- When uncertain whether a term is jargon, gloss it. Cost of over-glossing\n" +
+	"  is low; cost of losing the reader is high.\n" +
 	knowledgeClose
 
 // upsertMarkedBlock inserts or replaces the region between open/close markers in

@@ -59,7 +59,8 @@ jobs:
           CC: ${{ matrix.cc }}
         run: |
           mkdir -p dist
-          go build -tags sqlite_fts5 -trimpath -ldflags "-s -w" \
+          go build -tags sqlite_fts5 -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
             -o dist/tu-agent ./cmd/tu-agent
           if [ "${{ matrix.smoke }}" = "true" ]; then
             ./dist/tu-agent version # smoke test: the binary runs on this platform
