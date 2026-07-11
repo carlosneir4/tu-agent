@@ -32,6 +32,10 @@ type State struct {
 	Task     string         `json:"task"`
 	Branch   string         `json:"branch,omitempty"`
 	Features []FeatureState `json:"features"`
+	// Review tracks the post-features design review gate: "" (legacy, no
+	// review) | "pending" | "pass" | "skipped". Empty on files written by
+	// older binaries so they never gain review semantics retroactively.
+	Review string `json:"review,omitempty"`
 }
 
 // BeginRun builds a fresh State with every feature pending. It rejects
@@ -97,10 +101,16 @@ func (s *State) SetScenario(feature string, sc ScenarioState) {
 	}
 }
 
-// Resumable reports whether the run has at least one pending feature to continue.
+// Resumable reports whether the run has more work to continue: either a
+// pending feature remains, or every feature has passed and the design review
+// gate is still pending. A fully-passed run with an empty review (legacy),
+// "pass", or "skipped" review is done, not resumable.
 func (s State) Resumable() bool {
-	_, ok := s.NextPending()
-	return ok
+	if _, ok := s.NextPending(); ok {
+		return true
+	}
+	pass, pending, blocked := s.Summary()
+	return pending == 0 && blocked == 0 && pass > 0 && s.Review == "pending"
 }
 
 // Summary counts features by terminal status.

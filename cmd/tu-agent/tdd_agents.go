@@ -25,6 +25,10 @@ func tddOverlay(stage string) (string, bool) {
 		return tdd.CraftsmanPrompt, true
 	case "judge":
 		return tdd.JudgePrompt, true
+	case "review":
+		return tdd.ReviewPrompt, true
+	case "review-fixer":
+		return tdd.ReviewFixerPrompt, true
 	case "scribe":
 		return tdd.ScribePrompt, true
 	case "test-writer":

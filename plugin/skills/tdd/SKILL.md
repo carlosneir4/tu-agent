@@ -29,9 +29,11 @@ done/pending features and ask **resume or restart**. On **resume**, read the
 `resumable` and set `$BASE` to it — the resumed run's artifacts live there.
 (The ticket is already encoded in `$BASE`; you do not need `$TICKET`/
 `$FEATURE_DESC` on resume.) Then skip Steps 1–3 and 3.5 and jump straight to
-Step 5's feature loop at the first `pending` feature. On **restart**, proceed
-normally (a fresh `tdd state begin` later overwrites it; `$BASE` is instead
-resolved fresh in Step 1).
+Step 5's feature loop at the first `pending` feature — **unless** `tdd status`
+shows every feature already `pass` and `review: "pending"`, in which case skip
+Step 5 entirely and resume directly at Step 6's post-loop review. On
+**restart**, proceed normally (a fresh `tdd state begin` later overwrites it;
+`$BASE` is instead resolved fresh in Step 1).
 
 Read `.tu-agent/config.yaml` if present and note `tdd.mutation` (default off),
 `tdd.archive` (default on), and `tdd.test_command`.
@@ -94,6 +96,14 @@ the user directly, **one question at a time**: what they want to build, the
 contract (inputs/outputs/behavior), edge cases, and the reasons behind decisions.
 Keep going until the spec is complete; then write it to
 `$BASE/spec.md`. Do not invent answers — the user is the source of truth.
+
+**Design exploration:** with the requirements complete and before writing the
+spec, if more than one viable approach exists — the signal is that the choice
+changes which files or packages get touched — propose 2-3 approaches with their
+trade-offs and a recommendation, and let the user pick. Record the decision (the
+chosen approach, why, and the rejected alternatives) in an always-present
+`## Design` section of `$BASE/spec.md`; when only one reasonable approach exists
+that section is a single line and you ask no extra question.
 
 **Design doc seeding:** if the user provides a design doc or superpowers plan file,
 seed the spec from it instead of interrogating from zero (mirroring the CLI `--design <path>` flag) — fetch the analyst prompt
@@ -276,6 +286,64 @@ Repeat up to 3 times:
 If the budget is exhausted for a feature, call
 `"$TU" tdd state mark <slug> blocked --base "$BASE"` and stop the entire run
 with the last feedback.
+
+## Step 6: Post-loop review
+
+Runs **once**, after all features pass — never on the trivial path (Step 4)
+and never when any feature is `blocked` (the run already stopped in that
+case). Mirrors the CLI conductor's `internal/tdd/review.go`.
+
+1. Set `"$TU" tdd state review pending --base "$BASE"` **before** dispatching
+   anything, so an interrupted session resumes straight back into this step
+   instead of re-running the completed feature loop.
+2. Compute the branch scope yourself, matching `internal/tdd/reviewscope.go`:
+   resolve the default branch by checking, in order, `origin/HEAD`, then
+   `main`, then `master`; run `git merge-base <default-branch> HEAD` to get
+   the merge-base, then `git diff --name-only <merge-base> HEAD` for the
+   changed files on the branch since it — the committed branch diff since
+   merge-base. If no default branch or merge-base resolves, or that diff is
+   empty, skip with a **visible warning** to the user, run
+   `"$TU" tdd state review skipped --base "$BASE"`, and stop this step — the
+   run still ends `pass` on its feature gates.
+3. Fetch the stage prompt with `"$TU" tdd prompt review --base "$BASE"` and
+   dispatch `general-purpose` with it plus the branch scope (merge-base and
+   changed files), same as any other stage.
+4. Route the verdict's findings:
+   - `critical` or `important` findings: dispatch the review-fixer
+     (`"$TU" tdd prompt review-fixer --base "$BASE"`) with the findings.
+     Outer-round budget: **2**. After each fixer dispatch, FIRST enforce test
+     immutability deterministically — do not trust the prompt. The review-fixer
+     may not modify, add, or delete any test file, so compute the test files it
+     touched (its edits are uncommitted, so the working-tree diff against the
+     committed branch is exactly what it changed):
+     ```
+     TOUCHED_TESTS="$( git diff --name-only | grep -E '(_test\.go$|/src/test/|^src/test/)' )"
+     ```
+     If `TOUCHED_TESTS` is non-empty, treat the attempt as failed: re-feed the
+     fixer within the **same** round, naming those files ("you modified test
+     files, which is forbidden — revert them and fix production only"), and do
+     NOT run `"$TU" tdd verify` or accept it as green — mirrors the touched-tests
+     path in `runFixerRound` (`internal/tdd/review.go`). Only when no test file
+     was touched, run `"$TU" tdd verify` — if `"ok": true`, re-dispatch the
+     review stage; if not `true` (red), re-feed the fixer with the failing
+     output within the **same** round rather than consuming another round. Both
+     re-feed cases (touched tests and red suite) share one inner loop bounded to
+     **2** re-feeds (mirrors `reviewRefeedBudget` in `internal/tdd/review.go`).
+     If a round exhausts its re-feed budget, the conductor gives up on that
+     round without re-review — re-reviewing a diff that was never confirmed
+     green would be meaningless — and surfaces a warning (the test suite was
+     left red by the review-fixer, or the forbidden test edits it never reverted
+     remain in the working tree); the review outcome is still recorded (see
+     step 7) so the run does not hang.
+   - `minor` findings are **report-only** — never dispatched to the fixer.
+5. If critical/important findings persist after the 2-round budget, the run
+   still ends `pass`, with the pending findings reported to the user.
+6. The dispatched review stage writes its findings to
+   `$BASE/progress/review.md`, not the conductor.
+7. Record the outcome with `"$TU" tdd state review pass --base "$BASE"` (no
+   blocking findings, the budget exhausted with pending findings reported, or
+   a fixer round gave up with the suite left red) or
+   `"$TU" tdd state review skipped --base "$BASE"` (step 2 above).
 
 ## Notes
 

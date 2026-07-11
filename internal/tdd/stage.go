@@ -76,8 +76,15 @@ Illustrate each option with a concrete example — a short code snippet, a sampl
 output, or a command — whenever code makes the choice clearer than prose. The first time you use
 a domain term, acronym, or coined name the user may not know (e.g. "surplus", "opt-in", or a
 class name like SurplusReport), gloss it in one plain phrase — "surplus (the fields produced but
-never consumed)". Assume a strong engineer who may not share your domain vocabulary. When the spec is complete, write
-__TDDDIR__/spec.md (purpose, contract, edge cases, decisions+why) and only then emit a
+never consumed)". Assume a strong engineer who may not share your domain vocabulary. With the requirements
+complete and BEFORE writing spec.md, explore design when more than one viable approach exists —
+the signal is that the choice changes which files or packages get touched. In that case propose
+2-3 approaches, each anchored in the graph via get_context/get_impact, each with its trade-offs
+and a recommendation; the human makes the final choice, not you. spec.md must ALWAYS carry a
+"## Design" section recording the chosen approach, why it won, and the rejected alternatives.
+When only one reasonable approach exists, the Design section is a single line stating it and
+no extra question is asked. When the spec is complete, write
+__TDDDIR__/spec.md (purpose, contract, design, edge cases, decisions+why) and only then emit a
 contract with status "pass".` + contractInstruction
 
 // ArchitectPrompt is the TDD-stage overlay for design + Gherkin + complexity.
@@ -139,7 +146,11 @@ conventions. Produce exactly the contract below. The deterministic gate (tests g
 every @s covered) already passed. Judge DESIGN and DISCIPLINE only:
 Do NOT re-review correctness or security — the gate proved them. short functions, revealing
 names, no duplication, correct error contract (stderr + exit code), and NO production code that
-no failing test demanded (scope creep). You do not edit code — you prune. Write your review to
+no failing test demanded (scope creep). Flag speculative generality → revise: config/flags
+nothing reads (unread), abstractions with a single caller, error handling for unreachable states
+no test hits. Demand surgical discipline → revise: every changed line must trace to the task;
+drive-by reformat/rename/comment-churn in code the task did not require is out. Preexisting
+dead code is signalled, never deleted. You do not edit code — you prune. Write your review to
 __TDDDIR__/progress/judge_<name>.md and set contract.verdict to {result: pass|revise|fail,
 feedback, score 0-10}. Be concrete: cite file:line.` + contractInstruction
 
@@ -189,3 +200,33 @@ listed @s scenarios already exist and are RED. Write the MINIMAL production code
 pass. do NOT modify, add, or delete any test file — if you change a test the stage is rejected.
 Report the primary source file as an artifact {"kind":"source","path":"<repo-relative>"} so the
 mutation gate can target it. In the contract, "scenarios" MUST list every @s tag now passing.` + contractInstruction
+
+// ReviewPrompt is the whole-branch review overlay (gate 2): the per-feature
+// judge sees one feature at a time, so this stage reviews the entire branch diff
+// for correctness, security, and cross-feature consistency the judge cannot see.
+const ReviewPrompt = `tu-agent TDD task — review stage. Ignore any default output format,
+process steps, verification commands, and definition-of-done from your role definition — this
+stage's contract below replaces them; the role definition contributes only project context and
+conventions. Produce exactly the contract below. Scope your review to the WHOLE branch
+diff: run "git diff $(git merge-base HEAD <default branch>)..HEAD" against the default branch
+(main/master) so you see every change since the branch left the default branch. The per-feature
+judge already reviewed each feature in isolation; you complement it by reviewing what it CANNOT
+see — whole-branch correctness, security, and cross-feature consistency (interactions and
+contradictions between features the judge never saw together). Do NOT restate per-feature design
+nits the judge already covered. Record a findings list: each finding has a severity
+(critical | important | minor), a file:line location, and a one-line summary. Write your report
+to __TDDDIR__/progress/review.md and set contract.verdict to {result: pass|revise, feedback,
+findings:[{severity,location,summary}]} — verdict is pass or revise only (no fail). Be concrete:
+every finding cites file:line.` + contractInstruction
+
+// ReviewFixerPrompt is the overlay that resolves whole-branch review findings:
+// like the implementer it never touches test files, and the whole suite must
+// stay green after the fix.
+const ReviewFixerPrompt = `tu-agent TDD task — review-fixer stage. Ignore any default output
+format, process steps, verification commands, and definition-of-done from your role definition —
+this stage's contract below replaces them; the role definition contributes only project context
+and conventions. Produce exactly the contract below. Resolve the whole-branch review
+findings recorded in __TDDDIR__/progress/review.md. Write the MINIMAL production change to fix
+each finding. Do NOT modify, add, or delete any test file — if you change a test the stage is
+rejected. After your fix the ENTIRE test suite MUST be green. Report the primary source file as
+an artifact {"kind":"source","path":"<repo-relative>"} so the mutation gate can target it.` + contractInstruction

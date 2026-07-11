@@ -45,6 +45,11 @@ func tddStages() []tddStage {
 		{"architect", "architect", tdd.ArchitectPrompt, writeGrant},
 		{"craftsman", "developer", tdd.CraftsmanPrompt, writeGrant},
 		{"judge", "pr-reviewer", tdd.JudgePrompt, writeGrant},
+		// review/review-fixer are gate-2 (whole-branch) stages fetched by the
+		// plugin conductor via `tu-agent tdd prompt <name>`; they reuse the
+		// existing pr-reviewer and developer roles.
+		{"review", "pr-reviewer", tdd.ReviewPrompt, writeGrant},
+		{"review-fixer", "developer", tdd.ReviewFixerPrompt, writeGrant},
 		{"scribe", "scribe", tdd.ScribePrompt, defaultGrant},
 		// test-writer/implementer are not execution stages — Run/runFeatureTDD
 		// (internal/tdd/flow.go) dispatch the sandwich via the "craftsman" stage
@@ -294,6 +299,9 @@ var tddRunCmd = &cobra.Command{
 			},
 			LoadReports: func(since time.Time) (testresult.Report, error) {
 				return testresult.LoadReports(root, since)
+			},
+			ReviewScope: func(ctx context.Context, _ string) (string, []string, string, error) {
+				return tdd.ReviewScope(ctx, root)
 			},
 		})
 		if err != nil {

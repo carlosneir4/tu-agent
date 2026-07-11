@@ -36,6 +36,11 @@ Senior developer on {{.ProjectName}} ({{.Language}}). Build: {{.BuildTool}}. Tes
 - No boilerplate Javadoc/JSDoc/docstring: no `@param`/`@return` that just echo the types, no doc on private or self-evident methods.
 - A revealing name and a short function beat a paragraph of docs. Docs that repeat the code hurt readability — omit them.
 
+## Surgical & simple
+- The repo's existing style wins — match it even if you'd write it differently. Do not restyle.
+- Write the minimum that solves the task; nothing speculative — no config/flags/abstractions no test drives.
+- Leave adjacent code, comments, and formatting untouched. Signal preexisting dead code, don't delete it.
+
 ## Report when done
 ```
 ## Done

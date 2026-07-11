@@ -44,6 +44,13 @@ type Options struct {
 	Snapshot    func(ctx context.Context) (string, error)
 	Diff        func(ctx context.Context, from, to string) ([]string, error)
 	LoadReports func(since time.Time) (testresult.Report, error)
+
+	// ReviewScope computes the post-loop whole-branch review scope: the
+	// merge-base against the default branch and the files changed since it, or a
+	// non-empty skipReason when the branch is unscopable. Injected on Options
+	// (like Snapshot/Diff) so flow tests stay fake-based; defaults to the real
+	// ReviewScope when nil.
+	ReviewScope func(ctx context.Context, root string) (base string, files []string, skipReason string, err error)
 }
 
 // Result is the terminal outcome of a flow run.
@@ -58,6 +65,14 @@ type Result struct {
 func Run(ctx context.Context, o Options) (Result, error) {
 	if o.Budget <= 0 {
 		o.Budget = 3
+	}
+	if o.ReviewScope == nil {
+		// The default is rooted at o.WorkDir (the .tu-agent/tdd/<slug> artifact
+		// dir), not the repo root. It works only because the real ReviewScope
+		// shells out to git, which walks up from any subdirectory to find the
+		// enclosing repo. The CLI caller passes the repo root explicitly; this
+		// default relies on that walk-up.
+		o.ReviewScope = ReviewScope
 	}
 	reader := bufio.NewReader(o.In)
 	runner := StageRunner{D: o.Dispatcher}
@@ -179,6 +194,14 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	overall := StatusPass
 	if blocked > 0 || pending > 0 {
 		overall = StatusBlocked
+	}
+	// Whole-branch review runs once, only when every feature passed (never on
+	// the trivial early-return path, never when a feature blocked). It never
+	// changes the run result — features already passed their gates.
+	if overall == StatusPass && pass > 0 {
+		if err := runPostLoopReview(ctx, o, runner, &st, statePath); err != nil {
+			return Result{Status: StatusBlocked, Features: st.Features}, fmt.Errorf("tdd.Run: %w", err)
+		}
 	}
 	return Result{Status: overall, Features: st.Features}, nil
 }
