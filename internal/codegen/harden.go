@@ -481,6 +481,8 @@ func GitInfoExcludeBlock() string {
 		"CLAUDE.md\n" +
 		".mcp.json\n" +
 		"AGENTS.md\n" +
+		"# Assistant-authored planning docs (specs/plans) — never committed in private repos.\n" +
+		"docs/superpowers/\n" +
 		"# Everything under .tu-agent stays local EXCEPT the shared-memory chunks,\n" +
 		"# re-included (step by step, since git won't re-include under an excluded dir)\n" +
 		"# so a team can still commit them. graph.db / memory.db / telemetry stay local.\n" +

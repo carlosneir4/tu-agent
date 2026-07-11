@@ -63,8 +63,9 @@ var tddStatusCmd = &cobra.Command{
 			Branch    string             `json:"branch,omitempty"`
 			Base      string             `json:"base"`
 			Resumable bool               `json:"resumable"`
+			Review    string             `json:"review,omitempty"`
 			Features  []tdd.FeatureState `json:"features"`
-		}{st.Task, st.Branch, tddStateBaseRel(root, sp), st.Resumable(), st.Features}
+		}{st.Task, st.Branch, tddStateBaseRel(root, sp), st.Resumable(), st.Review, st.Features}
 		b, err := json.MarshalIndent(out, "", "  ")
 		if err != nil {
 			return fmt.Errorf("tdd status: %w", err)
@@ -140,6 +141,28 @@ var tddStateMarkCmd = &cobra.Command{
 	},
 }
 
+var tddStateReviewCmd = &cobra.Command{
+	Use:   "review <pending|pass|skipped>",
+	Short: "Set the design review gate status in the run state",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		review := args[0]
+		if review != "pending" && review != "pass" && review != "skipped" {
+			return fmt.Errorf("tdd state review: value must be pending|pass|skipped, got %q", review)
+		}
+		st, err := tdd.LoadState(tddStateFile(repoRoot()))
+		if err != nil {
+			return fmt.Errorf("tdd state review: %w", err)
+		}
+		st.Review = review
+		if err := tdd.SaveState(tddStateFile(repoRoot()), st); err != nil {
+			return fmt.Errorf("tdd state review: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "review %s\n", review)
+		return nil
+	},
+}
+
 func init() {
 	tddStateBeginCmd.Flags().StringArrayVar(&tddStateFeatures, "feature", nil, "feature slug (repeatable)")
 	tddStateBeginCmd.Flags().StringVar(&tddStateTask, "task", "", "the run's task description")
@@ -148,10 +171,13 @@ func init() {
 	tddStateBeginCmd.Flags().StringVar(&tddStateBaseFlag, "base", "", "explicit per-feature base dir (overrides --ticket/mtime resolution)")
 	tddStateMarkCmd.Flags().StringVar(&tddStateTicket, "ticket", "", "ticket id to address a specific run")
 	tddStateMarkCmd.Flags().StringVar(&tddStateBaseFlag, "base", "", "explicit per-feature base dir (overrides --ticket/mtime resolution)")
+	tddStateReviewCmd.Flags().StringVar(&tddStateTicket, "ticket", "", "ticket id to address a specific run")
+	tddStateReviewCmd.Flags().StringVar(&tddStateBaseFlag, "base", "", "explicit per-feature base dir (overrides --ticket/mtime resolution)")
 	tddStatusCmd.Flags().StringVar(&tddStateTicket, "ticket", "", "ticket id to address a specific run")
 	tddStatusCmd.Flags().StringVar(&tddStateBaseFlag, "base", "", "explicit per-feature base dir (overrides --ticket/mtime resolution)")
 	tddStateCmd.AddCommand(tddStateBeginCmd)
 	tddStateCmd.AddCommand(tddStateMarkCmd)
+	tddStateCmd.AddCommand(tddStateReviewCmd)
 	tddCmd.AddCommand(tddStatusCmd)
 	tddCmd.AddCommand(tddStateCmd)
 }

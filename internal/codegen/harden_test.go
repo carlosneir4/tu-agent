@@ -354,7 +354,7 @@ func TestGitInfoExcludeBlock_SharesMemoryChunks(t *testing.T) {
 
 func TestGitInfoExcludeBlock_CoversArtifacts(t *testing.T) {
 	b := GitInfoExcludeBlock()
-	for _, want := range []string{".claude/", "CLAUDE.md", ".mcp.json", ".tu-agent/", "AGENTS.md"} {
+	for _, want := range []string{".claude/", "CLAUDE.md", ".mcp.json", ".tu-agent/", "AGENTS.md", "docs/superpowers/"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("private exclude block missing %q", want)
 		}

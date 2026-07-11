@@ -39,9 +39,19 @@ type Risk struct {
 
 // Verdict is the judge/hardener gate result.
 type Verdict struct {
-	Result   string `json:"result"` // pass | revise | fail
-	Feedback string `json:"feedback"`
-	Score    int    `json:"score"`
+	Result   string    `json:"result"` // pass | revise | fail
+	Feedback string    `json:"feedback"`
+	Score    int       `json:"score"`
+	Findings []Finding `json:"findings,omitempty"`
+}
+
+// Finding is one whole-branch review issue: a severity, a file:line location,
+// and a one-line summary. Emitted by the review stage the per-feature judge
+// cannot cover.
+type Finding struct {
+	Severity string `json:"severity"` // critical | important | minor
+	Location string `json:"location"` // file:line
+	Summary  string `json:"summary"`
 }
 
 // FeaturePlan is one feature the architect hands off for TDD: its slug and the

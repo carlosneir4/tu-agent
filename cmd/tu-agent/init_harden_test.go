@@ -67,7 +67,7 @@ func TestApplyHardening_PrivateWritesGitInfoExclude(t *testing.T) {
 	if err != nil {
 		t.Fatalf(".git/info/exclude not written: %v", err)
 	}
-	for _, want := range []string{".claude/", "CLAUDE.md", ".tu-agent/", "# >>> tu-agent (private) >>>"} {
+	for _, want := range []string{".claude/", "CLAUDE.md", ".tu-agent/", "docs/superpowers/", "# >>> tu-agent (private) >>>"} {
 		if !strings.Contains(string(ex), want) {
 			t.Errorf(".git/info/exclude missing %q", want)
 		}
