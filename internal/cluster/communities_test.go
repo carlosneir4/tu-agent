@@ -40,16 +40,6 @@ func communityOf(partition [][]int, n int) int {
 	return -1
 }
 
-// containsNode reports whether the community members contains node n.
-func containsNode(members []int, n int) bool {
-	for _, m := range members {
-		if m == n {
-			return true
-		}
-	}
-	return false
-}
-
 // @s1 Deterministic regardless of edge order.
 // Build a fixed weighted graph, call Communities twice — once with the edges
 // reversed — and assert the two partitions are byte-identical (same
