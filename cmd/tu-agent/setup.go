@@ -162,8 +162,9 @@ func init() {
 }
 
 var setupCmd = &cobra.Command{
-	Use:   "setup",
-	Short: "Create ~/.tu-agent/config.yaml interactively",
+	Use:        "setup",
+	Short:      "Create ~/.tu-agent/config.yaml interactively",
+	Deprecated: "the standalone provider harness is frozen; use tu-agent through the Claude Code plugin (see CLAUDE.md §10)",
 	Long: `Walks you through creating the global tu-agent config file.
 Run this once per machine after installing tu-agent.`,
 	Args: cobra.NoArgs,

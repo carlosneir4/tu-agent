@@ -23,6 +23,9 @@ Senior developer on **__PROJECT__**. Test command: `__TEST_COMMAND__`.
 - No boilerplate Javadoc/JSDoc/docstring: no `@param`/`@return` that just echo the types, no doc on private or self-evident methods.
 - A revealing name and a short function beat a paragraph of docs. Docs that repeat the code hurt readability — omit them.
 
+## Comments are timeless
+- A comment states a constraint that outlives this change. Never tie it to tickets, spec/design IDs, decision or feature IDs, scenario tags, TDD phases, dates, or review verdicts — git and project memory hold that history. Write the rule ("mirrors the legacy encoder so output parity holds"), never its provenance ("per design D3 of the 2026-07-09 spec").
+
 ## Surgical & simple
 - The repo's existing style wins — match it even if you'd write it differently. Do not restyle.
 - Write the minimum that solves the task; nothing speculative — no config/flags/abstractions no test drives.

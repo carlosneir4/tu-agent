@@ -14,8 +14,9 @@ var (
 )
 
 var benchCmd = &cobra.Command{
-	Use:   "bench",
-	Short: "Compare two telemetry files and report token and cost differences",
+	Use:        "bench",
+	Short:      "Compare two telemetry files and report token and cost differences",
+	Deprecated: "the standalone provider harness is frozen; use tu-agent through the Claude Code plugin (see CLAUDE.md §10)",
 	Long: `Reads two telemetry JSONL files (baseline and candidate) and prints a comparison
 report showing token usage and cost savings. Use after running the same tasks with
 different providers to measure routing effectiveness (Claim B).`,

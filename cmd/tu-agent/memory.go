@@ -15,6 +15,7 @@ import (
 	"github.com/tu/tu-agent/internal/codegen"
 	"github.com/tu/tu-agent/internal/crystallize"
 	"github.com/tu/tu-agent/internal/memory"
+	"github.com/tu/tu-agent/internal/reconcile"
 	"github.com/tu/tu-agent/internal/telemetry"
 )
 
@@ -53,6 +54,15 @@ var memRelinkQuiet bool
 var memMaterializeQuiet bool
 
 var memCrystallizeMin int
+
+var memReconcileMin int
+
+var (
+	memReconcileApply     bool
+	memReconcileTopic     string
+	memReconcileToCluster string
+	memReconcileName      string
+)
 
 var memCrystallizeNudge bool
 
@@ -495,6 +505,107 @@ func runDelete(s *memory.Store, out io.Writer, topic, scope string) error {
 	return nil
 }
 
+// renderReconcilePlan is the single shared adapter both `memory reconcile` (CLI)
+// and the `mem_reconcile` MCP tool call: it builds the dry-run plan over the live
+// store + skills dir and renders it through reconcile.RenderPlan, so both
+// surfaces emit byte-identical plan text (§10 parity). It reads only — no rows or
+// files are mutated.
+func renderReconcilePlan(s *memory.Store, skillsDir string, minSize int) (string, error) {
+	plan, err := reconcile.DryRun(s, skillsDir, minSize)
+	if err != nil {
+		return "", err
+	}
+	return reconcile.RenderPlan(plan), nil
+}
+
+// applyReconcile is the single shared adapter both `memory reconcile --apply`
+// (CLI) and `mem_reconcile` with apply=true (MCP) call, so both surfaces emit
+// byte-identical apply text (§10 parity). It builds the dry-run plan, optionally
+// narrows it to the single orphan named by selectorTopic (scoping --to-cluster /
+// --name to one record), computes the live clusters for the apply core, then
+// runs reconcile.ApplyPlanWithOptions and renders the result. A bare apply (no
+// selector) auto-applies nothing: member-sets are deferred to a later leg, so
+// every orphan carries empty candidates and lands in ApplyResult.Skipped.
+func applyReconcile(s *memory.Store, skillsDir string, minSize int, selectorTopic string, opts reconcile.ApplyOptions) (string, error) {
+	plan, err := reconcile.DryRun(s, skillsDir, minSize)
+	if err != nil {
+		return "", err
+	}
+	if selectorTopic != "" {
+		filtered := make([]reconcile.OrphanPlan, 0, 1)
+		for _, o := range plan.Orphans {
+			if o.Topic == selectorTopic {
+				filtered = append(filtered, o)
+			}
+		}
+		if len(filtered) == 0 {
+			return "", fmt.Errorf("applyReconcile: no orphaned skill record %s", selectorTopic)
+		}
+		plan.Orphans = filtered
+	}
+	obs, err := s.List()
+	if err != nil {
+		return "", fmt.Errorf("applyReconcile: %w", err)
+	}
+	clusters := crystallize.Detect(obs, minSize)
+	res, err := reconcile.ApplyPlanWithOptions(s, plan, clusters, skillsDir, opts)
+	if err != nil {
+		return "", err
+	}
+	return reconcile.RenderApplyResult(res), nil
+}
+
+// validateReconcileTargeting enforces the shared flag/field guards for the apply
+// path: targeting requires --apply, and --to-cluster / --name each require the
+// single-orphan --topic selector. Both CLI and MCP call it so the two surfaces
+// reject the same inputs identically.
+func validateReconcileTargeting(apply bool, topic, toCluster, name string) error {
+	if !apply && (topic != "" || toCluster != "" || name != "") {
+		return fmt.Errorf("--topic/--to-cluster/--name require --apply")
+	}
+	if (toCluster != "" || name != "") && topic == "" {
+		return fmt.Errorf("--to-cluster/--name require --topic to select one orphan")
+	}
+	return nil
+}
+
+var memoryReconcileCmd = &cobra.Command{
+	Use:   "reconcile",
+	Short: "Report orphaned skill records against the current corpus (dry-run; --apply to rebind)",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateReconcileTargeting(memReconcileApply, memReconcileTopic, memReconcileToCluster, memReconcileName); err != nil {
+			return err
+		}
+		root := repoRoot()
+		s, err := memory.Open(memoryDBPath(root))
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if cerr := s.Close(); cerr != nil {
+				slog.Warn("memory store close failed", "err", cerr)
+			}
+		}()
+		skillsDir := generatedSkillsDir(root)
+		if !memReconcileApply {
+			text, err := renderReconcilePlan(s, skillsDir, memReconcileMin)
+			if err != nil {
+				return err
+			}
+			fmt.Fprint(cmd.OutOrStdout(), text)
+			return nil
+		}
+		text, err := applyReconcile(s, skillsDir, memReconcileMin, memReconcileTopic,
+			reconcile.ApplyOptions{Name: memReconcileName, ToCluster: memReconcileToCluster})
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(cmd.OutOrStdout(), text)
+		return nil
+	},
+}
+
 var memoryRescopeCmd = &cobra.Command{
 	Use:   "rescope",
 	Short: "Change an existing observation's scope in place",
@@ -624,11 +735,16 @@ var memoryCrystallizeCmd = &cobra.Command{
 			return err
 		}
 		clusters := crystallize.Detect(obs, memCrystallizeMin)
-		// Stored skill hashes by cluster label (topic skill/<label>).
+		// Live clusters keyed by label, for classifying skill records against.
+		byLabel := map[string]crystallize.Cluster{}
+		for _, c := range clusters {
+			byLabel[c.Label] = c
+		}
+		// Stored skill hashes keyed by the record's bound (parsed) label.
 		stored := map[string]string{}
 		for _, o := range obs {
 			if o.Type == "skill" {
-				stored[strings.TrimPrefix(o.TopicKey, "skill/")] = crystallize.ParseSourceHash(o.Content)
+				stored[crystallize.RecordLabel(o)] = crystallize.ParseSourceHash(o.Content)
 			}
 		}
 		status := map[string]crystallize.SkillStatus{}
@@ -647,6 +763,15 @@ var memoryCrystallizeCmd = &cobra.Command{
 			return nil
 		}
 		fmt.Fprint(cmd.OutOrStdout(), crystallize.FormatWithStatus(clusters, status))
+		orphanCount := 0
+		for _, o := range obs {
+			if o.Type == "skill" && crystallize.RecordStatus(o, byLabel) == crystallize.StatusOrphan {
+				orphanCount++
+			}
+		}
+		if orphanCount > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "%d orphaned skill record(s)\n", orphanCount)
+		}
 		return nil
 	},
 }
@@ -866,6 +991,12 @@ func init() {
 	memoryDeleteCmd.Flags().StringVar(&memDeleteScope, "scope", "project", "scope of the observation")
 	memoryCmd.AddCommand(memoryRescopeCmd)
 	memoryCmd.AddCommand(memoryDeleteCmd)
+	memoryReconcileCmd.Flags().IntVar(&memReconcileMin, "min", 5, "minimum notes for a cluster to be considered live")
+	memoryReconcileCmd.Flags().BoolVar(&memReconcileApply, "apply", false, "apply the reconcile (rebind/rename); absent = dry-run")
+	memoryReconcileCmd.Flags().StringVar(&memReconcileTopic, "topic", "", "selector: scope the apply to ONE orphan by topic key (e.g. skill/acme-orphan)")
+	memoryReconcileCmd.Flags().StringVar(&memReconcileToCluster, "to-cluster", "", "force the re-point target cluster label (requires --topic)")
+	memoryReconcileCmd.Flags().StringVar(&memReconcileName, "name", "", "rename skill/<old> -> skill/<new> (record + folder; requires --topic)")
+	memoryCmd.AddCommand(memoryReconcileCmd)
 	memoryRelinkCmd.Flags().BoolVar(&memRelinkQuiet, "quiet", false, "suppress output (for hooks)")
 	memoryCmd.AddCommand(memoryRelinkCmd)
 	memoryCrystallizeCmd.Flags().IntVar(&memCrystallizeMin, "min", 5, "minimum notes for a cluster to be suggested")

@@ -34,7 +34,7 @@ UPDATE_INTERVAL="${TU_AGENT_UPDATE_INTERVAL:-86400}"
 # hooks.json starts depending on (a new flag, etc.) — bumping it ahead of an
 # actual release forces a reinstall on every single shim invocation, since
 # the "newer" version would never actually be observed as installed.
-REQUIRED_MIN="0.3.0"
+REQUIRED_MIN="1.0.9"
 
 # Exclude this shim's own directory from PATH to prevent circular execution when
 # the plugin host adds plugin/bin to PATH.

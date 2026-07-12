@@ -15,6 +15,7 @@ import (
 	"github.com/tu/tu-agent/internal/graph/extract"
 	"github.com/tu/tu-agent/internal/graph/query"
 	"github.com/tu/tu-agent/internal/memory"
+	"github.com/tu/tu-agent/internal/reconcile"
 )
 
 // impactInput holds the parameters for the get_impact tool.
@@ -117,6 +118,15 @@ type memRescopeMCPInput struct {
 type memDeleteMCPInput struct {
 	Topic string `json:"topic"           jsonschema:"topic key of the observation to delete"`
 	Scope string `json:"scope,omitempty" jsonschema:"scope of the observation (default 'project')"`
+}
+
+// memReconcileMCPInput holds the parameters for the mem_reconcile tool.
+type memReconcileMCPInput struct {
+	Min       int    `json:"min,omitempty"        jsonschema:"minimum notes for a cluster to be considered live (default 5)"`
+	Apply     bool   `json:"apply,omitempty"      jsonschema:"apply the reconcile (rebind/rename); absent = dry-run"`
+	Topic     string `json:"topic,omitempty"      jsonschema:"selector: scope the apply to ONE orphan by topic key (e.g. skill/acme-orphan)"`
+	ToCluster string `json:"to_cluster,omitempty" jsonschema:"force the re-point target cluster label (requires topic)"`
+	Name      string `json:"name,omitempty"       jsonschema:"rename skill/<old> -> skill/<new> (record + folder; requires topic)"`
 }
 
 // orDefault returns v, or fallback when v is empty.
@@ -508,6 +518,45 @@ func handleMemDelete(_ context.Context, _ *mcp.CallToolRequest, in memDeleteMCPI
 	return nil, queryOutput{Result: fmt.Sprintf("no observation found for %s in scope %s", in.Topic, scope)}, nil
 }
 
+// handleMemReconcile reconciles orphaned skill records against the current
+// corpus. It defaults to dry-run (mutating nothing) via the SAME
+// renderReconcilePlan adapter the CLI uses; with apply=true it routes through
+// the SAME applyReconcile adapter the CLI `--apply` path uses, so both surfaces
+// emit byte-identical text (§10 parity).
+func handleMemReconcile(_ context.Context, _ *mcp.CallToolRequest, in memReconcileMCPInput) (*mcp.CallToolResult, queryOutput, error) {
+	if err := validateReconcileTargeting(in.Apply, in.Topic, in.ToCluster, in.Name); err != nil {
+		return nil, queryOutput{}, err
+	}
+	minSize := in.Min
+	if minSize <= 0 {
+		minSize = 5
+	}
+	root := repoRoot()
+	s, err := memory.Open(memoryDBPath(root))
+	if err != nil {
+		return nil, queryOutput{}, err
+	}
+	defer func() {
+		if cerr := s.Close(); cerr != nil {
+			slog.Warn("mem_reconcile: store close failed", "err", cerr)
+		}
+	}()
+	skillsDir := generatedSkillsDir(root)
+	if !in.Apply {
+		text, err := renderReconcilePlan(s, skillsDir, minSize)
+		if err != nil {
+			return nil, queryOutput{}, err
+		}
+		return nil, queryOutput{Result: text}, nil
+	}
+	text, err := applyReconcile(s, skillsDir, minSize, in.Topic,
+		reconcile.ApplyOptions{Name: in.Name, ToCluster: in.ToCluster})
+	if err != nil {
+		return nil, queryOutput{}, err
+	}
+	return nil, queryOutput{Result: text}, nil
+}
+
 // formatObservations renders observations as plain text for MCP output. When
 // stale[o.ID] > 0, a warning line is inserted so a cold session knows the note
 // references graph symbols that no longer exist.
@@ -748,7 +797,7 @@ func handleBridges(_ context.Context, _ *mcp.CallToolRequest, in bridgesInput) (
 var mcpToolNames = []string{
 	"get_impact", "get_context", "find_symbol",
 	"mem_save", "mem_search", "mem_recent",
-	"mem_rescope", "mem_delete",
+	"mem_rescope", "mem_delete", "mem_reconcile",
 	"mem_export", "mem_import",
 	"test_gaps", "test_scaffold", "test_mutation",
 	"get_concept", "set_concept_definition", "get_traits", "get_flow", "get_bridges", "get_cycles",
@@ -799,6 +848,11 @@ func newMCPServer() *mcp.Server {
 		Name:        "mem_delete",
 		Description: "Soft-delete an observation by topic (and optional scope). It drops out of search and the next chunk export. Local only — does not delete teammates' copies.",
 	}, handleMemDelete)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "mem_reconcile",
+		Description: "Reconcile orphaned skill records — crystallized skills whose bound cluster label no longer matches any live cluster — against the current corpus. Defaults to a read-only dry-run plan; pass apply=true (optionally topic + to_cluster/name to scope one orphan) to rebind or rename.",
+	}, handleMemReconcile)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "mem_search",

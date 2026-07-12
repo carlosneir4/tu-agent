@@ -795,6 +795,61 @@ func (s *Store) Rescope(topicKey, fromScope, toScope, project string) (Observati
 	return existing, true, nil
 }
 
+// Retopic renames the topic_key of the non-deleted observation keyed by
+// (oldKey, scope, project) to newKey in place, recomputing its sync_id and
+// bumping both revision and updated_at. The revision bump is deliberate: it
+// lets the new-sync_id row win the max-revision import rule. id, created_at,
+// content, and relations are preserved (relations reference id, which is
+// unchanged, so this is an in-place UPDATE, not delete+re-add). Because
+// topic_key is an FTS-indexed column, the FTS row is reindexed too. Returns the
+// updated observation and whether a change was made: (Observation{}, false, nil)
+// when no matching row exists; (existing, false, nil) when oldKey == newKey; an
+// error with no mutation when a non-deleted row already occupies
+// (newKey, scope, project).
+func (s *Store) Retopic(oldKey, newKey, scope, project string) (Observation, bool, error) {
+	if oldKey == "" || newKey == "" {
+		return Observation{}, false, fmt.Errorf("memory.Store.Retopic: topic key is required")
+	}
+	now := time.Now().UTC()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Observation{}, false, fmt.Errorf("memory.Store.Retopic: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+
+	existing, found, err := findByKeyTx(tx, oldKey, scope, project)
+	if err != nil {
+		return Observation{}, false, fmt.Errorf("memory.Store.Retopic: %w", err)
+	}
+	if !found {
+		return Observation{}, false, nil
+	}
+	if oldKey == newKey {
+		return existing, false, nil
+	}
+	if _, collide, cerr := findByKeyTx(tx, newKey, scope, project); cerr != nil {
+		return Observation{}, false, fmt.Errorf("memory.Store.Retopic: %w", cerr)
+	} else if collide {
+		return Observation{}, false, fmt.Errorf("memory.Store.Retopic: scope %q already has topic %q", scope, newKey)
+	}
+	newSync := computeSyncID(scope, newKey)
+	if _, err := tx.Exec(`UPDATE observations SET topic_key = ?, sync_id = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
+		newKey, newSync, now.Format(timeFormat), existing.ID); err != nil {
+		return Observation{}, false, fmt.Errorf("memory.Store.Retopic: %w", err)
+	}
+	existing.TopicKey = newKey
+	if err := ftsUpdate(tx, s.fts, existing); err != nil {
+		return Observation{}, false, fmt.Errorf("memory.Store.Retopic: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Observation{}, false, fmt.Errorf("memory.Store.Retopic: commit: %w", err)
+	}
+	existing.SyncID = newSync
+	existing.Revision++
+	existing.UpdatedAt = now
+	return existing, true, nil
+}
+
 // Delete soft-deletes the non-deleted observation keyed by (topicKey, scope,
 // project): it sets deleted_at and removes the FTS row, so the observation drops
 // out of List/Search/Recent/ExportRecords. Idempotent: deleting an absent or
