@@ -37,6 +37,8 @@ func ProvenanceLine(label string, members []memory.Observation) string {
 
 var sourceHashRe = regexp.MustCompile(`source-hash=([0-9a-f]+)`)
 
+var labelRe = regexp.MustCompile(`label=([0-9A-Za-z-]+)`)
+
 // ParseSourceHash extracts the source hash from content carrying a provenance
 // line, or "" if none is present.
 func ParseSourceHash(content string) string {
@@ -50,6 +52,19 @@ func ParseSourceHash(content string) string {
 	return m[1]
 }
 
+// ParseLabel extracts the cluster label from content carrying a provenance
+// line, or "" if none is present.
+func ParseLabel(content string) string {
+	if !strings.Contains(content, Marker) {
+		return ""
+	}
+	m := labelRe.FindStringSubmatch(content)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
 // SkillStatus is a cluster's crystallization state.
 type SkillStatus int
 
@@ -57,7 +72,33 @@ const (
 	StatusNone    SkillStatus = iota // no skill record exists for this cluster
 	StatusCurrent                    // a skill exists and matches the current notes
 	StatusStale                      // a skill exists but the notes changed since
+	// StatusOrphan: a skill record whose bound label matches no live cluster —
+	// distinct from StatusStale, whose cluster still exists but whose members
+	// changed.
+	StatusOrphan
 )
+
+// RecordLabel returns the bound label of a skill record: its parsed provenance
+// label, or the topic-derived name (TrimPrefix "skill/") for legacy records
+// written without a label= field.
+func RecordLabel(o memory.Observation) string {
+	if l := ParseLabel(o.Content); l != "" {
+		return l
+	}
+	return strings.TrimPrefix(o.TopicKey, "skill/")
+}
+
+// RecordStatus classifies a skill record against the live clusters keyed by
+// label: StatusOrphan when its bound label matches no live cluster, else it
+// delegates to Classify against the matched cluster.
+func RecordStatus(o memory.Observation, byLabel map[string]Cluster) SkillStatus {
+	label := RecordLabel(o)
+	c, ok := byLabel[label]
+	if !ok {
+		return StatusOrphan
+	}
+	return Classify(c, ParseSourceHash(o.Content))
+}
 
 // Classify compares a cluster against the source hash stored in its skill record
 // (storedHash == "" means no record exists).

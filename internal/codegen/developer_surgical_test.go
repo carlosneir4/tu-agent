@@ -73,3 +73,22 @@ func TestDeveloperTemplatesSurgicalCoexistsWithDocComments(t *testing.T) {
 		})
 	}
 }
+
+// TestDeveloperTemplatesCarryTimelessRule verifies every developer.md surface
+// tells the agent to write comments that state a durable constraint, never
+// tied to ticket/spec/decision provenance that git and project memory
+// already hold. Asserted per file (t.Run) so a single drifted template
+// doesn't hide behind the others.
+func TestDeveloperTemplatesCarryTimelessRule(t *testing.T) {
+	for name, path := range developerTemplatePaths() {
+		t.Run(name, func(t *testing.T) {
+			content := readDeveloperTemplate(t, path)
+			if !strings.Contains(content, "Comments are timeless") {
+				t.Errorf("%s: missing the \"Comments are timeless\" rule heading/marker", path)
+			}
+			if !strings.Contains(content, "provenance") {
+				t.Errorf("%s: missing the provenance cue (\"provenance\")", path)
+			}
+		})
+	}
+}

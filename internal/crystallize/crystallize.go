@@ -8,9 +8,11 @@ package crystallize
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
+	"github.com/tu/tu-agent/internal/cluster"
 	"github.com/tu/tu-agent/internal/memory"
 )
 
@@ -52,6 +54,15 @@ const umbrellaCutoff = 0.4
 // cluster's own specific tokens.
 const umbrellaMinCorpus = 8
 
+// quantScale maps a Jaccard similarity in [0,1] onto an integer edge weight for
+// the community primitive, which accumulates weights as exact integers so the
+// partition is invariant under edge (map) iteration order.
+const quantScale = 10000
+
+// quantize maps a Jaccard similarity in [0,1] to an integer edge weight so the
+// community primitive accumulates weights exactly (map-order-invariant).
+func quantize(j float64) int { return int(math.Round(j * quantScale)) }
+
 // stopTokens are structural words and note-type words that carry no domain
 // signal, so they must never become a cluster label or drive clustering.
 // Includes English structural words, note-type/generic memory vocabulary, and
@@ -63,6 +74,10 @@ var stopTokens = map[string]bool{
 	// note-type / generic memory vocabulary
 	"bug": true, "pattern": true, "decision": true, "architecture": true,
 	"testing": true, "reference": true, "gotcha": true, "test": true, "note": true,
+	// workflow / process words (carry no domain signal)
+	"feature": true, "run": true, "spec": true, "scope": true, "status": true,
+	"task": true, "fix": true, "legacy": true, "null": true, "real": true,
+	"only": true, "related": true, "new": true, "set": true, "one": true, "never": true,
 	// Spanish structural words
 	"que": true, "para": true, "con": true, "los": true, "las": true, "del": true,
 	"una": true, "por": true, "como": true, "este": true, "esta": true, "esto": true,
@@ -74,9 +89,11 @@ var stopTokens = map[string]bool{
 // minSize, using cohesion: two notes join the same cluster only when the
 // Jaccard similarity of their specific-token sets (domain tokens minus
 // stopwords minus umbrella tokens) is at least cohesionThreshold. Clusters are
-// the connected components of that note-similarity graph; a note with no
-// qualifying edge to any other note is a loose note and is left out of every
-// cluster (not force-assigned to the nearest one). Each cluster is labeled by
+// the modularity-maximizing communities of that note-similarity graph, so dense
+// sub-communities separate rather than single-linkage chaining every theme into
+// one blob through a few bridging notes; a note with no qualifying edge to any
+// other note is a loose note and is left out of every cluster (not
+// force-assigned to the nearest one). Each cluster is labeled by
 // its most-common specific token among members, alphabetical tie-break — never
 // a stopword or umbrella token, since both are excluded from the specific set.
 //
@@ -154,44 +171,38 @@ func Detect(obs []memory.Observation, minSize int) []Cluster {
 		sets[i] = m
 	}
 
-	// Note-similarity graph: an edge when Jaccard(specific sets) >= threshold.
-	adj := make([][]int, n)
+	// Note-similarity graph over the CANONICAL ranks: node ai (in [0,n)) is the
+	// note obs[order[ai]]. Building over ranks rather than raw input indices
+	// keeps the community partition invariant under input shuffle. An edge forms
+	// when Jaccard(specific sets) >= threshold, weighted by the quantized
+	// similarity so denser pairs pull harder.
+	edges := make([]cluster.Edge, 0, n)
 	for ai := range n {
-		i := order[ai]
 		for bi := ai + 1; bi < n; bi++ {
-			j := order[bi]
-			if jaccard(sets[i], sets[j]) >= cohesionThreshold {
-				adj[i] = append(adj[i], j)
-				adj[j] = append(adj[j], i)
+			j := jaccard(sets[order[ai]], sets[order[bi]])
+			if j < cohesionThreshold {
+				continue
 			}
+			w := quantize(j)
+			if w == 0 {
+				continue // a zero-weight edge is a non-edge
+			}
+			edges = append(edges, cluster.Edge{A: ai, B: bi, Weight: w})
 		}
 	}
 
-	// Connected components, visited in the fixed deterministic order. A note
-	// with no qualifying edge forms its own singleton component and is left
-	// out once the minSize filter below runs (unless minSize is 1).
-	visited := make([]bool, n)
-	var components [][]int
-	for _, start := range order {
-		if visited[start] {
-			continue
-		}
-		visited[start] = true
-		comp := []int{start}
-		queue := []int{start}
-		for len(queue) > 0 {
-			cur := queue[0]
-			queue = queue[1:]
-			neighbors := append([]int{}, adj[cur]...)
-			sort.Ints(neighbors)
-			for _, nb := range neighbors {
-				if visited[nb] {
-					continue
-				}
-				visited[nb] = true
-				comp = append(comp, nb)
-				queue = append(queue, nb)
-			}
+	// Modularity-maximizing communities over the note-similarity graph. Dense
+	// sub-communities separate instead of single-linkage chaining every theme
+	// into one blob. cluster.Communities is deterministic and returns canonical
+	// ranks; convert each community back to original observation indices. A note
+	// with no qualifying edge is returned as its own singleton community and is
+	// left out once the minSize filter below runs (unless minSize is 1).
+	comms := cluster.Communities(n, edges)
+	components := make([][]int, 0, len(comms))
+	for _, c := range comms {
+		comp := make([]int, len(c))
+		for k, rank := range c {
+			comp[k] = order[rank]
 		}
 		components = append(components, comp)
 	}
@@ -323,7 +334,9 @@ func uniqueLabel(ranked []string, used map[string]bool) string {
 
 // domainTokens returns the deduped lowercase domain tokens of one note: the
 // topic-key slug (after dropping the leading "type/" segment) plus title and
-// content words, with stop/structural words and tokens shorter than 3 removed.
+// content words, with stop/structural words, all-digit tokens, and tokens
+// shorter than 3 removed. Tokens that merely contain digits ("oauth2", "v2")
+// are kept — only bare numbers are dropped.
 func domainTokens(o memory.Observation) []string {
 	key := o.TopicKey
 	if i := strings.IndexByte(key, '/'); i >= 0 {
@@ -337,13 +350,28 @@ func domainTokens(o memory.Observation) []string {
 	out := make([]string, 0, len(raw))
 	for _, t := range raw {
 		t = strings.ToLower(t)
-		if len(t) < 3 || stopTokens[t] || seen[t] {
+		if len(t) < 3 || stopTokens[t] || isAllDigits(t) || seen[t] {
 			continue
 		}
 		seen[t] = true
 		out = append(out, t)
 	}
 	return out
+}
+
+// isAllDigits reports whether t is non-empty and every rune is a decimal digit.
+// A bare number carries no domain signal, so it is dropped like a stopword;
+// tokens that merely contain digits ("oauth2") return false and are kept.
+func isAllDigits(t string) bool {
+	if t == "" {
+		return false
+	}
+	for _, r := range t {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func splitTokens(s string) []string {

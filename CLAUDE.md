@@ -153,28 +153,33 @@ When a demo or test needs a concrete example, use a representative but fictional
 
 ---
 
-## 10. CLI + plugin dual availability rule
+## 10. Plugin-first availability rule
 
-**Every feature implemented from Phase 1 onward must be available both as a `tu-agent` CLI command and through the Claude Code plugin.** Do not implement a feature on only one side.
+> Rewritten 2026-07-12. The old rule required every feature on BOTH surfaces, including a
+> CLI-calls-provider path for generative features. That dual generative path is retired:
+> tu-agent is plugin-first. See memory note `decision/plugin-first-deprecate-standalone`.
 
-The split follows the existing architecture:
+**The binary owns everything deterministic; Claude Code owns everything generative.** The
+"CLI" is not a parallel product — it is the engine room the plugin invokes (hooks, skills,
+and the bundled MCP server all call the `tu-agent` binary).
 
 | Component | Owns |
 |---|---|
-| `tu-agent` binary | Everything deterministic: graph queries, memory store, parsing, progress tracking, domain clustering |
+| `tu-agent` binary | Everything deterministic: graph queries, memory store, parsing, progress tracking, domain clustering, tdd state/gates |
 | Claude Code plugin | Everything generative: skill synthesis, docstring/wiki generation, test body generation, architecture overview |
 
 **Implementation pattern per feature type:**
 
-- **Purely deterministic** (e.g., `graph flows`, `memory search`, `session list`): add a CLI subcommand **and** a new MCP tool in `cmd/tu-agent/mcp.go`. The plugin inherits it automatically via the bundled MCP server.
-- **Purely generative** (e.g., architecture synthesis): add a CLI subcommand that calls the configured provider **and** a plugin skill under `plugin/skills/` that runs the same logic via Claude Code.
-- **Hybrid** (e.g., `docs inline`, `docs wiki`, test generation): the CLI subcommand calls the binary for graph context then the provider for generation. The plugin skill delegates graph work to the binary via MCP, then uses Claude Code for generation. Same output format from both paths.
+- **Deterministic** (e.g., `graph flows`, `memory search`, `session list`): add a CLI subcommand **and** a new MCP tool in `cmd/tu-agent/mcp.go`. The plugin inherits it automatically via the bundled MCP server. (This half of the old rule is unchanged — it is nearly free because both surfaces share one core.)
+- **Generative** (e.g., architecture synthesis, test bodies): plugin skill under `plugin/skills/` ONLY. Do **not** add a CLI path that calls a provider by API key — the standalone provider harness is frozen.
+- **Hybrid**: the plugin skill delegates deterministic work to the binary via MCP (or CLI in hooks), then uses Claude Code for generation.
 
-**Checklist before marking a Phase 1+ task done:**
-- [ ] `tu-agent <command>` works from the terminal
-- [ ] If the feature has a query/analysis component: MCP tool added and listed in `tu-agent mcp --list`
-- [ ] If the feature has a generative component: plugin skill added under `plugin/skills/`
-- [ ] Both paths produce the same output format (so they are comparable and testable)
+**Frozen — do not extend:** the standalone agent harness (`chat`, `run`, `bench`, `setup` and the `internal/orchestrator`/`provider`/`tool`/`subagent` stack). The commands are cobra-`Deprecated` (hidden from help, warn on use). The code stays compiling with its tests, but new features must not depend on it. Exception: `internal/provider` is still consumed by the legacy `learn`/`test-gen` CLI generative paths — those are frozen too, superseded by the plugin skills. If the standalone CLI is ever revived, that is an explicit decision to make with Carlos, not a drive-by.
+
+**Checklist before marking a task done:**
+- [ ] Deterministic component: `tu-agent <command>` works from the terminal AND the MCP tool is listed in `tu-agent mcp --list`
+- [ ] Generative component: plugin skill added under `plugin/skills/`
+- [ ] No new code paths call a provider from the CLI
 
 ## Stack
 - Go 1.25+ (go.mod directive; the `modelcontextprotocol/go-sdk` dependency sets the floor)

@@ -8,7 +8,9 @@ package crystallize
 //   - "umbrella" tokens (document-frequency ratio > 0.4 of the corpus) are
 //     demoted out of the specific set, so they neither force-merge notes nor
 //     become labels;
-//   - clusters are connected components of the note-similarity graph;
+//   - clusters are the modularity-maximizing communities of the note-
+//     similarity graph, so dense sub-communities separate instead of
+//     single-linkage chaining every theme into one blob through a few bridges;
 //   - Spanish and English stopwords are excluded as signal and as labels;
 //   - loose notes (no specific overlap with any cluster) are left OUT, not
 //     absorbed;
@@ -26,9 +28,13 @@ package crystallize
 //     dense cluster we pad the corpus with loose filler notes so the shared
 //     token's df-ratio stays comfortably below 0.4. To make an umbrella token
 //     exceed 0.4 we place it in (near) every note.
-//   - "Window" clusters chain notes: consecutive notes share 2 specific tokens
-//     (Jaccard 0.5), so the group is one connected component while no single
-//     token's df-ratio climbs high enough to be demoted.
+//   - A "window" chain links consecutive notes by 2 shared specific tokens
+//     (Jaccard 0.5); modularity keeps a short/dense chain as one community but
+//     SPLITS a long chain of weakly-linked notes into its sub-communities (the
+//     endpoints share nothing), so a genuine single theme is modeled here as a
+//     dense CLIQUE — uniform pairwise similarity across every pair — which
+//     modularity keeps whole. Shared tokens are kept below the umbrella cutoff
+//     the same way, by padding the corpus with loose filler notes.
 
 import (
 	"reflect"
@@ -77,6 +83,29 @@ func fillerNotes(n, startID int) []memory.Observation {
 	out := make([]memory.Observation, 0, n)
 	for i := range n {
 		out = append(out, mkNote("reference", startID+i, "filleruniq"+string(rune('a'+i))))
+	}
+	return out
+}
+
+// cliqueNotes builds n notes that each carry the optional umbrella token, the
+// shared `core` tokens, and `extra` per-note UNIQUE tokens. Every pair shares
+// exactly the core set, giving a UNIFORM pairwise Jaccard, so the group is a
+// dense CLIQUE that modularity keeps as ONE community — unlike a windowNotes
+// chain, whose weakly-linked endpoints let a long chain split into
+// sub-communities. With the umbrella demoted, pairwise Jaccard is
+// |core| / (|core| + 2*extra).
+func cliqueNotes(typ string, startID, n int, umbrella string, core []string, extra int) []memory.Observation {
+	out := make([]memory.Observation, 0, n)
+	for i := range n {
+		set := make([]string, 0, len(core)+extra+1)
+		if umbrella != "" {
+			set = append(set, umbrella)
+		}
+		set = append(set, core...)
+		for e := range extra {
+			set = append(set, "uniq"+typ+string(rune('a'+i))+string(rune('a'+e)))
+		}
+		out = append(out, mkNote(typ, startID+i, set...))
 	}
 	return out
 }
@@ -141,26 +170,32 @@ func assertNoStopwordLabels(t *testing.T, cs []Cluster) {
 }
 
 // @s1 — Cohesion drives membership; a lone umbrella token does not cluster.
+// The cohesive group is a dense CLIQUE (six notes each carrying the demoted
+// umbrella "webapi" + the shared core "checkout" + a per-note unique token, so
+// every pair has Jaccard 1/3 ≥ threshold): modularity keeps it as ONE
+// community. The 2 umbrella-only notes reduce to an empty specific set (webapi
+// demoted) and cluster with nobody; filler pads the corpus so "webapi"'s
+// df-ratio stays > 0.4 (demoted) while "checkout"'s stays < 0.4 (a live label).
 func TestDetect_CohesionDrivesMembership_UmbrellaOnlyNotAbsorbed(t *testing.T) {
-	tokens := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"}
-	cohesive := windowNotes("gotcha", 1, "webapi", tokens, 3) // 8 notes, chained
+	cohesive := cliqueNotes("gotcha", 1, 6, "webapi", []string{"checkout"}, 1) // dense clique
 	umbrellaOnly := []memory.Observation{
 		mkNote("reference", 30, "webapi"),
 		mkNote("reference", 31, "webapi"),
 	}
 	all := append(append([]memory.Observation{}, cohesive...), umbrellaOnly...)
+	all = append(all, fillerNotes(10, 40)...) // total 18 notes: webapi df 8/18>0.4, checkout 6/18<0.4
 
 	got := Detect(all, 5)
 
 	if len(got) != 1 {
-		t.Fatalf("want exactly 1 cluster (the 8 cohesive notes), got %d: %v", len(got), labels(got))
+		t.Fatalf("want exactly 1 cluster (the 6 cohesive clique notes), got %d: %v", len(got), labels(got))
 	}
-	if got[0].Size != 8 {
-		t.Errorf("want cluster size 8, got %d", got[0].Size)
+	if got[0].Size != 6 {
+		t.Errorf("want cluster size 6, got %d", got[0].Size)
 	}
 	cohKeys := keySet(cohesive)
 	if !allMembersIn(got[0], cohKeys) {
-		t.Errorf("cluster contains a non-cohesive (umbrella-only) member: %v", got[0].Members)
+		t.Errorf("cluster contains a non-cohesive (umbrella-only or filler) member: %v", got[0].Members)
 	}
 	umbKeys := keySet(umbrellaOnly)
 	for _, c := range got {
@@ -230,11 +265,17 @@ func TestDetect_TwoThemesShareUmbrella_StaySeparate(t *testing.T) {
 }
 
 // @s3 — A loose note is left out, not absorbed, and its input value is unchanged.
+// The cohesive group is a dense CLIQUE (six notes each carrying the demoted
+// umbrella "webapi" + the shared core "checkout" + a per-note unique token) so
+// modularity keeps it as ONE cluster — there IS a cluster for the loose note to
+// be excluded from. The loose note carries only the umbrella + stopwords, so its
+// specific set is empty and it clusters with nobody; filler keeps webapi's
+// df-ratio > 0.4 (demoted) and checkout's < 0.4 (live).
 func TestDetect_LooseNoteNotAbsorbed_InputUnchanged(t *testing.T) {
-	tokens := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india"}
-	cohesive := windowNotes("gotcha", 1, "webapi", tokens, 3) // 7 notes
-	loose := mkNote("reference", 30, "webapi", "que", "los")  // only umbrella + stopwords
+	cohesive := cliqueNotes("gotcha", 1, 6, "webapi", []string{"checkout"}, 1) // dense clique
+	loose := mkNote("reference", 30, "webapi", "que", "los")                   // only umbrella + stopwords
 	all := append(append([]memory.Observation{}, cohesive...), loose)
+	all = append(all, fillerNotes(9, 40)...) // total 16 notes: webapi df 7/16>0.4, checkout 6/16<0.4
 	// Snapshot the WHOLE input (a deep copy of every element) so we catch any
 	// mutation of any element or of the backing array, not just the loose note.
 	before := append([]memory.Observation{}, all...)
@@ -242,10 +283,10 @@ func TestDetect_LooseNoteNotAbsorbed_InputUnchanged(t *testing.T) {
 	got := Detect(all, 5)
 
 	if len(got) != 1 {
-		t.Fatalf("want exactly 1 cluster (the 7 cohesive notes), got %d: %v", len(got), labels(got))
+		t.Fatalf("want exactly 1 cluster (the 6 cohesive clique notes), got %d: %v", len(got), labels(got))
 	}
-	if got[0].Size != 7 {
-		t.Errorf("want cluster size 7, got %d", got[0].Size)
+	if got[0].Size != 6 {
+		t.Errorf("want cluster size 6, got %d", got[0].Size)
 	}
 	if !allMembersIn(got[0], keySet(cohesive)) {
 		t.Errorf("cluster absorbed the loose note: %v", got[0].Members)
@@ -371,18 +412,23 @@ func TestDetect_SkillRecordsExcluded(t *testing.T) {
 	}
 }
 
-// @s8 — A single genuinely coherent theme is not over-split.
+// @s8 — A single genuinely coherent theme is not over-split. A genuine single
+// theme under community semantics is a dense CLIQUE (a chain is not — it splits
+// by design, which detectcommunity_test.go @s1 covers). Seven notes each share
+// the same two core tokens {alpha, bravo} plus a per-note unique token, so every
+// pair has Jaccard 2/4 = 0.5: modularity keeps the whole clique as ONE community
+// and must not carve it up. The corpus stays below umbrellaMinCorpus(8) so the
+// two shared tokens are never demoted (no filler needed).
 func TestDetect_SingleThemeNotOverSplit(t *testing.T) {
-	tokens := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo"}
-	cohesive := windowNotes("decision", 1, "", tokens, 3) // 9 notes, one chain
+	cohesive := cliqueNotes("decision", 1, 7, "", []string{"alpha", "bravo"}, 1) // dense clique, uniform J=0.5
 
 	got := Detect(cohesive, 5)
 
 	if len(got) != 1 {
 		t.Fatalf("want exactly 1 cluster for one dense theme, got %d: %v", len(got), labels(got))
 	}
-	if got[0].Size != 9 || !allMembersIn(got[0], keySet(cohesive)) {
-		t.Errorf("want all 9 notes in one cluster, got size %d members %v", got[0].Size, got[0].Members)
+	if got[0].Size != 7 || !allMembersIn(got[0], keySet(cohesive)) {
+		t.Errorf("want all 7 notes in one cluster, got size %d members %v", got[0].Size, got[0].Members)
 	}
 }
 
@@ -403,18 +449,15 @@ func TestDetect_EmptyAndTinyCorpora(t *testing.T) {
 
 // @s10 — Label is a stable specific token (majority-present), never an umbrella.
 func TestDetect_LabelIsStableMajoritySpecificToken(t *testing.T) {
-	// Six dense notes all carry "checkout" (majority specific token) plus "cart"
-	// on some. An umbrella token "webapi" sits in 8 of 18 notes (df-ratio ~0.44):
-	// under the NEW rule it is demoted (> 0.4) and cannot label; under the OLD
-	// rule (df below the 60% cutoff, higher than checkout's df) it would win.
-	dense := []memory.Observation{
-		mkNote("gotcha", 1, "webapi", "checkout", "cart"),
-		mkNote("gotcha", 2, "webapi", "checkout", "cart"),
-		mkNote("gotcha", 3, "webapi", "checkout", "cart"),
-		mkNote("gotcha", 4, "webapi", "checkout", "cart"),
-		mkNote("gotcha", 5, "webapi", "checkout"),
-		mkNote("gotcha", 6, "webapi", "checkout"),
-	}
+	// Six dense notes form a CLIQUE: each carries the umbrella "webapi", the one
+	// shared core token "checkout", and two per-note UNIQUE tokens, so every pair
+	// has Jaccard 1/5 = 0.2 (≥ threshold) once webapi is demoted — modularity keeps
+	// them as one size-6 community. "checkout" (count 6) is the ONLY specific token
+	// shared by more than one member, so it strictly outranks every unique token
+	// (count 1) and is the unambiguous label. The umbrella "webapi" sits in 8 of 18
+	// notes (df-ratio ~0.44): under the NEW rule it is demoted (> 0.4) and cannot
+	// label, while "checkout"'s df-ratio (6/18) stays well under 0.4.
+	dense := cliqueNotes("gotcha", 1, 6, "webapi", []string{"checkout"}, 2)
 	// Two filler notes also carry the umbrella (raising its df-ratio past 0.4);
 	// ten plain filler notes keep "checkout"'s df-ratio well under 0.4.
 	umbFiller := []memory.Observation{
@@ -465,17 +508,16 @@ func TestDetect_LabelIsStableMajoritySpecificToken(t *testing.T) {
 	}
 }
 
-// @s11 — pins a DOCUMENTED, ACCEPTED limitation (spec §Limitations): umbrella
-// demotion only applies once the corpus reaches umbrellaMinCorpus notes. Below
-// that size no token is demoted, so two disjoint themes that share only an
-// umbrella token merge into one cluster labelled with it. This is accepted
-// because real crystallization corpora are dozens of notes (default minSize 5),
-// and frequency alone cannot tell a bridging umbrella from the single token
-// that DEFINES a small one-theme corpus without regressing legitimate small
-// clusters (e.g. a 3-note "checkout" cluster). The guaranteed large-corpus
-// separation is covered by @s2. A future bridge-aware demotion could close the
-// gap; see the design's follow-up note.
-func TestDetect_SmallCorpusUmbrellaLimitation(t *testing.T) {
+// @s11 — Community detection CLOSES the former small-corpus umbrella limitation.
+// Below umbrellaMinCorpus no token is demoted, so the umbrella "webapi" survives
+// as a specific token and weakly bridges two otherwise-disjoint themes. Under the
+// OLD single-linkage (connected-components) rule that bridge merged both themes
+// into one cluster labelled by the umbrella; modularity instead SEPARATES them:
+// each theme is a dense triangle (pairwise Jaccard 1.0 → edge weight 10000) while
+// the cross-theme pairs share only the umbrella (Jaccard 1/5 = 0.2 → weight 2000),
+// so cutting the weak bridge raises modularity and the two triangles stay apart —
+// and the umbrella labels neither. (Large-corpus separation via demotion is @s2.)
+func TestDetect_UmbrellaBridgedThemesSeparate_SmallCorpus(t *testing.T) {
 	const umbrella = "webapi"
 	var in []memory.Observation
 	// Theme A: three notes sharing {alpha, bravo}. Theme B: {charlie, delta}.
@@ -487,10 +529,41 @@ func TestDetect_SmallCorpusUmbrellaLimitation(t *testing.T) {
 		in = append(in, mkNote("gotcha", 10+i, umbrella, "charlie", "delta"))
 	}
 	got := Detect(in, 3) // 6 notes: below umbrellaMinCorpus, so no demotion
-	if len(got) != 1 {
-		t.Errorf("documented small-corpus limitation changed: want 1 merged cluster "+
-			"below umbrellaMinCorpus(%d), got %d: %v — if demotion now covers tiny "+
-			"corpora, update spec §Limitations and this test", umbrellaMinCorpus, len(got), labels(got))
+	if len(got) != 2 {
+		t.Fatalf("want 2 separate theme clusters (weak umbrella bridge cut), got %d: %v", len(got), labels(got))
+	}
+	// Each cluster must be a single theme, size 3, and never labelled by the umbrella.
+	themeOf := func(o memory.Observation) string {
+		switch {
+		case strings.Contains(o.Content, "alpha"):
+			return "A"
+		case strings.Contains(o.Content, "charlie"):
+			return "B"
+		default:
+			return "?"
+		}
+	}
+	seen := map[string]bool{}
+	for _, c := range got {
+		if c.Size != 3 {
+			t.Errorf("theme cluster %q size = %d, want 3 (no cross-theme merge)", c.Label, c.Size)
+		}
+		themes := map[string]bool{}
+		for _, m := range c.Members {
+			themes[themeOf(m)] = true
+		}
+		if len(themes) != 1 {
+			t.Errorf("cluster %q mixes themes %v — the umbrella bridge was not cut: %v", c.Label, themes, c.Members)
+		}
+		for th := range themes {
+			seen[th] = true
+		}
+	}
+	if !seen["A"] || !seen["B"] {
+		t.Errorf("want one cluster per theme A and B; seen=%v", seen)
+	}
+	if hasLabel(got, umbrella) {
+		t.Errorf("umbrella token %q must not label any cluster: %v", umbrella, labels(got))
 	}
 }
 

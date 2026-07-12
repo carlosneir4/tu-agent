@@ -20,8 +20,9 @@ var (
 )
 
 var runCmd = &cobra.Command{
-	Use:   "run",
-	Short: "Execute a single task non-interactively and exit",
+	Use:        "run",
+	Short:      "Execute a single task non-interactively and exit",
+	Deprecated: "the standalone provider harness is frozen; use tu-agent through the Claude Code plugin (see CLAUDE.md §10)",
 	Long: `Runs a single task through the agent loop and prints the response to stdout.
 Designed for scripted benchmarks. Exits after one task completes.`,
 	RunE: func(cmd *cobra.Command, args []string) error {

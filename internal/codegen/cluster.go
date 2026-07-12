@@ -3,6 +3,8 @@ package codegen
 import (
 	"fmt"
 	"sort"
+
+	"github.com/tu/tu-agent/internal/cluster"
 )
 
 // WeightedEdge is a coupling between two files with a strength. Direction is
@@ -13,12 +15,20 @@ type WeightedEdge struct {
 	Weight int
 }
 
-// ClusterFiles groups file paths into communities by greedy modularity
-// maximization (Leiden-inspired agglomerative merging) over the undirected
-// weighted file graph. Pure and deterministic: identical inputs yield
-// identical output regardless of edge order. Zero-degree files come back as
-// singleton communities. Members of each community are sorted; communities
-// are ordered by their first member.
+// ClusterFiles groups file paths into modularity-maximizing communities over
+// the undirected weighted file graph. It is a thin string↔index adapter over
+// the leaf cluster package: file paths are mapped to node indices, edges are
+// folded into cluster.Edge, and the integer communities are mapped back to
+// sorted file groups. Pure and deterministic: identical inputs yield identical
+// output regardless of edge order. Zero-degree files come back as singleton
+// communities. Members of each community are sorted; communities are ordered
+// by their first member.
+//
+// NOTE: this delegates to the leaf package's Louvain local-moving, which
+// replaced codegen's earlier CNM agglomerative pair-merging. Different
+// algorithms — the partition stays contract-compatible (deterministic, valid,
+// order-invariant) but is not guaranteed bit-identical to the pre-refactor
+// output; the codegen tests pin the contract, not a specific partition.
 func ClusterFiles(files []string, edges []WeightedEdge) [][]string {
 	nodes := append([]string(nil), files...)
 	sort.Strings(nodes)
@@ -27,45 +37,28 @@ func ClusterFiles(files []string, edges []WeightedEdge) [][]string {
 		idx[p] = i
 	}
 
-	// Node-level undirected weights, key always (low, high).
-	w := map[[2]int]float64{}
+	// Fold weighted file edges into index-based cluster edges, preserving the
+	// existing filtering: drop self-edges, unknown endpoints, and non-positive
+	// weights. Duplicate pairs accumulate inside cluster.Communities.
+	cedges := make([]cluster.Edge, 0, len(edges))
 	for _, e := range edges {
 		a, okA := idx[e.From]
 		b, okB := idx[e.To]
 		if !okA || !okB || a == b || e.Weight <= 0 {
 			continue
 		}
-		if a > b {
-			a, b = b, a
+		cedges = append(cedges, cluster.Edge{A: a, B: b, Weight: e.Weight})
+	}
+
+	comms := cluster.Communities(len(nodes), cedges)
+	out := make([][]string, 0, len(comms))
+	for _, c := range comms {
+		g := make([]string, 0, len(c))
+		for _, i := range c {
+			g = append(g, nodes[i])
 		}
-		w[[2]int{a, b}] += float64(e.Weight)
-	}
-	deg := make([]float64, len(nodes))
-	var m2 float64 // total degree (2m)
-	for k, wt := range w {
-		deg[k[0]] += wt
-		deg[k[1]] += wt
-		m2 += 2 * wt
-	}
-
-	comm := make([]int, len(nodes)) // node index -> community label
-	for i := range comm {
-		comm[i] = i
-	}
-	if m2 > 0 {
-		mergeCommunities(comm, w, deg, m2)
-	}
-
-	groups := map[int][]string{}
-	for i, c := range comm {
-		groups[c] = append(groups[c], nodes[i])
-	}
-	out := make([][]string, 0, len(groups))
-	for _, g := range groups {
-		sort.Strings(g)
 		out = append(out, g)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i][0] < out[j][0] })
 	return out
 }
 
@@ -94,69 +87,6 @@ func subClusterOversized(community []string, weighted []WeightedEdge, maxFiles i
 		out = append(out, subClusterOversized(c, weighted, maxFiles)...)
 	}
 	return out
-}
-
-// mergeCommunities greedily merges the connected community pair with the
-// highest positive modularity gain until no merge improves modularity.
-// comm is updated in place. Gain for communities A, B (CNM):
-// dQ = 2 * ( w(A,B)/2m - (deg(A)/2m)*(deg(B)/2m) ).
-func mergeCommunities(comm []int, w map[[2]int]float64, deg []float64, m2 float64) {
-	cw := make(map[[2]int]float64, len(w)) // inter-community weight, key (low, high)
-	for k, wt := range w {
-		cw[k] = wt
-	}
-	cdeg := append([]float64(nil), deg...)
-
-	for {
-		bestGain := 0.0
-		best := [2]int{-1, -1}
-		pairs := make([][2]int, 0, len(cw))
-		for k := range cw {
-			pairs = append(pairs, k)
-		}
-		// Stable scan order makes tie-breaking (and thus output) deterministic.
-		sort.Slice(pairs, func(i, j int) bool {
-			if pairs[i][0] != pairs[j][0] {
-				return pairs[i][0] < pairs[j][0]
-			}
-			return pairs[i][1] < pairs[j][1]
-		})
-		for _, k := range pairs {
-			gain := 2 * (cw[k]/m2 - (cdeg[k[0]]/m2)*(cdeg[k[1]]/m2))
-			if gain > bestGain+1e-12 {
-				bestGain, best = gain, k
-			}
-		}
-		if best[0] < 0 {
-			return
-		}
-		a, b := best[0], best[1] // merge b into a (a < b keeps labels stable)
-		for i := range comm {
-			if comm[i] == b {
-				comm[i] = a
-			}
-		}
-		next := make(map[[2]int]float64, len(cw))
-		for k, wt := range cw {
-			x, y := k[0], k[1]
-			if x == b {
-				x = a
-			}
-			if y == b {
-				y = a
-			}
-			if x == y {
-				continue // became internal weight; not needed for the gain formula
-			}
-			if x > y {
-				x, y = y, x
-			}
-			next[[2]int{x, y}] += wt
-		}
-		cw = next
-		cdeg[a] += cdeg[b]
-		cdeg[b] = 0
-	}
 }
 
 // communitiesToDomains converts communities into Domains. Each community's

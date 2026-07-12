@@ -37,6 +37,14 @@ Tests: `{{.TestCommand}}`.
 3. Place tests in `src/test/java` mirroring the main package structure.
 4. Run `{{.TestCommand}}` to confirm tests pass.
 
+## Lifetime & placement
+
+- A new test goes INTO the existing test that owns its subject (one per concept, not one per task or feature); create a new test file/class only for a genuinely new subject. A TDD gate needs a red test, not a new file.
+- Never test what the compiler or linter already guarantees (a member exists, a type compiles, an unused symbol is gone), and never re-test a shared mechanism from a consumer's test.
+- Legacy-comparison tests are strangler scaffolding: mark them so they can be deleted wholesale when the legacy path dies (e.g. a `parity` tag or build constraint). Contract tests against a published schema (consumed-set supersets, non-null guarantees) are permanent — leave them unmarked.
+- Don't freeze a method or function signature in a test unless it is a published contract; frozen signatures make later refactors pay double.
+- Test-assertion messages are timeless too: describe the broken contract in words, never by plan reference.
+
 ## Java test conventions
 
 - Test class name: `<ClassUnderTest>Test`.

@@ -117,8 +117,9 @@ const defaultLocalBaseURL = "http://localhost:1234"
 var providerOverride string
 
 var chatCmd = &cobra.Command{
-	Use:   "chat",
-	Short: "Start an interactive agent session in the current repository",
+	Use:        "chat",
+	Short:      "Start an interactive agent session in the current repository",
+	Deprecated: "the standalone provider harness is frozen; use tu-agent through the Claude Code plugin (see CLAUDE.md §10)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prov, err := selectProvider(cfg, "chat", providerOverride)
 		if err != nil {
