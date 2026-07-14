@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tu/tu-agent/internal/graph/extract"
-	"github.com/tu/tu-agent/internal/graph/store"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/graph/extract"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func buildFixtureGraph(t *testing.T) {
@@ -193,15 +194,116 @@ func TestMCP_memSearchLimitMarker(t *testing.T) {
 	}
 }
 
-func TestMCPListFlag(t *testing.T) {
+// servedToolNames connects an in-memory MCP client to newMCPServer() and
+// returns the set of tool names the server ACTUALLY serves, enumerated via
+// ClientSession.Tools. This is the ground truth (set R) that both the
+// registry-derived name list and the `--list` output must match — it is
+// derived from the real AddTool registrations, so it cannot be compared
+// against itself the way the old, vacuous manual-slice-vs-manual-slice test
+// was.
+func servedToolNames(t *testing.T) map[string]bool {
+	t.Helper()
+	ctx := t.Context()
+	clientT, serverT := mcp.NewInMemoryTransports()
+	srv := newMCPServer()
+	go func() { _ = srv.Run(ctx, serverT) }()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v0"}, nil)
+	cs, err := client.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	served := map[string]bool{}
+	for tool, err := range cs.Tools(ctx, nil) {
+		if err != nil {
+			t.Fatalf("enumerate tools: %v", err)
+		}
+		served[tool.Name] = true
+	}
+	if len(served) == 0 {
+		t.Fatal("newMCPServer served no tools")
+	}
+	return served
+}
+
+// TestMCPListMatchesRegisteredTools is the genuine drift guard (@s1 + @s2).
+// It compares the tools ACTUALLY served by newMCPServer (set R, enumerated via
+// the MCP client) against the registry-derived names returned by
+// buildMCPServer (set P). The two sets must be equal — no served tool missing
+// from --list, and no --list name that is not actually served.
+//
+//   - @s1 (RED): under the conductor's stub, buildMCPServer returns a nil/empty
+//     name list, so P is empty while R holds every registered tool; the sets
+//     differ and this test fails.
+//   - @s2 (GREEN): once buildMCPServer accumulates each name via addTool and
+//     returns the real registry, P == R exactly and the test passes.
+func TestMCPListMatchesRegisteredTools(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	served := servedToolNames(t) // set R
+
+	_, names := buildMCPServer() // set P — registry-derived
+	derived := map[string]bool{}
+	for _, n := range names {
+		derived[n] = true
+	}
+
+	var missing, extra []string
+	for n := range served {
+		if !derived[n] {
+			missing = append(missing, n)
+		}
+	}
+	for n := range derived {
+		if !served[n] {
+			extra = append(extra, n)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	if len(missing) > 0 || len(extra) > 0 {
+		t.Errorf("registry-derived --list names drift from the tools actually served:\n"+
+			"  missing from --list (served but not derived): %v\n"+
+			"  extra in --list (derived but not served):     %v",
+			missing, extra)
+	}
+}
+
+// TestMCPListOutputMatchesServedTools covers @s3: with the manual name slice
+// gone, printMCPTools must derive its output from the registry, so `--list`
+// prints exactly the served tool names — every served name present, no extra
+// lines, and an equal count. The expectation is anchored on the
+// client-enumerated set R (never on any hand-maintained slice), so `--list`
+// can no longer drift from what is served.
+func TestMCPListOutputMatchesServedTools(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	served := servedToolNames(t) // set R
+
 	var buf strings.Builder
 	printMCPTools(&buf)
-	// Iterate the registry itself so this test genuinely guards mcpToolNames:
-	// any tool added to the slice must show up in `mcp --list`.
-	for _, name := range mcpToolNames {
-		if !strings.Contains(buf.String(), name) {
-			t.Errorf("mcp --list output missing %s:\n%s", name, buf.String())
+
+	listed := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			listed[line] = true
 		}
+	}
+
+	for name := range served {
+		if !listed[name] {
+			t.Errorf("mcp --list output missing served tool %q:\n%s", name, buf.String())
+		}
+	}
+	for name := range listed {
+		if !served[name] {
+			t.Errorf("mcp --list output lists %q, which newMCPServer does not serve", name)
+		}
+	}
+	if len(listed) != len(served) {
+		t.Errorf("mcp --list prints %d tools, want %d (the served set)", len(listed), len(served))
 	}
 }
 
@@ -423,14 +525,9 @@ func TestMCP_getFlowParityWithCLI(t *testing.T) {
 }
 
 func TestGetBridgesToolRegistered(t *testing.T) {
-	found := false
-	for _, n := range mcpToolNames {
-		if n == "get_bridges" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("mcpToolNames missing get_bridges")
+	t.Chdir(t.TempDir())
+	if !servedToolNames(t)["get_bridges"] {
+		t.Error("newMCPServer does not serve get_bridges")
 	}
 }
 
@@ -543,15 +640,11 @@ func TestMCP_getCyclesRoundTrip(t *testing.T) {
 }
 
 func TestMemRelationToolsRegistered(t *testing.T) {
+	t.Chdir(t.TempDir())
+	served := servedToolNames(t)
 	for _, want := range []string{"mem_relate", "mem_related"} {
-		found := false
-		for _, n := range mcpToolNames {
-			if n == want {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("mcpToolNames missing %q", want)
+		if !served[want] {
+			t.Errorf("newMCPServer does not serve %q", want)
 		}
 	}
 }
@@ -630,15 +723,11 @@ func TestMCP_memRelatedMarksStale(t *testing.T) {
 }
 
 func TestMemSessionToolsRegistered(t *testing.T) {
+	t.Chdir(t.TempDir())
+	served := servedToolNames(t)
 	for _, want := range []string{"mem_session_start", "mem_session_end", "mem_session_list"} {
-		found := false
-		for _, n := range mcpToolNames {
-			if n == want {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("mcpToolNames missing %q", want)
+		if !served[want] {
+			t.Errorf("newMCPServer does not serve %q", want)
 		}
 	}
 }
@@ -724,6 +813,9 @@ func TestHandleMemSessionEnd_PassesProjectThrough(t *testing.T) {
 
 func TestMCPMemExportImport(t *testing.T) {
 	dir := t.TempDir()
+	runGitIn(t, dir, "init")
+	runGitIn(t, dir, "config", "user.email", "tester@example.com")
+	runGitIn(t, dir, "config", "user.name", "Tester")
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	if err := os.Chdir(dir); err != nil {
@@ -771,26 +863,19 @@ func TestMCPMemExportImport(t *testing.T) {
 }
 
 func TestMemSyncToolsRegistered(t *testing.T) {
-	found := map[string]bool{}
-	for _, n := range mcpToolNames {
-		found[n] = true
-	}
+	t.Chdir(t.TempDir())
+	served := servedToolNames(t)
 	for _, want := range []string{"mem_export", "mem_import"} {
-		if !found[want] {
-			t.Errorf("%s missing from mcpToolNames", want)
+		if !served[want] {
+			t.Errorf("newMCPServer does not serve %q", want)
 		}
 	}
 }
 
 func TestMCPHasTestMutation(t *testing.T) {
-	found := false
-	for _, n := range mcpToolNames {
-		if n == "test_mutation" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("mcpToolNames missing test_mutation")
+	t.Chdir(t.TempDir())
+	if !servedToolNames(t)["test_mutation"] {
+		t.Error("newMCPServer does not serve test_mutation")
 	}
 }
 

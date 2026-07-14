@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph"
 )
 
 // gqlTagRe matches a `gql` or `graphql` tag immediately preceding a backtick.

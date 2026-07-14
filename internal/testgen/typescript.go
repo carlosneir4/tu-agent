@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
 )
 
 // TSAdapter implements LanguageAdapter for TypeScript repos using vitest or

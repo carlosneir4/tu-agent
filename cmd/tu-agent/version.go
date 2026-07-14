@@ -13,8 +13,9 @@ import (
 var version = "0.0.0-dev"
 
 var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "Print the tu-agent version",
+	GroupID: "diagnostics",
+	Use:     "version",
+	Short:   "Print the tu-agent version",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println(version)
 		return nil

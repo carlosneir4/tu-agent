@@ -24,9 +24,13 @@ type AgentTemplateData struct {
 	Structure      string
 }
 
-// LoadTemplate reads the template for role in lang, falling back to "base" when
-// no language-specific template is found. Returns an error only when neither
-// lang nor base has a template for the role.
+// LoadTemplate reads the generic base body template for role. The lang argument
+// is retained for call-site compatibility and lookup order, but no per-language
+// body templates exist anymore — language specialization lives in the runtime
+// overlay (see LangOverlay). For any known role this therefore resolves the
+// base/ template regardless of lang; it errors only when base has no template
+// for the role. The base lookup still runs after a lang-specific probe that no
+// longer matches, so the fallback path is exercised for every language.
 func LoadTemplate(lang, role string) (string, error) {
 	p := path.Join("templates", lang, role+".md")
 	data, err := templateFS.ReadFile(p)

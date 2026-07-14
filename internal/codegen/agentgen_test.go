@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
 )
 
 func TestLoadTemplate_BaseArchitect(t *testing.T) {
@@ -21,13 +21,29 @@ func TestLoadTemplate_BaseArchitect(t *testing.T) {
 	}
 }
 
+// variantRoles and supportedLangs are declared in overlay_test.go (same
+// codegen_test package): the roles that specialize per language via the runtime
+// overlay, and the languages that have variant overlays. Their body templates
+// now all resolve to the generic base body.
+
+// @s2 (java analog) — LoadTemplate("java","developer") resolves the generic
+// base body, byte-identical to LoadTemplate("base","developer"), and carries no
+// language-specific content (that now lives in LangOverlay, covered by
+// overlay_test.go).
 func TestLoadTemplate_JavaDeveloper(t *testing.T) {
 	tmpl, err := codegen.LoadTemplate("java", "developer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(tmpl, "Optional") {
-		t.Error("expected Java-specific content (Optional) in java developer template")
+	base, err := codegen.LoadTemplate("base", "developer")
+	if err != nil {
+		t.Fatalf("unexpected error loading base: %v", err)
+	}
+	if tmpl != base {
+		t.Errorf("java developer template must equal base developer template after per-lang removal")
+	}
+	if strings.Contains(tmpl, "Java-specific") {
+		t.Errorf("java developer body must not contain %q — that content now lives in the overlay", "Java-specific")
 	}
 }
 
@@ -91,22 +107,85 @@ func TestRenderTemplate_AllVariables(t *testing.T) {
 	}
 }
 
-func TestLoadTemplate_GoRolesExist(t *testing.T) {
-	// processRoles are language-agnostic; they only have base templates and are
-	// exempt from the Go-specific content check.
-	processRoles := []string{"analyst", "scribe"}
-	for _, role := range codegen.AgentRoles {
-		if slices.Contains(processRoles, role) {
-			continue
-		}
+// @s2/@s3 — for every variant role, LoadTemplate("go",role) resolves the
+// generic base body (byte-identical to base) and carries no Go-specific
+// section. The Go specialization now lives only in LangOverlay.
+func TestLoadTemplate_GoRolesResolveBase(t *testing.T) {
+	forbidden := []string{"Go-specific", "Go architecture", "Go testing"}
+	for _, role := range variantRoles {
 		got, err := codegen.LoadTemplate("go", role)
 		if err != nil {
 			t.Fatalf("LoadTemplate(go, %q) error: %v", role, err)
 		}
-		// Go templates must mention a Go-specific command, proving we did not
-		// fall through to the generic base template.
-		if !strings.Contains(got, "go test") && !strings.Contains(got, "go vet") {
-			t.Errorf("role %q: expected Go-specific content, got:\n%s", role, got)
+		base, err := codegen.LoadTemplate("base", role)
+		if err != nil {
+			t.Fatalf("LoadTemplate(base, %q) error: %v", role, err)
+		}
+		if got != base {
+			t.Errorf("role %q: go template must equal base template after per-lang removal", role)
+		}
+		for _, f := range forbidden {
+			if strings.Contains(got, f) {
+				t.Errorf("role %q: go body must not contain %q — that content now lives in the overlay", role, f)
+			}
+		}
+	}
+}
+
+// @s3 — LoadTemplate(lang,"qa") is byte-identical across every supported
+// language and equals the base qa template. Proves the per-lang body tree is
+// gone and all languages collapse onto base.
+func TestLoadTemplate_QAIdenticalAcrossLangs(t *testing.T) {
+	base, err := codegen.LoadTemplate("base", "qa")
+	if err != nil {
+		t.Fatalf("LoadTemplate(base, qa) error: %v", err)
+	}
+	for _, lang := range supportedLangs {
+		got, err := codegen.LoadTemplate(lang, "qa")
+		if err != nil {
+			t.Fatalf("LoadTemplate(%q, qa) error: %v", lang, err)
+		}
+		if got != base {
+			t.Errorf("LoadTemplate(%q, qa) must be byte-identical to base qa template", lang)
+		}
+	}
+}
+
+// @s1 — the per-language body template directories are absent from the embedded
+// FS. templateFS is unexported, so this is asserted behaviorally: for every
+// variant role, each supported language resolves to the exact base body (if a
+// templates/<lang>/<role>.md still existed it would win over base and differ).
+// @s5 — the resolved (and therefore materialized) bodies carry no
+// "## <Lang>-specific" section for any role.
+func TestLoadTemplate_PerLangDirsAbsent(t *testing.T) {
+	forbiddenSections := []string{
+		"## Go-specific", "## Java-specific", "## Python-specific", "## TypeScript-specific",
+		"## Go architecture", "## Go testing",
+	}
+	for _, role := range variantRoles {
+		base, err := codegen.LoadTemplate("base", role)
+		if err != nil {
+			t.Fatalf("LoadTemplate(base, %q) error: %v", role, err)
+		}
+		for _, lang := range supportedLangs {
+			got, err := codegen.LoadTemplate(lang, role)
+			if err != nil {
+				t.Fatalf("LoadTemplate(%q, %q) error: %v", lang, role, err)
+			}
+			if got != base {
+				t.Errorf("LoadTemplate(%q, %q) != base: a per-lang template directory still shadows base", lang, role)
+			}
+			// Post-render body (generateAgents renders LoadTemplate output) must
+			// carry no language-specific section.
+			rendered, rerr := codegen.RenderTemplate(got, codegen.AgentTemplateData{ProjectName: "acme", Language: lang})
+			if rerr != nil {
+				t.Fatalf("RenderTemplate(%q, %q): %v", lang, role, rerr)
+			}
+			for _, f := range forbiddenSections {
+				if strings.Contains(rendered, f) {
+					t.Errorf("materialized %q/%q body contains language-specific section %q", lang, role, f)
+				}
+			}
 		}
 	}
 }

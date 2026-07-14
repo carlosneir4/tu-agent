@@ -1,10 +1,8 @@
 package reconcile
 
 import (
-	"regexp"
-
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // ReboundAction is one rebind an apply run performed: the record's (unchanged)
@@ -36,16 +34,13 @@ type RenameAction struct {
 
 // ApplyResult reports what an apply run changed.
 type ApplyResult struct {
-	Rebound   []ReboundAction // pure rebinds (label re-point, sync_id stable)
-	Renamed   []RenameAction  // --name renames (topic + folder moved)
-	Divergent []Divergence    // record moved, hand-written SKILL.md left intact
-	Removed   []string        // crystallize-managed skill FOLDER NAMES deleted
-	Skipped   []string        // plan-orphan TOPIC KEYS left untouched (no target)
+	Rebound     []ReboundAction // pure rebinds (label re-point, sync_id stable)
+	Renamed     []RenameAction  // --name renames (topic + folder moved)
+	Divergent   []Divergence    // record moved, hand-written SKILL.md left intact
+	Removed     []string        // crystallize-managed skill FOLDER NAMES deleted (PruneFolders: true)
+	WouldRemove []string        // crystallize-managed skill FOLDER NAMES reported as removal candidates but left on disk (PruneFolders: false, the default)
+	Skipped     []string        // plan-orphan TOPIC KEYS left untouched (no target)
 }
-
-// provenanceRe matches the crystallize provenance comment so it can be
-// rewritten in place with a fresh label= and source-hash=.
-var provenanceRe = regexp.MustCompile(`<!--\s*` + regexp.QuoteMeta(crystallize.Marker) + `[^>]*-->`)
 
 // ApplyPlan executes the rebind-only reconcile for a pre-computed plan against
 // the store + skills dir. For each orphan it consults

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/query"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/query"
 )
 
 // contextFixture writes a tiny repo and builds a matching in-memory graph:

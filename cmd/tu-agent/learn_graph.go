@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/store"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
 )
 
 // loadSourceUnits reads the graph store into language-neutral source units,
@@ -120,16 +120,9 @@ func registerKnowledge(root string) error {
 		}
 		skills = append(skills, sk) // Dir == "" → virtual concept:: path
 	}
-	// The architecture skill is still a real file; include it if present.
-	if onDisk, lerr := codegen.LoadIndex(generatedSkillsDir(root)); lerr == nil {
-		for _, sk := range onDisk {
-			if sk.Name == "architecture" {
-				skills = append(skills, sk)
-			}
-		}
-	} else {
-		slog.Warn("registerKnowledge: cannot load on-disk skills for architecture", "err", lerr)
-	}
+	// F7-A: the architecture overview no longer lives as a .claude/skills file;
+	// it is stored in graph.db metadata and read via get_architecture, so it is
+	// not indexed as a knowledge-graph skill node.
 
 	nodes, edges := buildKnowledgeNodes(skills, root)
 	if err := s.ReplaceKnowledge(nodes, edges); err != nil {

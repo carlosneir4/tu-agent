@@ -3,7 +3,7 @@ package query
 import (
 	"testing"
 
-	"github.com/tu/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph"
 )
 
 // callEdge is a calls edge between two function nodes.

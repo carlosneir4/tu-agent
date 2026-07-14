@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/query"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/query"
 )
 
 const cannedCalcTest = "```go\npackage calcfixture\n\nimport \"testing\"\n\nfunc TestAdd_Gen(t *testing.T) {\n\tif got := Add(2, 3); got != 5 {\n\t\tt.Fatalf(\"Add(2,3) = %d, want 5\", got)\n\t}\n}\n```"

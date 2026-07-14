@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/provider"
-	"github.com/tu/tu-agent/internal/telemetry"
+	"github.com/carlosneir4/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
 )
 
 // GenerateConceptDefinitions asks the model for one definition line per card in

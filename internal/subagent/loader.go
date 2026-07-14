@@ -1,13 +1,13 @@
 package subagent
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/carlosneir4/tu-agent/internal/frontmatter"
 	"gopkg.in/yaml.v3"
 )
 
@@ -82,49 +82,32 @@ type agentFrontmatter struct {
 }
 
 // parseFrontmatter reads YAML frontmatter and body from a sub-agent markdown file.
-// Files with no opening --- delimiter return a *Definition with empty Name.
+// Files with no opening --- delimiter, or an opening delimiter with no closing
+// one (malformed — see frontmatter.Split), return a *Definition with empty
+// Name and are skipped by Load. This deliberately does NOT fall back to
+// treating an unterminated frontmatter block's remainder as the body: doing
+// so previously produced a Definition with Name set but an empty
+// SystemPrompt (the body was swallowed into the frontmatter buffer), loading
+// a silently useless agent. Malformed frontmatter is now uniformly rejected.
 func parseFrontmatter(path string, r io.Reader) (*Definition, error) {
-	scanner := bufio.NewScanner(r)
-	var inFrontmatter bool
-	var foundOpening bool
-	var fmLines, bodyLines []string
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !foundOpening {
-			if strings.TrimSpace(line) == "---" {
-				inFrontmatter = true
-				foundOpening = true
-				continue
-			}
-			return &Definition{}, nil
-		}
-		if inFrontmatter {
-			if strings.TrimSpace(line) == "---" {
-				inFrontmatter = false
-				continue
-			}
-			fmLines = append(fmLines, line)
-			continue
-		}
-		bodyLines = append(bodyLines, line)
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("subagent: reading %s: %w", path, err)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("subagent: scanning %s: %w", path, err)
-	}
-	if len(fmLines) == 0 {
+	fm, body, ok := frontmatter.Split(string(raw))
+	if !ok {
 		return &Definition{}, nil
 	}
 
-	var fm agentFrontmatter
-	if err := yaml.Unmarshal([]byte(strings.Join(fmLines, "\n")), &fm); err != nil {
+	var parsed agentFrontmatter
+	if err := yaml.Unmarshal([]byte(fm), &parsed); err != nil {
 		return nil, fmt.Errorf("subagent: parsing frontmatter in %s: %w", path, err)
 	}
 	return &Definition{
-		Name:         fm.Name,
-		Description:  fm.Description,
-		DefaultModel: fm.DefaultModel,
-		ToolSubset:   fm.ToolSubset,
-		SystemPrompt: strings.TrimSpace(strings.Join(bodyLines, "\n")),
+		Name:         parsed.Name,
+		Description:  parsed.Description,
+		DefaultModel: parsed.DefaultModel,
+		ToolSubset:   parsed.ToolSubset,
+		SystemPrompt: strings.TrimSpace(body),
 	}, nil
 }

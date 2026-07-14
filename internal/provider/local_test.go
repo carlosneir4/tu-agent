@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/provider"
 )
 
 // localTextResp builds a minimal OpenAI-compatible text response.

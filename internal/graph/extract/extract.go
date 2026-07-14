@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph"
 )
 
 // ExtractorVersion participates in the store's auto-rebuild check.

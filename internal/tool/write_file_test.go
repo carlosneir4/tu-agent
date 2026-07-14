@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/tool"
+	"github.com/carlosneir4/tu-agent/internal/tool"
 )
 
 func TestWriteFileTool_Metadata(t *testing.T) {

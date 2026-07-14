@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/config"
+	"github.com/carlosneir4/tu-agent/internal/config"
 )
 
 func mkSkill(t *testing.T, dir, name, desc string) {
@@ -44,6 +44,39 @@ func TestBuildInventory_SkillShadowing(t *testing.T) {
 	}
 	if got["solr"].Shadows {
 		t.Errorf("solr appears once, should not shadow")
+	}
+}
+
+func mkAgent(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: " + name + "\ndescription: d\n---\nbody\n"
+	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildInventory_AgentReadOnly(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	// Project-local agents are untrusted and must be reported read-only;
+	// home-layer agents are trusted and must not be.
+	mkAgent(t, filepath.Join(home, ".claude", "agents"), "home-agent")
+	mkAgent(t, filepath.Join(cwd, ".claude", "agents"), "project-agent")
+
+	inv := buildInventory(home, cwd, config.RoutingConfig{Default: "claude"})
+
+	got := map[string]agentRow{}
+	for _, a := range inv.Agents {
+		got[a.Name] = a
+	}
+	if !got["project-agent"].ReadOnly {
+		t.Errorf("project-agent (untrusted cwd dir) should be reported ReadOnly=true, got %+v", got["project-agent"])
+	}
+	if got["home-agent"].ReadOnly {
+		t.Errorf("home-agent (trusted home dir) should be reported ReadOnly=false, got %+v", got["home-agent"])
 	}
 }
 

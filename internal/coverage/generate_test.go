@@ -20,10 +20,10 @@ func TestGenerateGoParsesProfile(t *testing.T) {
 		if out == "" {
 			return "", fmt.Errorf("no -coverprofile flag")
 		}
-		prof := "mode: set\n" + "github.com/tu/tu-agent/a.go:1.1,3.2 2 1\n"
+		prof := "mode: set\n" + "github.com/carlosneir4/tu-agent/a.go:1.1,3.2 2 1\n"
 		return "", os.WriteFile(out, []byte(prof), 0o644)
 	}
-	p, err := Generate(LangGo, root, "github.com/tu/tu-agent", run)
+	p, err := Generate(LangGo, root, "github.com/carlosneir4/tu-agent", run)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func TestAppendLastSessionSummary(t *testing.T) {

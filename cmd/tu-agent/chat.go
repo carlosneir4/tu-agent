@@ -10,14 +10,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tu/tu-agent/internal/config"
-	"github.com/tu/tu-agent/internal/memory"
-	"github.com/tu/tu-agent/internal/orchestrator"
-	"github.com/tu/tu-agent/internal/provider"
-	"github.com/tu/tu-agent/internal/skill"
-	"github.com/tu/tu-agent/internal/subagent"
-	"github.com/tu/tu-agent/internal/telemetry"
-	"github.com/tu/tu-agent/internal/tool"
+	"github.com/carlosneir4/tu-agent/internal/config"
+	"github.com/carlosneir4/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/orchestrator"
+	"github.com/carlosneir4/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/skill"
+	"github.com/carlosneir4/tu-agent/internal/subagent"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
+	"github.com/carlosneir4/tu-agent/internal/tool"
 )
 
 const baseSystemPrompt = `You are an AI coding assistant with access to tools.

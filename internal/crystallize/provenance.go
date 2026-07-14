@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // Marker tags a materialized SKILL.md as crystallize-managed, so materialization
@@ -34,6 +34,13 @@ func SourceHash(members []memory.Observation) string {
 func ProvenanceLine(label string, members []memory.Observation) string {
 	return fmt.Sprintf("<!-- %s source-hash=%s label=%s -->", Marker, SourceHash(members), label)
 }
+
+// ProvenanceCommentRe matches the entire crystallize provenance HTML comment
+// (`<!-- tu-agent:crystallize ... -->`) so it can be rewritten in place with a
+// fresh label= and source-hash=. It is the single canonical matcher for the
+// full comment; consumers (e.g. reconcile's rename path) reference it rather
+// than defining their own copy.
+var ProvenanceCommentRe = regexp.MustCompile(`<!--\s*` + regexp.QuoteMeta(Marker) + `[^>]*-->`)
 
 var sourceHashRe = regexp.MustCompile(`source-hash=([0-9a-f]+)`)
 
@@ -124,8 +131,10 @@ func SkillName(label string) string { return label }
 func SkillTopic(label string) string { return "skill/" + SkillName(label) }
 
 // MaterializeDecision reports whether materialization may write a file given its
-// current bytes: write when the file is absent/empty or already crystallize-
-// managed; never overwrite a file lacking the marker (a hand-written skill).
+// current bytes: write when the file is absent/whitespace-only or already
+// crystallize-managed (a genuine, parseable provenance line — not merely a
+// file that mentions the marker string in prose); never overwrite a file
+// lacking a valid provenance line (a hand-written skill).
 func MaterializeDecision(existing []byte) bool {
-	return len(existing) == 0 || strings.Contains(string(existing), Marker)
+	return len(strings.TrimSpace(string(existing))) == 0 || ParseSourceHash(string(existing)) != ""
 }

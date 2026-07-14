@@ -3,7 +3,7 @@ package tdd
 import (
 	"strings"
 
-	"github.com/tu/tu-agent/internal/testresult"
+	"github.com/carlosneir4/tu-agent/internal/testresult"
 )
 
 // RedResult is the outcome of the RED check. OK means every new test file is red.

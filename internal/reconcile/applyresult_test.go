@@ -63,7 +63,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
 )
 
 // containsStr reports whether xs contains s.
@@ -177,7 +177,7 @@ func TestApplyResult_RemovedFoldersReported(t *testing.T) {
 	materializeSkill(t, skillsDir, "ghost", true)        // marked, no record -> removed + reported
 	materializeSkill(t, skillsDir, "acme-manual", false) // hand-written, no record -> kept + not reported
 
-	res, err := ApplyPlanWithOptions(store, Plan{}, nil, skillsDir, ApplyOptions{})
+	res, err := ApplyPlanWithOptions(store, Plan{}, nil, skillsDir, ApplyOptions{PruneFolders: true})
 	if err != nil {
 		t.Fatalf("ApplyPlanWithOptions: %v", err)
 	}

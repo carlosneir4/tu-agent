@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/graph/store"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/config"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
 )
 
 func writeFileTree(t *testing.T, root, rel, content string) {
@@ -67,7 +72,7 @@ func TestPrepareSynthesisInputs_GraphAndDomainEdges(t *testing.T) {
 	}
 	st.Close()
 
-	project, domains, edges, err := prepareSynthesisInputs(".", "", false)
+	project, domains, edges, _, err := prepareSynthesisInputs(".", "", false)
 	if err != nil {
 		t.Fatalf("prepareSynthesisInputs: %v", err)
 	}
@@ -80,9 +85,205 @@ func TestPrepareSynthesisInputs_GraphAndDomainEdges(t *testing.T) {
 	if len(edges) != 1 || edges[0].From != "widgets" || edges[0].To != "render" {
 		t.Errorf("edges = %v, want [widgets->render]", edges)
 	}
-	// prepareSynthesisInputs writes skill-fingerprints.json as a side effect.
-	if _, err := os.Stat(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); err != nil {
-		t.Errorf("skill-fingerprints.json not written: %v", err)
+	// prepareSynthesisInputs is a read-only seam: it must NOT write
+	// skill-fingerprints.json itself. Writing happens in the caller only
+	// after synthesis succeeds (see TestRunSynthesize_Fingerprints*).
+	if _, statErr := os.Stat(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); !os.IsNotExist(statErr) {
+		t.Errorf("prepareSynthesisInputs must not write skill-fingerprints.json (stat err = %v)", statErr)
+	}
+}
+
+// TestRunSynthesize_FingerprintsNotWrittenOnProviderFailure is the RED case for
+// the fix: skill-fingerprints.json must not exist when synthesis fails, so a
+// later 'tu-agent status' correctly flags skills as needing refresh rather than
+// silently trusting fingerprints recorded before the architecture skill was
+// (never) regenerated.
+func TestRunSynthesize_FingerprintsNotWrittenOnProviderFailure(t *testing.T) {
+	root := t.TempDir()
+	writeFileTree(t, root, "core/src/main/java/Widget.java", "package core; class Widget {}")
+
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("graph build: %v", err)
+	}
+	seedConcept(t)
+
+	t.Setenv("TU_AGENT_NO_PROVIDER", "1")
+	if err := runSynthesize(context.Background(), "", ""); err == nil {
+		t.Fatal("expected error when provider calls are disabled")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); !os.IsNotExist(statErr) {
+		t.Errorf("skill-fingerprints.json must not be written when synthesis fails (stat err = %v)", statErr)
+	}
+}
+
+// TestRunSynthesize_FingerprintsWrittenAfterSuccess is the GREEN counterpart:
+// once synthesis actually succeeds, the fingerprints must land on disk.
+func TestRunSynthesize_FingerprintsWrittenAfterSuccess(t *testing.T) {
+	root := t.TempDir()
+	writeFileTree(t, root, "core/src/main/java/Widget.java", "package core; class Widget {}")
+
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("graph build: %v", err)
+	}
+	seedConcept(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":     "chatcmpl-1",
+			"object": "chat.completion",
+			"choices": []map[string]any{{
+				"index": 0,
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "---\nname: architecture\ndescription: d\n---\n# Architecture Overview\nbody\n",
+				},
+				"finish_reason": "stop",
+			}},
+			"usage": map[string]int{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+		})
+	}))
+	defer srv.Close()
+
+	origCfg := cfg
+	cfg = config.Config{Providers: map[string]config.ProviderConfig{"local": {BaseURL: srv.URL}}}
+	t.Cleanup(func() { cfg = origCfg })
+
+	if err := runSynthesize(context.Background(), "", "local"); err != nil {
+		t.Fatalf("runSynthesize: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); statErr != nil {
+		t.Errorf("skill-fingerprints.json should be written after successful synthesis: %v", statErr)
+	}
+}
+
+// TestRunSynthesize_FingerprintsNotWrittenOnEmptyOverview locks the F7-A review
+// finding: when the model returns content that strips to empty (frontmatter
+// only), persistArchitecture reports wrote=false and NOTHING is stored — so
+// fingerprints must NOT be recorded, otherwise `tu-agent status` would falsely
+// report the skills up-to-date against an overview that was never stored.
+func TestRunSynthesize_FingerprintsNotWrittenOnEmptyOverview(t *testing.T) {
+	root := t.TempDir()
+	writeFileTree(t, root, "core/src/main/java/Widget.java", "package core; class Widget {}")
+
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("graph build: %v", err)
+	}
+	seedConcept(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":     "chatcmpl-1",
+			"object": "chat.completion",
+			"choices": []map[string]any{{
+				"index": 0,
+				"message": map[string]any{
+					"role": "assistant",
+					// Frontmatter only → normalizes to empty → wrote=false.
+					"content": "---\nname: architecture\ndescription: d\n---\n",
+				},
+				"finish_reason": "stop",
+			}},
+			"usage": map[string]int{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+		})
+	}))
+	defer srv.Close()
+
+	origCfg := cfg
+	cfg = config.Config{Providers: map[string]config.ProviderConfig{"local": {BaseURL: srv.URL}}}
+	t.Cleanup(func() { cfg = origCfg })
+
+	if err := runSynthesize(context.Background(), "", "local"); err != nil {
+		t.Fatalf("runSynthesize: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); !os.IsNotExist(statErr) {
+		t.Errorf("skill-fingerprints.json must not be written when the overview is empty (stat err = %v)", statErr)
+	}
+	got, err := loadArchitecture()
+	if err != nil {
+		t.Fatalf("loadArchitecture: %v", err)
+	}
+	if got != "" {
+		t.Errorf("nothing should be stored for an empty overview, loadArchitecture = %q", got)
+	}
+}
+
+// TestMergedSynthesizeAndEnrich_StoresArchitecture confirms the merged
+// synthesize+enrich path persists the architecture overview into the graph
+// store (F7-A) — get_architecture / loadArchitecture returns it, stripped of
+// frontmatter — and records fingerprints once the overview is stored.
+func TestMergedSynthesizeAndEnrich_StoresArchitecture(t *testing.T) {
+	root := t.TempDir()
+	writeFileTree(t, root, "core/src/main/java/Widget.java", "package core; class Widget {}")
+
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("graph build: %v", err)
+	}
+	seedConcept(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":     "chatcmpl-1",
+			"object": "chat.completion",
+			"choices": []map[string]any{{
+				"index": 0,
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "=== ARCHITECTURE ===\n# Architecture Overview\nbody\n=== PROJECT-CONTEXT ===\n## Coding Conventions\n- x\n",
+				},
+				"finish_reason": "stop",
+			}},
+			"usage": map[string]int{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+		})
+	}))
+	defer srv.Close()
+
+	origCfg := cfg
+	cfg = config.Config{Providers: map[string]config.ProviderConfig{"local": {BaseURL: srv.URL}}}
+	t.Cleanup(func() { cfg = origCfg })
+
+	prov, err := selectProvider(cfg, "synthesize", "local")
+	if err != nil {
+		t.Fatalf("selectProvider: %v", err)
+	}
+
+	mergedSynthesizeAndEnrich(context.Background(), root, prov, 0)
+
+	got, err := loadArchitecture()
+	if err != nil {
+		t.Fatalf("loadArchitecture: %v", err)
+	}
+	if !strings.Contains(got, "# Architecture Overview") {
+		t.Errorf("architecture overview not stored, loadArchitecture = %q", got)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); statErr != nil {
+		t.Errorf("skill-fingerprints.json should be written after the overview is stored: %v", statErr)
 	}
 }
 
@@ -100,7 +301,7 @@ func TestPrepareSynthesisInputs_NoSkillsErrors(t *testing.T) {
 	}
 
 	// No concepts seeded — store is empty. prepareSynthesisInputs must error.
-	if _, _, _, err := prepareSynthesisInputs(".", "", false); err == nil {
+	if _, _, _, _, err := prepareSynthesisInputs(".", "", false); err == nil {
 		t.Error("expected error when no concepts present")
 	}
 }
@@ -150,9 +351,15 @@ func TestRunStatus_DetectsStaleAfterChange(t *testing.T) {
 	}
 	st.Close()
 
-	// Baseline fingerprints via prepareSynthesisInputs.
-	if _, _, _, err := prepareSynthesisInputs(".", "", false); err != nil {
+	// Baseline fingerprints: prepareSynthesisInputs no longer writes them as a
+	// side effect, so the test writes them itself (mirroring what runSynthesize
+	// does after a successful synthesis).
+	_, _, _, fps, err := prepareSynthesisInputs(".", "", false)
+	if err != nil {
 		t.Fatalf("prepare: %v", err)
+	}
+	if err := fps.WriteJSON(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
 	}
 	// Mutate the Key File so the skill becomes stale.
 	writeFileTree(t, root, "src/com/acme/widgets/Widget.java",
@@ -191,7 +398,7 @@ func TestPrepareSynthesisInputs_SurfacesIndexError(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 
 	// No concepts seeded in store → prepareSynthesisInputs errors on zero concepts.
-	_, _, _, err := prepareSynthesisInputs(".", "", true)
+	_, _, _, _, err := prepareSynthesisInputs(".", "", true)
 	if err == nil {
 		t.Fatal("expected error when concepts are missing")
 	}
@@ -245,7 +452,7 @@ func TestPrepareSynthesisInputs_FromStore(t *testing.T) {
 	}
 	seedConcept(t)
 
-	_, domains, _, err := prepareSynthesisInputs(".", "", false)
+	_, domains, _, _, err := prepareSynthesisInputs(".", "", false)
 	if err != nil {
 		t.Fatalf("prepareSynthesisInputs: %v", err)
 	}
@@ -273,147 +480,77 @@ func TestRunStatus_FromStore(t *testing.T) {
 	}
 }
 
-func TestWriteArchitectureSkill_NoExistingFileWritesWithMarker(t *testing.T) {
-	dir := t.TempDir()
-	outPath := filepath.Join(dir, "SKILL.md")
-	content := "---\nname: architecture\ndescription: d\n---\n# Architecture Overview\nbody\n"
+// --- F7-A: architecture overview stored in the graph store ---
 
-	wrote, err := writeArchitectureSkill(outPath, content)
-	if err != nil {
-		t.Fatalf("writeArchitectureSkill: %v", err)
+func TestNormalizeArchitectureNarrative(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"frontmatter+marker", "---\nname: architecture\ndescription: d\n---\n<!-- tu-agent:generated -->\n# Architecture Overview\nbody", "# Architecture Overview\nbody"},
+		{"frontmatter only", "---\nname: architecture\n---\n# Overview\n", "# Overview"},
+		{"marker inline no frontmatter", "<!-- tu-agent:generated -->\n# Overview", "# Overview"},
+		{"plain body", "# Overview\ntext", "# Overview\ntext"},
+		{"whitespace only", "   \n\n", ""},
 	}
-	if !wrote {
-		t.Fatal("wrote = false, want true for a fresh file")
-	}
-	got, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(got), architectureGeneratedMarker) {
-		t.Errorf("written file missing marker:\n%s", got)
-	}
-	if !strings.HasPrefix(string(got), "---\n") {
-		t.Errorf("marker must not precede the frontmatter delimiter:\n%s", got)
+	for _, c := range cases {
+		if got := normalizeArchitectureNarrative(c.in); got != c.want {
+			t.Errorf("%s: normalize(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
 	}
 }
 
-func TestWriteArchitectureSkill_HandWrittenFileSurvives(t *testing.T) {
-	dir := t.TempDir()
-	outPath := filepath.Join(dir, "SKILL.md")
-	handWritten := "---\nname: architecture\ndescription: hand-edited\n---\n# My own overview\n"
-	if err := os.WriteFile(outPath, []byte(handWritten), 0o644); err != nil {
+func TestPersistAndLoadArchitecture_Roundtrip(t *testing.T) {
+	root := t.TempDir()
+	writeFileTree(t, root, "core/src/main/java/Widget.java", "package core; class Widget {}")
+
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
 
-	wrote, err := writeArchitectureSkill(outPath, "---\nname: architecture\ndescription: d\n---\n# Regenerated\n")
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("graph build: %v", err)
+	}
+
+	// Frontmatter is stripped on the way in; get_architecture returns the body.
+	wrote, err := persistArchitecture("---\nname: architecture\n---\n<!-- tu-agent:generated -->\n# Architecture Overview\ndomains\n")
 	if err != nil {
-		t.Fatalf("writeArchitectureSkill: %v", err)
+		t.Fatalf("persistArchitecture: %v", err)
+	}
+	if !wrote {
+		t.Fatal("wrote = false, want true for non-empty content")
+	}
+	got, err := loadArchitecture()
+	if err != nil {
+		t.Fatalf("loadArchitecture: %v", err)
+	}
+	if got != "# Architecture Overview\ndomains" {
+		t.Errorf("loadArchitecture = %q, want stripped body", got)
+	}
+}
+
+func TestPersistArchitecture_EmptyIsNoOp(t *testing.T) {
+	root := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("graph build: %v", err)
+	}
+
+	wrote, err := persistArchitecture("---\nname: architecture\n---\n")
+	if err != nil {
+		t.Fatalf("persistArchitecture: %v", err)
 	}
 	if wrote {
-		t.Error("wrote = true, want false: a hand-edited file (no marker) must not be overwritten")
+		t.Error("wrote = true, want false: frontmatter-only content is empty after normalization")
 	}
-	got, err := os.ReadFile(outPath)
+	got, err := loadArchitecture()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("loadArchitecture: %v", err)
 	}
-	if string(got) != handWritten {
-		t.Errorf("hand-written file was modified:\n%s", got)
-	}
-}
-
-func TestWriteArchitectureSkill_MarkedFileIsRewritten(t *testing.T) {
-	dir := t.TempDir()
-	outPath := filepath.Join(dir, "SKILL.md")
-	marked := "---\nname: architecture\ndescription: old\n---\n" + architectureGeneratedMarker + "\n# Old overview\n"
-	if err := os.WriteFile(outPath, []byte(marked), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	newContent := "---\nname: architecture\ndescription: new\n---\n# New overview\n"
-	wrote, err := writeArchitectureSkill(outPath, newContent)
-	if err != nil {
-		t.Fatalf("writeArchitectureSkill: %v", err)
-	}
-	if !wrote {
-		t.Error("wrote = false, want true: a previously generated file must be regenerated")
-	}
-	got, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(got), "New overview") {
-		t.Errorf("file was not rewritten with new content:\n%s", got)
-	}
-	if !strings.Contains(string(got), architectureGeneratedMarker) {
-		t.Errorf("rewritten file lost its marker:\n%s", got)
-	}
-}
-
-func TestInjectArchitectureMarker_PlacedAfterFrontmatter(t *testing.T) {
-	content := "---\nname: architecture\ndescription: d\n---\n# Architecture Overview\nbody\n"
-	got := injectArchitectureMarker(content)
-	want := "---\nname: architecture\ndescription: d\n---\n" + architectureGeneratedMarker + "\n# Architecture Overview\nbody\n"
-	if got != want {
-		t.Errorf("injectArchitectureMarker =\n%s\nwant\n%s", got, want)
-	}
-}
-
-func TestInjectArchitectureMarker_Idempotent(t *testing.T) {
-	content := "---\nname: architecture\ndescription: d\n---\n" + architectureGeneratedMarker + "\n# Architecture Overview\n"
-	if got := injectArchitectureMarker(content); got != content {
-		t.Errorf("injectArchitectureMarker should be a no-op when the marker is already present:\n%s", got)
-	}
-}
-
-// TestPluginTemplateMarkerPlacement_ParsesAsGraphKnowledge pins the interop
-// between the plugin's architecture-synthesizer.md template (Step 2) and
-// codegen.ParseSkillContent, the entry point registerKnowledge (learn_graph.go)
-// uses to load a SKILL.md into the graph knowledge layer. The marker MUST sit
-// on its own line right after the closing "---", exactly where the binary's
-// own injectArchitectureMarker places it — the file must still start with
-// "---" or splitFrontmatter (and thus ParseSkillContent) rejects it, and the
-// skill silently drops out of the graph knowledge layer (a slog.Warn, not a
-// hard failure, so this would otherwise go unnoticed).
-func TestPluginTemplateMarkerPlacement_ParsesAsGraphKnowledge(t *testing.T) {
-	// Marker AFTER the closing frontmatter delimiter — what the plugin
-	// template now instructs, byte-matching the binary's placement.
-	afterFrontmatter := "---\n" +
-		"name: architecture\n" +
-		"description: Project architecture overview.\n" +
-		"---\n" +
-		architectureGeneratedMarker + "\n" +
-		"# Architecture Overview\nbody\n"
-
-	if !strings.HasPrefix(afterFrontmatter, "---\n") {
-		t.Fatal("test fixture must start with the frontmatter delimiter")
-	}
-	skill, err := codegen.ParseSkillContent(afterFrontmatter)
-	if err != nil {
-		t.Fatalf("ParseSkillContent must accept marker-after-frontmatter placement: %v", err)
-	}
-	if skill.Name != "architecture" {
-		t.Errorf("skill.Name = %q, want %q", skill.Name, "architecture")
-	}
-	// The marker-guard's own detection mechanism (writeArchitectureSkill,
-	// injectArchitectureMarker) is a plain strings.Contains check — confirm
-	// it still fires with the marker in the body rather than the frontmatter.
-	if !strings.Contains(afterFrontmatter, architectureGeneratedMarker) {
-		t.Error("marker-guard Contains check must detect the marker after frontmatter")
-	}
-
-	// Marker BEFORE the leading "---" — what the plugin template instructed
-	// before this fix. The file no longer starts with "---", so
-	// splitFrontmatter (via ParseSkillContent) must reject it: this is the
-	// exact failure mode the review finding flagged, documented here so a
-	// future edit to the template cannot silently regress it.
-	beforeFrontmatter := architectureGeneratedMarker + "\n" +
-		"---\n" +
-		"name: architecture\n" +
-		"description: Project architecture overview.\n" +
-		"---\n" +
-		"# Architecture Overview\nbody\n"
-
-	if _, err := codegen.ParseSkillContent(beforeFrontmatter); err == nil {
-		t.Error("ParseSkillContent must reject marker-before-frontmatter placement (this is why placement matters)")
+	if got != "" {
+		t.Errorf("loadArchitecture = %q, want empty (nothing persisted)", got)
 	}
 }

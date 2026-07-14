@@ -7,10 +7,10 @@ import (
 
 func TestParseGoProfile(t *testing.T) {
 	const prof = `mode: set
-github.com/tu/tu-agent/internal/x/y.go:10.20,12.3 2 1
-github.com/tu/tu-agent/internal/x/y.go:13.2,14.10 1 0
+github.com/carlosneir4/tu-agent/internal/x/y.go:10.20,12.3 2 1
+github.com/carlosneir4/tu-agent/internal/x/y.go:13.2,14.10 1 0
 `
-	p, err := ParseGoProfile(strings.NewReader(prof), "github.com/tu/tu-agent")
+	p, err := ParseGoProfile(strings.NewReader(prof), "github.com/carlosneir4/tu-agent")
 	if err != nil {
 		t.Fatal(err)
 	}

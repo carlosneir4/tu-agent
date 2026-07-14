@@ -8,7 +8,7 @@ import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_python "github.com/tree-sitter/tree-sitter-python/bindings/go"
 
-	"github.com/tu/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph"
 )
 
 // ParsePython extracts FileFacts from one Python source file. Pure function.

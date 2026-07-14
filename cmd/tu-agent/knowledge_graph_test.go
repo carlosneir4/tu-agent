@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/graph"
 )
 
 // markerLineRange must not trust a partial scan: a file whose content exceeds

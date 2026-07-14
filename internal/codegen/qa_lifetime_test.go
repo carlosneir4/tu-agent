@@ -7,18 +7,16 @@ import (
 	"testing"
 )
 
-// qaTemplatePaths lists the six qa.md surfaces that must all carry the
-// "Lifetime & placement" test-discipline rule: the plugin skeleton and the
-// five codegen language templates. Paths are relative to this package's
+// qaTemplatePaths lists the qa.md surfaces that must all carry the "Lifetime &
+// placement" test-discipline rule: the plugin skeleton and the codegen base
+// template. The per-language codegen body templates were removed (base is now
+// the single body source); language specialization lives in the runtime
+// overlay, which carries no such prose. Paths are relative to this package's
 // directory (internal/codegen).
 func qaTemplatePaths() map[string]string {
 	return map[string]string{
-		"plugin":     filepath.Join("..", "..", "plugin", "agent-templates", "qa.md"),
-		"base":       filepath.Join("templates", "base", "qa.md"),
-		"go":         filepath.Join("templates", "go", "qa.md"),
-		"java":       filepath.Join("templates", "java", "qa.md"),
-		"python":     filepath.Join("templates", "python", "qa.md"),
-		"typescript": filepath.Join("templates", "typescript", "qa.md"),
+		"plugin": filepath.Join("..", "..", "plugin", "agents", "qa.md"),
+		"base":   filepath.Join("templates", "base", "qa.md"),
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 var allDigits = regexp.MustCompile(`^[0-9]+$`)

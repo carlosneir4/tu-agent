@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // ApplyOptions carries the opt-in rename-path flags. The zero value (both fields
@@ -21,6 +21,12 @@ type ApplyOptions struct {
 	// cluster's label, overriding AutoApplyTarget even for an ambiguous orphan.
 	// Empty falls back to AutoApplyTarget.
 	ToCluster string
+	// PruneFolders is the --prune-folders flag (CLI) / prune_folders arg (MCP):
+	// gates reconcileFolders' os.RemoveAll of orphaned crystallize-MARKED
+	// folders. false (the default) is a dry-run — candidates are scanned and
+	// reported in ApplyResult.WouldRemove but never removed; true removes them
+	// and reports them in ApplyResult.Removed instead.
+	PruneFolders bool
 }
 
 // ApplyPlanWithOptions is the rename-aware apply core. With a zero ApplyOptions
@@ -37,9 +43,12 @@ type ApplyOptions struct {
 //     missing source folder is NOT an error.
 //
 // Independently of the orphan loop it reconciles folders under skillsDir: a
-// crystallize-MARKED folder whose skill name matches no live record is removed;
-// a marked folder backed by a live record is kept; a hand-written folder (no
-// crystallize marker) is left byte-for-byte untouched. Deterministic and
+// crystallize-MARKED folder whose skill name matches no live record is a
+// removal candidate — actually removed only when opts.PruneFolders is true
+// (reported in ApplyResult.Removed); otherwise it is left on disk and reported
+// in ApplyResult.WouldRemove (dry-run, the default). A marked folder backed by
+// a live record is kept; a hand-written folder (no crystallize marker) is left
+// byte-for-byte untouched regardless of the flag. Deterministic and
 // idempotent.
 func ApplyPlanWithOptions(store *memory.Store, plan Plan, clusters []crystallize.Cluster, skillsDir string, opts ApplyOptions) (ApplyResult, error) {
 	byLabel := make(map[string]crystallize.Cluster, len(clusters))
@@ -78,6 +87,19 @@ func ApplyPlanWithOptions(store *memory.Store, plan Plan, clusters []crystallize
 
 		name := strings.TrimPrefix(rec.TopicKey, "skill/")
 
+		// Name-sanitize guard: opts.Name flows unsanitized into skillsDir/<Name>
+		// and a store Retopic to skill/<Name>. Reject any path-traversal-shaped
+		// value here — before the destination-collision check, the provenance
+		// Upsert, and Retopic — so a rejected Name never reaches a store or
+		// filesystem mutation. An empty Name means "no rename" and stays valid.
+		if opts.Name != "" {
+			if opts.Name == "." || opts.Name == ".." ||
+				strings.ContainsAny(opts.Name, "/\\") ||
+				strings.ContainsRune(opts.Name, filepath.Separator) {
+				return ApplyResult{}, fmt.Errorf("reconcile.ApplyPlanWithOptions: rejected Name %q: must be a single path segment other than %q or %q", opts.Name, ".", "..")
+			}
+		}
+
 		// Destination-collision safety: when --name would rename this record, the
 		// target folder must be FREE before any mutation. Validate it here — before
 		// the provenance Upsert and the Retopic — so a pre-existing destination
@@ -101,7 +123,7 @@ func ApplyPlanWithOptions(store *memory.Store, plan Plan, clusters []crystallize
 		// pre-rename "skill/<old>" as OldTopic.
 		oldTopic := rec.TopicKey
 
-		newContent := provenanceRe.ReplaceAllString(
+		newContent := crystallize.ProvenanceCommentRe.ReplaceAllString(
 			rec.Content, crystallize.ProvenanceLine(target, matched.Members))
 		if _, err := store.Upsert(rec.TopicKey, newContent, memory.UpsertOpts{Type: "skill"}); err != nil {
 			return ApplyResult{}, fmt.Errorf("reconcile.ApplyPlanWithOptions: rebind %s: %w", rec.TopicKey, err)
@@ -168,11 +190,12 @@ func ApplyPlanWithOptions(store *memory.Store, plan Plan, clusters []crystallize
 		}
 	}
 
-	removed, err := reconcileFolders(store, skillsDir)
+	removed, wouldRemove, err := reconcileFolders(store, skillsDir, opts.PruneFolders)
 	if err != nil {
 		return ApplyResult{}, err
 	}
 	res.Removed = append(res.Removed, removed...)
+	res.WouldRemove = append(res.WouldRemove, wouldRemove...)
 	return res, nil
 }
 
@@ -198,27 +221,32 @@ func resolveTarget(opts ApplyOptions, orphan OrphanPlan, byLabel map[string]crys
 }
 
 // reconcileFolders enforces the D8 folder/record invariant under skillsDir: a
-// crystallize-MARKED folder whose skill name maps to no live record is removed;
-// a marked folder backed by a live record is kept; a hand-written folder (no
-// marker) is always left untouched. It runs independently of the orphan loop and
-// returns the bare names of the folders it removed, in scan order.
-func reconcileFolders(store *memory.Store, skillsDir string) ([]string, error) {
+// crystallize-MARKED folder whose skill name maps to no live record is a
+// removal candidate; a marked folder backed by a live record is kept; a
+// hand-written folder (no marker) is always left untouched. It runs
+// independently of the orphan loop. When prune is false it is a dry-run: every
+// candidate is reported in the second return (wouldRemove) and zero
+// os.RemoveAll calls are made. When prune is true, candidates are actually
+// removed and reported in the first return (removed) instead. Both slices are
+// bare folder names, in scan order.
+func reconcileFolders(store *memory.Store, skillsDir string, prune bool) (removed, wouldRemove []string, err error) {
 	folders, err := scanFolders(skillsDir)
 	if err != nil {
-		return nil, fmt.Errorf("reconcile.reconcileFolders: %w", err)
+		return nil, nil, fmt.Errorf("reconcile.reconcileFolders: %w", err)
 	}
 	if len(folders) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	obs, err := store.List()
 	if err != nil {
-		return nil, fmt.Errorf("reconcile.reconcileFolders: %w", err)
+		return nil, nil, fmt.Errorf("reconcile.reconcileFolders: %w", err)
 	}
 	live := make(map[string]struct{}, len(obs))
 	for _, o := range obs {
 		live[o.TopicKey] = struct{}{}
 	}
-	removed := make([]string, 0, len(folders))
+	removed = make([]string, 0, len(folders))
+	wouldRemove = make([]string, 0, len(folders))
 	for _, f := range folders {
 		if !f.Marked {
 			continue // hand-written: never touch
@@ -226,12 +254,16 @@ func reconcileFolders(store *memory.Store, skillsDir string) ([]string, error) {
 		if _, ok := live["skill/"+f.Name]; ok {
 			continue // backed by a live record
 		}
+		if !prune {
+			wouldRemove = append(wouldRemove, f.Name)
+			continue
+		}
 		if err := os.RemoveAll(filepath.Join(skillsDir, f.Name)); err != nil {
-			return nil, fmt.Errorf("reconcile.reconcileFolders: remove %s: %w", f.Name, err)
+			return nil, nil, fmt.Errorf("reconcile.reconcileFolders: remove %s: %w", f.Name, err)
 		}
 		removed = append(removed, f.Name)
 	}
-	return removed, nil
+	return removed, wouldRemove, nil
 }
 
 // dirExists reports whether path exists and is a directory.

@@ -36,11 +36,12 @@ func RenderPlan(p Plan) string {
 // is pure and a sibling of RenderPlan: identical results render identically.
 // Ordering within each category is the slice order as given — the core sorts
 // upstream, so the renderer does NOT re-sort. The header counts only
-// rebound/renamed/divergence; removed and skipped surface as their own lines. An
-// empty result renders a single "nothing to apply" line.
+// rebound/renamed/divergence; removed, would-remove, and skipped surface as
+// their own lines. An empty result (nothing in any category, including
+// WouldRemove) renders a single "nothing to apply" line.
 func RenderApplyResult(res ApplyResult) string {
 	if len(res.Rebound) == 0 && len(res.Renamed) == 0 && len(res.Divergent) == 0 &&
-		len(res.Removed) == 0 && len(res.Skipped) == 0 {
+		len(res.Removed) == 0 && len(res.WouldRemove) == 0 && len(res.Skipped) == 0 {
 		return "Applied reconcile: nothing to apply; memory already reconciled.\n"
 	}
 
@@ -58,6 +59,10 @@ func RenderApplyResult(res ApplyResult) string {
 	}
 	for _, name := range res.Removed {
 		fmt.Fprintf(&sb, "- removed  skill/%s  (folder deleted)\n", name)
+	}
+	if len(res.WouldRemove) > 0 {
+		fmt.Fprintf(&sb, "%d folder(s) would remove (use --prune-folders): %s\n",
+			len(res.WouldRemove), strings.Join(res.WouldRemove, ", "))
 	}
 	if len(res.Skipped) > 0 {
 		fmt.Fprintf(&sb, "%d orphan left untouched (ambiguous): %s\n",

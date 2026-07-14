@@ -36,7 +36,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // seedReconcileFixture builds a fixed corpus — one cohesive live "checkout"

@@ -3,9 +3,9 @@ package testgen
 import (
 	"context"
 
-	"github.com/tu/tu-agent/internal/graph/query"
-	"github.com/tu/tu-agent/internal/provider"
-	"github.com/tu/tu-agent/internal/telemetry"
+	"github.com/carlosneir4/tu-agent/internal/graph/query"
+	"github.com/carlosneir4/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
 )
 
 // BatchItem is one target's outcome in a batch run. Result is nil only when

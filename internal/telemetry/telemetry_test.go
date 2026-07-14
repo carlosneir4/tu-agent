@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/telemetry"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
 )
 
 func TestLogger_Log_CreatesFile(t *testing.T) {

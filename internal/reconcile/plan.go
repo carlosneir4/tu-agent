@@ -16,8 +16,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // Candidate is a live cluster proposed as the re-point target for an orphan,

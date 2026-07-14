@@ -1,6 +1,6 @@
 package main
 
-import "github.com/tu/tu-agent/internal/memory"
+import "github.com/carlosneir4/tu-agent/internal/memory"
 
 // nodeChecker is the slice of the graph store that staleNodeRefs needs. Defined
 // here (the consumer) so the memory subsystem keeps no graph dependency and the

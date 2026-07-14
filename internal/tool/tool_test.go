@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/tool"
+	"github.com/carlosneir4/tu-agent/internal/tool"
 )
 
 type fakeToolA struct{}

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/query"
-	"github.com/tu/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/query"
+	"github.com/carlosneir4/tu-agent/internal/provider"
 )
 
 func TestBuildScaffold(t *testing.T) {

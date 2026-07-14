@@ -302,6 +302,23 @@ func TestJudgePromptKeepsNoReReviewBoundary(t *testing.T) {
 	}
 }
 
+// @s9 — JudgePrompt makes a project-rule violation grounds to revise, citing
+// the rule that was violated.
+func TestJudgePromptEnforcesProjectRules(t *testing.T) {
+	// Anchor on substrings unique to the F3 clause (all absent in the pre-F3
+	// JudgePrompt), so the pin fails if that clause is removed — not on generic
+	// words like "revise"/"cite" that the overlay already carried.
+	if !strings.Contains(strings.ToLower(JudgePrompt), "project rule") {
+		t.Error(`JudgePrompt must mention "project rule" (case-insensitive)`)
+	}
+	if !strings.Contains(JudgePrompt, "grounds to") {
+		t.Error("JudgePrompt must name a project-rule violation as grounds to revise")
+	}
+	if !strings.Contains(JudgePrompt, "cite the exact rule") {
+		t.Error("JudgePrompt must instruct the judge to cite the exact rule violated")
+	}
+}
+
 func TestOverlaysUseTokenNotLiteral(t *testing.T) {
 	overlays := map[string]string{
 		"analyst":   AnalystPrompt,

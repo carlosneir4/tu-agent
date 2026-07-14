@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
 )
 
 // TestGraphProtocolMentionsAllTools guards against drift between the injected

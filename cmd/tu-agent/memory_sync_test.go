@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -9,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func TestMemoryExportImportCLI(t *testing.T) {
@@ -108,6 +110,9 @@ func TestMemoryExportQuiet(t *testing.T) {
 
 func TestMemoryExportCmdRun(t *testing.T) {
 	dir := t.TempDir()
+	runGitIn(t, dir, "init")
+	runGitIn(t, dir, "config", "user.email", "tester@example.com")
+	runGitIn(t, dir, "config", "user.name", "Tester")
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	if err := os.Chdir(dir); err != nil {
@@ -152,6 +157,9 @@ func TestMemoryExportCmdRun(t *testing.T) {
 // is unchanged.
 func TestMemoryExportStderrSummary(t *testing.T) {
 	dir := t.TempDir()
+	runGitIn(t, dir, "init")
+	runGitIn(t, dir, "config", "user.email", "tester@example.com")
+	runGitIn(t, dir, "config", "user.name", "Tester")
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	if err := os.Chdir(dir); err != nil {
@@ -379,6 +387,13 @@ func TestMemoryPending(t *testing.T) {
 // lists every working-tree note rather than erroring.
 func TestMemoryPendingNoGit(t *testing.T) {
 	dir := t.TempDir()
+	// A git repo with a configured identity but nothing committed: this still
+	// exercises the "nothing committed yet" path (headChunkRecords hits an
+	// unborn HEAD), while giving gitAuthor() a deterministic value regardless
+	// of the test machine's global git config.
+	runGitIn(t, dir, "init")
+	runGitIn(t, dir, "config", "user.email", "tester@example.com")
+	runGitIn(t, dir, "config", "user.name", "Tester")
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	if err := os.Chdir(dir); err != nil {
@@ -412,6 +427,209 @@ func TestMemoryPendingNoGit(t *testing.T) {
 	}
 	if !strings.Contains(got, "decision/x") {
 		t.Fatalf("want the note listed, got %q", got)
+	}
+}
+
+// TestMemoryPendingCorruptCommittedChunk verifies that a CORRUPT chunk file
+// already committed at git HEAD (gzip decodes fine, but the JSON payload is
+// garbage) surfaces as a real error from runMemoryPending — NOT silently
+// swallowed as "not committed yet". A committed chunk that fails to parse is
+// a team-wide problem the user must see.
+func TestMemoryPendingCorruptCommittedChunk(t *testing.T) {
+	dir := t.TempDir()
+	runGitIn(t, dir, "init")
+	runGitIn(t, dir, "config", "user.email", "tester@example.com")
+	runGitIn(t, dir, "config", "user.name", "Tester")
+
+	author := "tester@example.com"
+	chunksDir := memoryChunksDir(dir)
+	if err := os.MkdirAll(chunksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chunkPath := memory.ChunkPath(chunksDir, author)
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write([]byte("not valid json {")); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(chunkPath, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runGitIn(t, dir, "add", ".tu-agent/memory/chunks")
+	runGitIn(t, dir, "commit", "-m", "chunk: corrupt")
+
+	var out bytes.Buffer
+	err := runMemoryPending(&out, dir, author)
+	if err == nil {
+		t.Fatalf("want a non-nil error for a corrupt committed chunk, got nil (output: %q)", out.String())
+	}
+	if errors.Is(err, errChunkAbsentAtHead) {
+		t.Fatalf("want a real parse error, got errChunkAbsentAtHead: %v", err)
+	}
+}
+
+// TestMemoryPendingRunHelperNotCommittedYet is the companion "green" case: a
+// fresh git repo with nothing committed at the chunk path must report "not
+// committed yet" and return nil, not error.
+func TestMemoryPendingRunHelperNotCommittedYet(t *testing.T) {
+	dir := t.TempDir()
+	runGitIn(t, dir, "init")
+	runGitIn(t, dir, "config", "user.email", "tester@example.com")
+	runGitIn(t, dir, "config", "user.name", "Tester")
+
+	author := "tester@example.com"
+	s, err := memory.Open(memoryDBPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Upsert("decision/x", "body x", memory.UpsertOpts{Type: "decision", Author: author}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	recs, err := memory.ReadAllChunks(memoryChunksDir(dir))
+	_ = recs
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Export via the store directly, mirroring memoryExportCmd, to populate the
+	// working-tree chunk without requiring a commit.
+	s2, err := memory.Open(memoryDBPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := s2.ExportRecords(author)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s2.Close()
+	if _, _, err := memory.WriteChunk(memoryChunksDir(dir), author, exported); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := runMemoryPending(&out, dir, author); err != nil {
+		t.Fatalf("runMemoryPending: %v", err)
+	}
+	if !strings.Contains(out.String(), "not committed yet") {
+		t.Fatalf("want 'not committed yet' message, got %q", out.String())
+	}
+}
+
+// TestMemoryExportExcludesSecretNotes verifies that a note whose content
+// appears to embed a live secret is never written to the shared chunk file —
+// team chunks are shared via git, so a leaked secret must never land there —
+// while an ordinary clean note is still exported, and a warning is printed to
+// stderr naming the excluded note.
+func TestMemoryExportExcludesSecretNotes(t *testing.T) {
+	dir := t.TempDir()
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	runGitIn(t, dir, "init")
+	runGitIn(t, dir, "config", "user.email", "tester@example.com")
+	runGitIn(t, dir, "config", "user.name", "Tester")
+
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := memory.Open(memoryDBPath("."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Upsert("decision/clean", "an ordinary decision note", memory.UpsertOpts{Type: "decision"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Upsert("gotcha/leaked", "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", memory.UpsertOpts{Type: "gotcha"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+
+	var out, errOut bytes.Buffer
+	memoryExportCmd.SetOut(&out)
+	memoryExportCmd.SetErr(&errOut)
+	if err := memoryExportCmd.RunE(memoryExportCmd, nil); err != nil {
+		t.Fatalf("export run: %v", err)
+	}
+
+	author := "tester-example-com"
+	chunkPath := memory.ChunkPath(memoryChunksDir("."), author)
+	recs, err := memory.ReadChunkFile(chunkPath)
+	if err != nil {
+		t.Fatalf("read written chunk: %v", err)
+	}
+	foundClean, foundSecret := false, false
+	for _, r := range recs {
+		switch r.TopicKey {
+		case "decision/clean":
+			foundClean = true
+		case "gotcha/leaked":
+			foundSecret = true
+		}
+	}
+	if !foundClean {
+		t.Errorf("want clean note present in exported chunk, got %+v", recs)
+	}
+	if foundSecret {
+		t.Errorf("want secret note EXCLUDED from exported chunk, got %+v", recs)
+	}
+	if !strings.Contains(errOut.String(), "excluded") {
+		t.Errorf("want a secret-exclusion warning on stderr, got %q", errOut.String())
+	}
+}
+
+// TestMemoryPendingSurfacesRemovedNotes verifies that a note present in the
+// git-HEAD-committed chunk but absent from the current WORKING chunk (e.g.
+// because the secret filter dropped it on the last export) is surfaced by
+// `memory pending` under a removal section — not silently invisible.
+// diffChunkRecords alone only iterates cur (the working chunk), so a note
+// that dropped OUT of the working chunk never appears; this is the red-first
+// regression case for that gap.
+func TestMemoryPendingSurfacesRemovedNotes(t *testing.T) {
+	dir := t.TempDir()
+	runGitIn(t, dir, "init")
+	runGitIn(t, dir, "config", "user.email", "tester@example.com")
+	runGitIn(t, dir, "config", "user.name", "Tester")
+
+	author := "tester@example.com"
+	chunksDir := memoryChunksDir(dir)
+
+	noteA := memory.ChunkRecord{
+		SyncID: "sync-a", TopicKey: "decision/a", Title: "decision/a",
+		Content: "body a", Type: "decision", Author: author, Revision: 1,
+	}
+	noteB := memory.ChunkRecord{
+		SyncID: "sync-b", TopicKey: "gotcha/leaked", Title: "gotcha/leaked",
+		Content: "body b", Type: "gotcha", Author: author, Revision: 1,
+	}
+
+	// Commit a chunk with BOTH notes at HEAD.
+	if _, _, err := memory.WriteChunk(chunksDir, author, []memory.ChunkRecord{noteA, noteB}); err != nil {
+		t.Fatal(err)
+	}
+	runGitIn(t, dir, "add", ".tu-agent/memory/chunks")
+	runGitIn(t, dir, "commit", "-m", "chunk: both notes")
+
+	// Overwrite the WORKING chunk with only note A — note B silently dropped
+	// (e.g. by the secret filter on a subsequent export).
+	if _, _, err := memory.WriteChunk(chunksDir, author, []memory.ChunkRecord{noteA}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := runMemoryPending(&out, dir, author); err != nil {
+		t.Fatalf("runMemoryPending: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "gotcha/leaked") {
+		t.Fatalf("want removed note gotcha/leaked surfaced under a removal section, got %q", got)
+	}
+	if !strings.Contains(strings.ToUpper(got), "REMOVE") {
+		t.Fatalf("want a clearly-labeled removal section, got %q", got)
 	}
 }
 

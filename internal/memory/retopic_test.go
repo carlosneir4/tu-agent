@@ -3,7 +3,7 @@ package memory_test
 import (
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // @s1: Retopic renames the topic_key in place, preserving id/created_at/content

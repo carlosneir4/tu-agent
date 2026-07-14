@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
-	"github.com/tu/tu-agent/internal/tool"
+	"github.com/carlosneir4/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/tool"
 )
 
 func newTestStore(t *testing.T) *memory.Store {

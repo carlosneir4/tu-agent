@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/graph/query"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/graph/query"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // captureStdout redirects os.Stdout for the duration of fn and returns what was

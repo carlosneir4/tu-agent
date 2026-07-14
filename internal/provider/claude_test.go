@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/provider"
 )
 
 // anthropicTextResp builds a minimal Anthropic Messages API text response.

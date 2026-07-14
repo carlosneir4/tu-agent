@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func TestHandleCrystallizeSave_StoresAndMaterializes(t *testing.T) {
@@ -104,13 +104,8 @@ func TestHandleCrystallizeSave_MinParity(t *testing.T) {
 }
 
 func TestCrystallizeSaveInMCPToolNames(t *testing.T) {
-	found := false
-	for _, n := range mcpToolNames {
-		if n == "crystallize_save" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("mcpToolNames missing crystallize_save")
+	t.Chdir(t.TempDir())
+	if !servedToolNames(t)["crystallize_save"] {
+		t.Error("newMCPServer does not serve crystallize_save")
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func ob(topic string, rev int) memory.Observation {
@@ -52,17 +52,49 @@ func TestMaterializeDecision(t *testing.T) {
 	if !MaterializeDecision(nil) {
 		t.Error("absent file -> write")
 	}
-	if !MaterializeDecision([]byte("x <!-- tu-agent:crystallize ... --> y")) {
-		t.Error("marked file -> overwrite allowed")
+	if !MaterializeDecision([]byte("  \n\t")) {
+		t.Error("whitespace-only file -> write")
+	}
+	genuine := "x " + ProvenanceLine("checkout", []memory.Observation{ob("testing/x", 1)}) + " y"
+	if !MaterializeDecision([]byte(genuine)) {
+		t.Error("file with a genuine provenance line -> overwrite allowed")
 	}
 	if MaterializeDecision([]byte("hand-written skill, no marker")) {
 		t.Error("unmarked file -> do NOT clobber")
 	}
 }
 
+// TestMaterializeDecision_RejectsSubstringMentionWithoutProvenance is the
+// RED case for the fix: a hand-written skill that merely mentions the marker
+// string in prose (e.g. documenting the crystallize format) has no valid
+// provenance line and must NOT be classified as crystallize-managed —
+// otherwise it could be silently overwritten.
+func TestMaterializeDecision_RejectsSubstringMentionWithoutProvenance(t *testing.T) {
+	prose := "This skill documents our conventions. Note: generated skills use the " +
+		Marker + " marker in a provenance comment, but this file is hand-written."
+	if MaterializeDecision([]byte(prose)) {
+		t.Error("prose merely mentioning the marker (no valid provenance line) must NOT be treated as crystallize-managed")
+	}
+}
+
 func TestParseSourceHash_IgnoresForeignMarker(t *testing.T) {
 	if got := ParseSourceHash("<!-- other-tool source-hash=abc123 -->"); got != "" {
 		t.Errorf("source-hash without the crystallize Marker must parse to empty, got %q", got)
+	}
+}
+
+// TestProvenanceCommentRe_OwnsFullComment documents that crystallize owns the
+// canonical matcher for the whole provenance comment (moved here from
+// reconcile): it matches a genuine ProvenanceLine output in full and rejects an
+// unrelated HTML comment that lacks the crystallize Marker.
+func TestProvenanceCommentRe_OwnsFullComment(t *testing.T) {
+	members := []memory.Observation{ob("testing/x", 1)}
+	line := ProvenanceLine("checkout", members)
+	if got := ProvenanceCommentRe.FindString(line); got != line {
+		t.Errorf("ProvenanceCommentRe must match the full provenance comment: got %q want %q", got, line)
+	}
+	if ProvenanceCommentRe.MatchString("<!-- other-tool label=checkout -->") {
+		t.Error("ProvenanceCommentRe must NOT match an HTML comment lacking the crystallize Marker")
 	}
 }
 

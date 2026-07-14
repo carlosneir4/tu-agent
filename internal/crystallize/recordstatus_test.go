@@ -17,7 +17,7 @@ package crystallize
 import (
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // skillRec builds a skill record: Type "skill", topic skill/<name>, and content

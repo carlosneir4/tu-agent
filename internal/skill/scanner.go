@@ -1,7 +1,6 @@
 package skill
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"log/slog"
@@ -9,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/carlosneir4/tu-agent/internal/frontmatter"
 	"gopkg.in/yaml.v3"
 )
 
@@ -65,36 +65,31 @@ type frontmatterYAML struct {
 	Triggers    []string `yaml:"triggers"`
 }
 
-// parseFrontmatter reads YAML frontmatter between the first pair of --- delimiters.
-// Returns a zero Entry (Name == "") if no frontmatter is found or if the closing delimiter is missing.
+// parseFrontmatter reads YAML frontmatter from the leading --- delimited
+// block of a SKILL.md file. It uses frontmatter.SplitLoose (not the strict
+// Split) because crystallized/materialized skills are written with a
+// provenance preamble line before the opening "---" (see
+// cmd/tu-agent/memory.go saveCrystallizedSkill and `memory materialize`):
+//
+//	<!-- tu-agent:crystallize source-hash=... label=... -->
+//	---
+//	name: ...
+//	---
+//
+// Returns a zero Entry (Name == "") if no "---" line is found at all, if the
+// closing delimiter is missing, or if the frontmatter block is empty.
 func parseFrontmatter(path string, r io.Reader) (Entry, error) {
-	scanner := bufio.NewScanner(r)
-	var inFrontmatter, closed bool
-	var lines []string
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !inFrontmatter {
-			if strings.TrimSpace(line) == "---" {
-				inFrontmatter = true
-			}
-			continue
-		}
-		if strings.TrimSpace(line) == "---" {
-			closed = true
-			break
-		}
-		lines = append(lines, line)
-	}
-	if err := scanner.Err(); err != nil {
+	raw, err := io.ReadAll(r)
+	if err != nil {
 		return Entry{}, fmt.Errorf("skill.parseFrontmatter: scanning %s: %w", path, err)
 	}
-	if !inFrontmatter || !closed || len(lines) == 0 {
+	fmBlock, _, ok := frontmatter.SplitLoose(string(raw))
+	if !ok || strings.TrimSpace(fmBlock) == "" {
 		return Entry{}, nil
 	}
 
 	var fm frontmatterYAML
-	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")), &fm); err != nil {
+	if err := yaml.Unmarshal([]byte(fmBlock), &fm); err != nil {
 		return Entry{}, fmt.Errorf("skill.parseFrontmatter: %s: %w", path, err)
 	}
 	return Entry{

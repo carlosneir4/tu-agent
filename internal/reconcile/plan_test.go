@@ -50,8 +50,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // mem builds a bare observation carrying only a topic key — enough for

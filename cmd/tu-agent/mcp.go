@@ -6,17 +6,104 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/graph/extract"
-	"github.com/tu/tu-agent/internal/graph/query"
-	"github.com/tu/tu-agent/internal/memory"
-	"github.com/tu/tu-agent/internal/reconcile"
+	"github.com/carlosneir4/tu-agent/internal/advise"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/graph/extract"
+	"github.com/carlosneir4/tu-agent/internal/graph/query"
+	"github.com/carlosneir4/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/reconcile"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
 )
+
+// mcpTelemetryLogger, when non-nil, receives one Entry per MCP tool call.
+// It defaults to nil so unit tests that build a server via newMCPServer()
+// never write telemetry; only mcpCmd's RunE wires a real logger.
+var mcpTelemetryLogger *telemetry.Logger
+
+// selfReportingMCPTools lists tools whose handlers emit their own, richer
+// telemetry row (e.g. with ZeroResult), so mcpTelemetryMiddleware must not
+// double-emit a generic row for them.
+var selfReportingMCPTools = map[string]bool{
+	"mem_search": true,
+}
+
+// mcpToolName extracts the tool name from a tools/call request, or "" if the
+// request is not a tool call (or the concrete params type is unexpected).
+func mcpToolName(req mcp.Request) string {
+	if p, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok {
+		return p.Name
+	}
+	return ""
+}
+
+// resultByteLen best-effort measures the serialized size of an MCP result,
+// preferring the tool's Content payload when res is a CallToolResult. It
+// tolerates a typed-nil *mcp.CallToolResult (which the SDK returns alongside a
+// jsonrpc error for unknown tools or handler errors): the interface is non-nil
+// but the pointer inside is nil, so ctr != nil is checked before dereferencing.
+func resultByteLen(res mcp.Result) int {
+	if ctr, ok := res.(*mcp.CallToolResult); ok && ctr != nil {
+		data, err := json.Marshal(ctr.Content)
+		if err != nil {
+			return 0
+		}
+		return len(data)
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		return 0
+	}
+	return len(data)
+}
+
+// recordMCPCall best-effort logs one telemetry row for an MCP tool call.
+// It is a no-op when mcpTelemetryLogger is nil.
+func recordMCPCall(name string, dur time.Duration, res mcp.Result, err error) {
+	if mcpTelemetryLogger == nil {
+		return
+	}
+	ok := err == nil
+	// A typed-nil *mcp.CallToolResult accompanies a jsonrpc error (unknown tool,
+	// handler error); the type assertion succeeds with ctr==nil, so guard the
+	// dereference. err != nil already forces ok=false in that case.
+	if ctr, isCTR := res.(*mcp.CallToolResult); isCTR && ctr != nil && ctr.IsError {
+		ok = false
+	}
+	_ = mcpTelemetryLogger.Log(telemetry.Entry{
+		Timestamp:   time.Now(),
+		Event:       telemetry.EventMCPCall,
+		Tool:        name,
+		DurationMS:  dur.Milliseconds(),
+		OK:          ok,
+		ResultBytes: resultByteLen(res),
+	})
+}
+
+// mcpTelemetryMiddleware records one telemetry row per MCP tool call, unless
+// the tool is self-reporting (see selfReportingMCPTools) or mcpTelemetryLogger
+// is nil.
+func mcpTelemetryMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		if method != "tools/call" {
+			return next(ctx, method, req)
+		}
+		name := mcpToolName(req)
+		if selfReportingMCPTools[name] {
+			return next(ctx, method, req)
+		}
+		start := time.Now()
+		res, err := next(ctx, method, req)
+		recordMCPCall(name, time.Since(start), res, err)
+		return res, err
+	}
+}
 
 // impactInput holds the parameters for the get_impact tool.
 type impactInput struct {
@@ -122,11 +209,12 @@ type memDeleteMCPInput struct {
 
 // memReconcileMCPInput holds the parameters for the mem_reconcile tool.
 type memReconcileMCPInput struct {
-	Min       int    `json:"min,omitempty"        jsonschema:"minimum notes for a cluster to be considered live (default 5)"`
-	Apply     bool   `json:"apply,omitempty"      jsonschema:"apply the reconcile (rebind/rename); absent = dry-run"`
-	Topic     string `json:"topic,omitempty"      jsonschema:"selector: scope the apply to ONE orphan by topic key (e.g. skill/acme-orphan)"`
-	ToCluster string `json:"to_cluster,omitempty" jsonschema:"force the re-point target cluster label (requires topic)"`
-	Name      string `json:"name,omitempty"       jsonschema:"rename skill/<old> -> skill/<new> (record + folder; requires topic)"`
+	Min          int    `json:"min,omitempty"        jsonschema:"minimum notes for a cluster to be considered live (default 5)"`
+	Apply        bool   `json:"apply,omitempty"      jsonschema:"apply the reconcile (rebind/rename); absent = dry-run"`
+	Topic        string `json:"topic,omitempty"      jsonschema:"selector: scope the apply to ONE orphan by topic key (e.g. skill/acme-orphan)"`
+	ToCluster    string `json:"to_cluster,omitempty" jsonschema:"force the re-point target cluster label (requires topic)"`
+	Name         string `json:"name,omitempty"       jsonschema:"rename skill/<old> -> skill/<new> (record + folder; requires topic)"`
+	PruneFolders bool   `json:"prune_folders,omitempty" jsonschema:"actually delete orphaned crystallize-marked skill folders (only meaningful with apply=true); absent/false = dry-run, candidates are reported as would-remove but left on disk"`
 }
 
 // orDefault returns v, or fallback when v is empty.
@@ -186,48 +274,66 @@ func handleMemSave(_ context.Context, _ *mcp.CallToolRequest, in memSaveMCPInput
 	if in.Topic == "" || in.Content == "" {
 		return nil, queryOutput{}, fmt.Errorf("mem_save: topic and content are required")
 	}
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_save: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		obs, err := s.Upsert(in.Topic, in.Content, memory.UpsertOpts{Scope: in.Scope, Type: in.Type, Source: "mcp", Author: gitAuthor()})
+		if err != nil {
+			return err
 		}
-	}()
-	obs, err := s.Upsert(in.Topic, in.Content, memory.UpsertOpts{Scope: in.Scope, Type: in.Type, Source: "mcp", Author: gitAuthor()})
-	if err != nil {
-		return nil, queryOutput{}, err
+		out = queryOutput{Result: fmt.Sprintf("saved %s rev:%d", obs.TopicKey, obs.Revision)}
+		return nil
+	})
+	return nil, out, err
+}
+
+// recordMemSearch best-effort emits mem_search's own telemetry row. mem_search
+// is self-reporting (the middleware skips it), so both its success and failure
+// paths must log here or a failure would leave no row at all. No-op when the
+// logger is nil.
+func recordMemSearch(dur time.Duration, ok bool, resultBytes int, zeroResult bool) {
+	if mcpTelemetryLogger == nil {
+		return
 	}
-	return nil, queryOutput{Result: fmt.Sprintf("saved %s rev:%d", obs.TopicKey, obs.Revision)}, nil
+	_ = mcpTelemetryLogger.Log(telemetry.Entry{
+		Timestamp:   time.Now(),
+		Event:       telemetry.EventMCPCall,
+		Tool:        "mem_search",
+		DurationMS:  dur.Milliseconds(),
+		OK:          ok,
+		ResultBytes: resultBytes,
+		ZeroResult:  zeroResult,
+	})
 }
 
 func handleMemSearch(_ context.Context, _ *mcp.CallToolRequest, in memSearchMCPInput) (*mcp.CallToolResult, queryOutput, error) {
+	start := time.Now()
 	if in.Query == "" {
+		recordMemSearch(time.Since(start), false, 0, false)
 		return nil, queryOutput{}, fmt.Errorf("mem_search: query is required")
 	}
 	limit := in.Limit
 	if limit == 0 {
 		limit = 20
 	}
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_search: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		obs, total, err := s.Search(in.Query, in.Type, limit)
+		if err != nil {
+			return err
 		}
-	}()
-	obs, total, err := s.Search(in.Query, in.Type, limit)
+		result := formatObservations(obs, recallStale(s, obs))
+		if total > len(obs) {
+			result += fmt.Sprintf("\n\nshowing %d of %d — refine the query or raise limit", len(obs), total)
+		}
+		recordMemSearch(time.Since(start), true, len(result), total == 0)
+		out = queryOutput{Result: result}
+		return nil
+	})
 	if err != nil {
+		recordMemSearch(time.Since(start), false, 0, false)
 		return nil, queryOutput{}, err
 	}
-	result := formatObservations(obs, recallStale(s, obs))
-	if total > len(obs) {
-		result += fmt.Sprintf("\n\nshowing %d of %d — refine the query or raise limit", len(obs), total)
-	}
-	return nil, queryOutput{Result: result}, nil
+	return nil, out, nil
 }
 
 func handleMemRecent(_ context.Context, _ *mcp.CallToolRequest, in memRecentMCPInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -235,20 +341,16 @@ func handleMemRecent(_ context.Context, _ *mcp.CallToolRequest, in memRecentMCPI
 	if n <= 0 {
 		n = 5
 	}
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_recent: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		obs, err := s.Recent(n)
+		if err != nil {
+			return err
 		}
-	}()
-	obs, err := s.Recent(n)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	return nil, queryOutput{Result: formatObservations(obs, recallStale(s, obs))}, nil
+		out = queryOutput{Result: formatObservations(obs, recallStale(s, obs))}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleMemClusters(_ context.Context, _ *mcp.CallToolRequest, in memClustersMCPInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -256,41 +358,62 @@ func handleMemClusters(_ context.Context, _ *mcp.CallToolRequest, in memClusters
 	if min <= 0 {
 		min = 5
 	}
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_clusters: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		obs, err := s.List()
+		if err != nil {
+			return err
 		}
-	}()
-	obs, err := s.List()
+		out = queryOutput{Result: crystallize.Format(crystallize.Detect(obs, min))}
+		return nil
+	})
+	return nil, out, err
+}
+
+// adviseMCPInput is the (empty) parameter set for the advise tool.
+type adviseMCPInput struct{}
+
+// handleAdvise is the read-only, on-demand diagnostic counterpart to `tu-agent
+// advise` (plain mode): same Inputs (telemetry insights + crystallize
+// needs), same Evaluate rules, dismissed rules dropped. Unlike advise
+// --nudge (the deduped SessionStart hook channel), it never persists dedup
+// state — every call re-evaluates from scratch.
+func handleAdvise(_ context.Context, _ *mcp.CallToolRequest, _ adviseMCPInput) (*mcp.CallToolResult, queryOutput, error) {
+	root := repoRoot()
+	in, err := adviseInputs(root)
 	if err != nil {
 		return nil, queryOutput{}, err
 	}
-	return nil, queryOutput{Result: crystallize.Format(crystallize.Detect(obs, min))}, nil
+	st, err := loadAdviseState(root)
+	if err != nil {
+		return nil, queryOutput{}, err
+	}
+	var sb strings.Builder
+	for _, s := range advise.Evaluate(in) {
+		if st.Rules[s.RuleID].Dismissed {
+			continue
+		}
+		sb.WriteString(s.Message)
+		sb.WriteString("\n")
+	}
+	return nil, queryOutput{Result: sb.String()}, nil
 }
 
 func handleMemConflicts(_ context.Context, _ *mcp.CallToolRequest, _ memConflictsMCPInput) (*mcp.CallToolResult, queryOutput, error) {
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_conflicts: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		rels, err := s.RelationsByType("conflicts_with")
+		if err != nil {
+			return err
 		}
-	}()
-	rels, err := s.RelationsByType("conflicts_with")
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	byID, err := conflictTopicMap(s, rels)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	return nil, queryOutput{Result: formatConflicts(rels, byID)}, nil
+		byID, err := conflictTopicMap(s, rels)
+		if err != nil {
+			return err
+		}
+		out = queryOutput{Result: formatConflicts(rels, byID)}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleCrystallizeSave(_ context.Context, _ *mcp.CallToolRequest, in crystallizeSaveMCPInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -305,29 +428,36 @@ func handleCrystallizeSave(_ context.Context, _ *mcp.CallToolRequest, in crystal
 }
 
 func handleMemExport(_ context.Context, _ *mcp.CallToolRequest, _ memExportMCPInput) (*mcp.CallToolResult, queryOutput, error) {
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_export: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		author := gitAuthor()
+		recs, err := s.ExportRecords(author)
+		if err != nil {
+			return err
 		}
-	}()
-	author := gitAuthor()
-	recs, err := s.ExportRecords(author)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	path, written, err := memory.WriteChunk(memoryChunksDir(repoRoot()), author, recs)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	status := "unchanged"
-	if written {
-		status = "wrote"
-	}
-	return nil, queryOutput{Result: fmt.Sprintf("%s %s (%d observations)", status, path, len(recs))}, nil
+		recs, excluded := filterSecretRecords(recs)
+		if len(recs) > 0 {
+			author, err = requireAuthor(author)
+			if err != nil {
+				return err
+			}
+		}
+		path, written, err := memory.WriteChunk(memoryChunksDir(repoRoot()), author, recs)
+		if err != nil {
+			return err
+		}
+		status := "unchanged"
+		if written {
+			status = "wrote"
+		}
+		result := fmt.Sprintf("%s %s (%d observations)", status, path, len(recs))
+		if len(excluded) > 0 {
+			result += fmt.Sprintf(" (excluded %d with apparent secrets)", len(excluded))
+		}
+		out = queryOutput{Result: result}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleMemImport(_ context.Context, _ *mcp.CallToolRequest, _ memImportMCPInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -335,135 +465,111 @@ func handleMemImport(_ context.Context, _ *mcp.CallToolRequest, _ memImportMCPIn
 	if err != nil {
 		return nil, queryOutput{}, err
 	}
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_import: store close failed", "err", cerr)
+	var out queryOutput
+	err = withMemStore(repoRoot(), func(s *memory.Store) error {
+		res, err := s.ImportRecords(recs)
+		if err != nil {
+			return err
 		}
-	}()
-	res, err := s.ImportRecords(recs)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	return nil, queryOutput{Result: fmt.Sprintf("imported: %d new, %d updated, %d unchanged",
-		res.Inserted, res.Updated, res.Skipped)}, nil
+		out = queryOutput{Result: fmt.Sprintf("imported: %d new, %d updated, %d unchanged",
+			res.Inserted, res.Updated, res.Skipped)}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleMemRelate(_ context.Context, _ *mcp.CallToolRequest, in memRelateInput) (*mcp.CallToolResult, queryOutput, error) {
 	if in.From == "" || in.To == "" {
 		return nil, queryOutput{}, fmt.Errorf("mem_relate: from and to are required")
 	}
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_relate: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		rel, err := s.Relate(in.From, in.To, in.Type)
+		if err != nil {
+			return err
 		}
-	}()
-	rel, err := s.Relate(in.From, in.To, in.Type)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	return nil, queryOutput{Result: fmt.Sprintf("linked %s --%s--> %s", rel.FromID, rel.Type, rel.ToID)}, nil
+		out = queryOutput{Result: fmt.Sprintf("linked %s --%s--> %s", rel.FromID, rel.Type, rel.ToID)}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleMemRelated(_ context.Context, _ *mcp.CallToolRequest, in memRelatedInput) (*mcp.CallToolResult, queryOutput, error) {
 	if in.NodeID == "" {
 		return nil, queryOutput{}, fmt.Errorf("mem_related: node_id is required")
 	}
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_related: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		rels, err := s.RelationsTo([]string{in.NodeID})
+		if err != nil {
+			return err
 		}
-	}()
-	rels, err := s.RelationsTo([]string{in.NodeID})
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	ids := make([]string, 0, len(rels))
-	for _, r := range rels {
-		ids = append(ids, r.FromID)
-	}
-	obs, err := s.ObservationsByID(ids)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	return nil, queryOutput{Result: formatObservations(obs, recallStale(s, obs))}, nil
+		ids := make([]string, 0, len(rels))
+		for _, r := range rels {
+			ids = append(ids, r.FromID)
+		}
+		obs, err := s.ObservationsByID(ids)
+		if err != nil {
+			return err
+		}
+		out = queryOutput{Result: formatObservations(obs, recallStale(s, obs))}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleMemSessionStart(_ context.Context, _ *mcp.CallToolRequest, in memSessionStartInput) (*mcp.CallToolResult, queryOutput, error) {
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_session_start: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		sess, prev, err := s.SessionStart(in.Project)
+		if err != nil {
+			return err
 		}
-	}()
-	sess, prev, err := s.SessionStart(in.Project)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	res := fmt.Sprintf("session started: %s", sess.ID)
-	if prev != "" {
-		res += "\n\n## Last session\n" + prev
-	}
-	return nil, queryOutput{Result: res}, nil
+		res := fmt.Sprintf("session started: %s", sess.ID)
+		if prev != "" {
+			res += "\n\n## Last session\n" + prev
+		}
+		out = queryOutput{Result: res}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleMemSessionEnd(_ context.Context, _ *mcp.CallToolRequest, in memSessionEndInput) (*mcp.CallToolResult, queryOutput, error) {
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_session_end: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		sess, err := s.SessionEnd(in.Project, in.Summary)
+		if err != nil {
+			return err
 		}
-	}()
-	sess, err := s.SessionEnd(in.Project, in.Summary)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	return nil, queryOutput{Result: "session ended: " + sess.ID + "\nsummary: " + sess.Summary}, nil
+		out = queryOutput{Result: "session ended: " + sess.ID + "\nsummary: " + sess.Summary}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleMemSessionList(_ context.Context, _ *mcp.CallToolRequest, in memSessionListInput) (*mcp.CallToolResult, queryOutput, error) {
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_session_list: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		list, err := s.SessionList("", in.N)
+		if err != nil {
+			return err
 		}
-	}()
-	list, err := s.SessionList("", in.N)
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	var sb strings.Builder
-	if len(list) == 0 {
-		sb.WriteString("no sessions")
-	}
-	for _, ss := range list {
-		state := "active"
-		if !ss.EndedAt.IsZero() {
-			state = ss.EndedAt.Format("2006-01-02 15:04")
+		var sb strings.Builder
+		if len(list) == 0 {
+			sb.WriteString("no sessions")
 		}
-		fmt.Fprintf(&sb, "%s  %s  %s\n", ss.StartedAt.Format("2006-01-02 15:04"), state, ss.Summary)
-	}
-	return nil, queryOutput{Result: sb.String()}, nil
+		for _, ss := range list {
+			state := "active"
+			if !ss.EndedAt.IsZero() {
+				state = ss.EndedAt.Format("2006-01-02 15:04")
+			}
+			fmt.Fprintf(&sb, "%s  %s  %s\n", ss.StartedAt.Format("2006-01-02 15:04"), state, ss.Summary)
+		}
+		out = queryOutput{Result: sb.String()}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleMemRescope(_ context.Context, _ *mcp.CallToolRequest, in memRescopeMCPInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -471,27 +577,23 @@ func handleMemRescope(_ context.Context, _ *mcp.CallToolRequest, in memRescopeMC
 		return nil, queryOutput{}, fmt.Errorf("mem_rescope: topic and scope are required")
 	}
 	from := orDefault(in.FromScope, "project")
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_rescope: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		obs, changed, err := s.Rescope(in.Topic, from, in.Scope, "")
+		if err != nil {
+			return err
 		}
-	}()
-	obs, changed, err := s.Rescope(in.Topic, from, in.Scope, "")
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	switch {
-	case changed:
-		return nil, queryOutput{Result: fmt.Sprintf("rescoped %s: %s → %s", obs.TopicKey, from, in.Scope)}, nil
-	case obs.TopicKey != "":
-		return nil, queryOutput{Result: fmt.Sprintf("%s already in scope %s", in.Topic, in.Scope)}, nil
-	default:
-		return nil, queryOutput{Result: fmt.Sprintf("no observation found for %s in scope %s", in.Topic, from)}, nil
-	}
+		switch {
+		case changed:
+			out = queryOutput{Result: fmt.Sprintf("rescoped %s: %s → %s", obs.TopicKey, from, in.Scope)}
+		case obs.TopicKey != "":
+			out = queryOutput{Result: fmt.Sprintf("%s already in scope %s", in.Topic, in.Scope)}
+		default:
+			out = queryOutput{Result: fmt.Sprintf("no observation found for %s in scope %s", in.Topic, from)}
+		}
+		return nil
+	})
+	return nil, out, err
 }
 
 func handleMemDelete(_ context.Context, _ *mcp.CallToolRequest, in memDeleteMCPInput) (*mcp.CallToolResult, queryOutput, error) {
@@ -499,23 +601,20 @@ func handleMemDelete(_ context.Context, _ *mcp.CallToolRequest, in memDeleteMCPI
 		return nil, queryOutput{}, fmt.Errorf("mem_delete: topic is required")
 	}
 	scope := orDefault(in.Scope, "project")
-	s, err := memory.Open(memoryDBPath(repoRoot()))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_delete: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(repoRoot(), func(s *memory.Store) error {
+		ok, err := s.Delete(in.Topic, scope, "")
+		if err != nil {
+			return err
 		}
-	}()
-	ok, err := s.Delete(in.Topic, scope, "")
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	if ok {
-		return nil, queryOutput{Result: fmt.Sprintf("deleted %s", in.Topic)}, nil
-	}
-	return nil, queryOutput{Result: fmt.Sprintf("no observation found for %s in scope %s", in.Topic, scope)}, nil
+		if ok {
+			out = queryOutput{Result: fmt.Sprintf("deleted %s", in.Topic)}
+		} else {
+			out = queryOutput{Result: fmt.Sprintf("no observation found for %s in scope %s", in.Topic, scope)}
+		}
+		return nil
+	})
+	return nil, out, err
 }
 
 // handleMemReconcile reconciles orphaned skill records against the current
@@ -532,29 +631,26 @@ func handleMemReconcile(_ context.Context, _ *mcp.CallToolRequest, in memReconci
 		minSize = 5
 	}
 	root := repoRoot()
-	s, err := memory.Open(memoryDBPath(root))
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	defer func() {
-		if cerr := s.Close(); cerr != nil {
-			slog.Warn("mem_reconcile: store close failed", "err", cerr)
+	var out queryOutput
+	err := withMemStore(root, func(s *memory.Store) error {
+		skillsDir := generatedSkillsDir(root)
+		if !in.Apply {
+			text, err := renderReconcilePlan(s, skillsDir, minSize)
+			if err != nil {
+				return err
+			}
+			out = queryOutput{Result: text}
+			return nil
 		}
-	}()
-	skillsDir := generatedSkillsDir(root)
-	if !in.Apply {
-		text, err := renderReconcilePlan(s, skillsDir, minSize)
+		text, err := applyReconcile(s, skillsDir, minSize, in.Topic,
+			reconcile.ApplyOptions{Name: in.Name, ToCluster: in.ToCluster, PruneFolders: in.PruneFolders})
 		if err != nil {
-			return nil, queryOutput{}, err
+			return err
 		}
-		return nil, queryOutput{Result: text}, nil
-	}
-	text, err := applyReconcile(s, skillsDir, minSize, in.Topic,
-		reconcile.ApplyOptions{Name: in.Name, ToCluster: in.ToCluster})
-	if err != nil {
-		return nil, queryOutput{}, err
-	}
-	return nil, queryOutput{Result: text}, nil
+		out = queryOutput{Result: text}
+		return nil
+	})
+	return nil, out, err
 }
 
 // formatObservations renders observations as plain text for MCP output. When
@@ -676,6 +772,36 @@ func handleSetConceptDefinition(_ context.Context, _ *mcp.CallToolRequest, in se
 	return nil, queryOutput{Result: fmt.Sprintf("set definition for %q", in.Name)}, nil
 }
 
+// getArchitectureInput holds the (empty) parameters for the get_architecture tool.
+type getArchitectureInput struct{}
+
+func handleGetArchitecture(_ context.Context, _ *mcp.CallToolRequest, _ getArchitectureInput) (*mcp.CallToolResult, queryOutput, error) {
+	body, err := loadArchitecture()
+	if err != nil {
+		return nil, queryOutput{}, fmt.Errorf("get_architecture: %w", err)
+	}
+	if strings.TrimSpace(body) == "" {
+		return nil, queryOutput{Result: "No architecture overview yet — run /tu-agent:synthesize first."}, nil
+	}
+	return nil, queryOutput{Result: body}, nil
+}
+
+// setArchitectureInput holds the parameters for the set_architecture tool.
+type setArchitectureInput struct {
+	Content string `json:"content" jsonschema:"the architecture overview markdown to persist (frontmatter, if any, is stripped)"`
+}
+
+func handleSetArchitecture(_ context.Context, _ *mcp.CallToolRequest, in setArchitectureInput) (*mcp.CallToolResult, queryOutput, error) {
+	wrote, err := persistArchitecture(in.Content)
+	if err != nil {
+		return nil, queryOutput{}, fmt.Errorf("set_architecture: %w", err)
+	}
+	if !wrote {
+		return nil, queryOutput{}, fmt.Errorf("set_architecture: empty content after stripping frontmatter")
+	}
+	return nil, queryOutput{Result: "stored architecture overview"}, nil
+}
+
 // getTraitsInput holds the parameters for the get_traits tool.
 type getTraitsInput struct {
 	Symbol     string `json:"symbol"      jsonschema:"type or interface name (or node ID) to assemble the trait view for"`
@@ -792,187 +918,223 @@ func handleBridges(_ context.Context, _ *mcp.CallToolRequest, in bridgesInput) (
 	return nil, queryOutput{Result: out}, nil
 }
 
-// mcpToolNames lists every tool registered by newMCPServer.
-// Keep in sync when adding tools — TestMCPListFlag guards this set.
-var mcpToolNames = []string{
-	"get_impact", "get_context", "find_symbol",
-	"mem_save", "mem_search", "mem_recent",
-	"mem_rescope", "mem_delete", "mem_reconcile",
-	"mem_export", "mem_import",
-	"test_gaps", "test_scaffold", "test_mutation",
-	"get_concept", "set_concept_definition", "get_traits", "get_flow", "get_bridges", "get_cycles",
-	"mem_relate", "mem_related", "mem_clusters", "mem_conflicts", "crystallize_save",
-	"mem_session_start", "mem_session_end", "mem_session_list",
-}
-
-// printMCPTools writes one tool name per line to w.
+// printMCPTools writes one tool name per line to w, derived from the real
+// registry so the --list output can never drift from the tools actually served.
 func printMCPTools(w io.Writer) {
-	for _, name := range mcpToolNames {
+	_, names := buildMCPServer()
+	for _, name := range names {
 		fmt.Fprintln(w, name)
 	}
 }
 
+// addTool registers a tool on the server and records its name in names, so the
+// list of served tools is derived from the same call sites that register them.
+func addTool[In, Out any](srv *mcp.Server, names *[]string, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
+	*names = append(*names, t.Name)
+	mcp.AddTool(srv, t, h)
+}
+
 // newMCPServer creates and configures the MCP server with all graph and memory tools.
 func newMCPServer() *mcp.Server {
+	srv, _ := buildMCPServer()
+	return srv
+}
+
+// buildMCPServer builds the MCP server and returns it together with the names of
+// every tool actually registered on it, in registration order.
+func buildMCPServer() (*mcp.Server, []string) {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "tu-agent",
 		Version: version,
 	}, nil)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	srv.AddReceivingMiddleware(mcpTelemetryMiddleware)
+
+	var names []string
+
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "get_impact",
 		Description: "Return the blast-radius of a change: which symbols and files are affected if target is modified.",
 	}, handleImpact)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "get_context",
 		Description: "Return all context relevant to touching a target: blast radius, associated skills, conventions, and tests.",
 	}, handleContext)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "find_symbol",
 		Description: "Locate where a symbol is defined in the codebase.",
 	}, handleFind)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_save",
 		Description: "Save (upsert) an observation to project memory by topic key. Re-saving the same topic refines it and bumps its revision. Use scope 'personal' to keep a note local (not shared in the team chunk).",
 	}, handleMemSave)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_rescope",
 		Description: "Change an existing observation's scope in place (e.g. project→personal to pull a note out of the shared chunk). Recomputes its sync_id; preserves content and revision.",
 	}, handleMemRescope)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_delete",
 		Description: "Soft-delete an observation by topic (and optional scope). It drops out of search and the next chunk export. Local only — does not delete teammates' copies.",
 	}, handleMemDelete)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_reconcile",
-		Description: "Reconcile orphaned skill records — crystallized skills whose bound cluster label no longer matches any live cluster — against the current corpus. Defaults to a read-only dry-run plan; pass apply=true (optionally topic + to_cluster/name to scope one orphan) to rebind or rename.",
+		Description: "Reconcile orphaned skill records — crystallized skills whose bound cluster label no longer matches any live cluster — against the current corpus. Defaults to a read-only dry-run plan; pass apply=true (optionally topic + to_cluster/name to scope one orphan) to rebind or rename. Orphaned crystallize-marked skill folders are reported but never deleted unless prune_folders=true is also passed.",
 	}, handleMemReconcile)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_search",
 		Description: "Search project memory for observations matching a keyword query.",
 	}, handleMemSearch)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_recent",
 		Description: "Return the most recent N observations from project memory (default 5).",
 	}, handleMemRecent)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_clusters",
 		Description: "List dense clusters of related memory notes worth consolidating into a project skill. Deterministic — no LLM, no writes. Optional `min` (default 5) sets the cluster-size threshold.",
 	}, handleMemClusters)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_conflicts",
 		Description: "List recorded contradictions between notes (conflicts_with edges), each resolved to both notes' topic keys. Record new ones with mem_relate type conflicts_with; resolution (delete/rescope/supersede) is the human's.",
 	}, handleMemConflicts)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "crystallize_save",
 		Description: "Store a generated skill body as the canonical skill/<label> record and materialize it locally. The binary adds provenance; pass the SKILL.md body without a provenance marker. Pair with mem_clusters (pick a cluster) and Claude Code generation.",
 	}, handleCrystallizeSave)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_export",
 		Description: "Write your authored observations to a committed chunk file for the team to share via git.",
 	}, handleMemExport)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_import",
 		Description: "Merge teammates' committed memory chunk files into the local store.",
 	}, handleMemImport)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "test_gaps",
 		Description: "Rank untested public functions by risk (fan-in × blast radius from the knowledge graph). Deterministic — no LLM, no build step.",
 	}, handleTestGaps)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "test_scaffold",
 		Description: "Return the deterministic half of test generation for a function or class: prompt context (signature, body, call sites, callees, domain notes), test file path, scoped run command, and language conventions. Returns a JSON array of scaffolds (one per method for a class). No LLM call, no writes.",
 	}, handleTestScaffold)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "test_mutation",
 		Description: "Run mutation testing on a symbol's package (opt-in; requires an external engine such as go-mutesting, PIT, mutmut, or Stryker). Degrades to a skipped report when the tool is absent.",
 	}, handleTestMutation)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "get_concept",
 		Description: "Return the concept card (SKILL.md) for a named concept, or list all concepts with descriptions when name is empty.",
 	}, handleGetConcept)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "set_concept_definition",
 		Description: "Set a concept's one-line definition in the graph store (deterministic, no model call). Use to record a generative concept definition; pair with get_concept to read the card first.",
 	}, handleSetConceptDefinition)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
+		Name:        "get_architecture",
+		Description: "Return the synthesized architecture overview (purpose, domains, how they connect, blast radius) from the graph store. Empty until /tu-agent:synthesize has run.",
+	}, handleGetArchitecture)
+
+	addTool(srv, &names, &mcp.Tool{
+		Name:        "set_architecture",
+		Description: "Persist the architecture overview markdown to the graph store (deterministic write; frontmatter is stripped). Used by the architecture-synthesizer skill to store the narrative it generated.",
+	}, handleSetArchitecture)
+
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "get_traits",
 		Description: "Trait-centric view of a symbol: which interfaces a type implements and where the logic lives (as_type), plus who implements an interface and what the blast radius is (as_interface). JSON output.",
 	}, handleGetTraits)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "get_flow",
 		Description: "Trace the execution call tree from an entry symbol: depth-limited walk over calls edges with package-boundary annotations and interface dispatch candidates. JSON, identical to 'graph flow --json'.",
 	}, handleGetFlow)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "get_bridges",
 		Description: "List architectural chokepoints (high-betweenness bridge nodes) in the call graph.",
 	}, handleBridges)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "get_cycles",
 		Description: "List dependency cycles (strongly-connected components). Use to find tangled, co-coupled clusters to refactor.",
 	}, handleCycles)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_relate",
 		Description: "Link an observation to a graph node (or another observation) with a typed relation.",
 	}, handleMemRelate)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_related",
 		Description: "List observations linked to a graph node.",
 	}, handleMemRelated)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_session_start",
 		Description: "Start a work session; returns the previous session's summary.",
 	}, handleMemSessionStart)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_session_end",
 		Description: "End the active work session; composes a summary from observations if none given.",
 	}, handleMemSessionEnd)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &names, &mcp.Tool{
 		Name:        "mem_session_list",
 		Description: "List recent work sessions.",
 	}, handleMemSessionList)
 
-	return srv
+	addTool(srv, &names, &mcp.Tool{
+		Name:        "advise",
+		Description: "Deterministic, evidence-based suggestions from telemetry insights and crystallize state (e.g. clusters ready to crystallize, repeated secret-guard blocks). Read-only diagnostic — does not persist dedup state; pairs with the SessionStart `advise --nudge` hook, which does.",
+	}, handleAdvise)
+
+	return srv, names
 }
 
 var mcpListTools bool
 
+// maybeInitMCPTelemetry points mcpTelemetryLogger at the repo telemetry log,
+// but only at the "full" telemetry level — at "minimal" it is left at its
+// nil default so mcp_call rows are never recorded.
+func maybeInitMCPTelemetry() {
+	if telemetryLevel() != "full" {
+		return
+	}
+	if lg, err := telemetry.NewLogger(filepath.Join(repoRoot(), ".tu-agent", "telemetry.jsonl")); err == nil {
+		mcpTelemetryLogger = lg
+	}
+}
+
 var mcpCmd = &cobra.Command{
-	Use:   "mcp",
-	Short: "Run a stdio MCP server exposing graph query tools to Claude Code",
-	Args:  cobra.NoArgs,
+	GroupID: "diagnostics",
+	Use:     "mcp",
+	Short:   "Run a stdio MCP server exposing graph query tools to Claude Code",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if mcpListTools {
 			printMCPTools(cmd.OutOrStdout())
 			return nil
 		}
+		maybeInitMCPTelemetry()
 		refreshGraph()
 		srv := newMCPServer()
 		return srv.Run(cmd.Context(), &mcp.StdioTransport{})

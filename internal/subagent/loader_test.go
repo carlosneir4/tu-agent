@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/subagent"
+	"github.com/carlosneir4/tu-agent/internal/subagent"
 )
 
 func writeAgent(t *testing.T, dir, name, content string) {
@@ -179,6 +179,29 @@ func TestLoad_ProjectLocalAgentsGetReadOnlyTools(t *testing.T) {
 		if tool == "bash" || tool == "write_file" {
 			t.Errorf("project-local agent must not have tool %q", tool)
 		}
+	}
+}
+
+// TestLoad_UnterminatedFrontmatterSkipped is a regression test for a bug where
+// a file that opens frontmatter with "---" but never closes it silently
+// loaded a *Definition with Name set but an EMPTY SystemPrompt: the
+// line-scanner never flipped out of "in frontmatter" mode, so every
+// remaining line (the would-be system prompt) was swallowed into the
+// frontmatter buffer instead of the body buffer. The agent then loaded and
+// dispatched with no instructions at all. Unterminated frontmatter must be
+// treated as malformed — the same as having no opening delimiter — and the
+// file must be skipped entirely, not loaded with an empty prompt.
+func TestLoad_UnterminatedFrontmatterSkipped(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\nname: broken-agent\ndescription: no closing delimiter here at all\n"
+	writeAgent(t, dir, "broken-agent", content)
+
+	defs, err := subagent.Load([]string{dir}, map[string]bool{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(defs) != 0 {
+		t.Fatalf("expected unterminated-frontmatter agent to be skipped, got %d defs (bug: agent loaded with empty SystemPrompt): %+v", len(defs), defs)
 	}
 }
 

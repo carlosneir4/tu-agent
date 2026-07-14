@@ -1,6 +1,6 @@
 ---
 name: tdd
-description: Use when the user wants to build a feature end-to-end with the tu-agent TDD dev-flow inside Claude Code — interrogation to a signed spec, Gherkin scenarios, strict TDD with a deterministic gate, a design judge, optional mutation hardening, and a memory archive. Keywords - tdd, dev-flow, feature, gherkin, strict TDD, craftsman, judge.
+description: Build a WHOLE feature end-to-end through the strict tu-agent TDD dev-flow — interrogation to a signed spec, Gherkin scenarios, RED/GREEN with a deterministic gate, a design judge, optional mutation hardening, whole-branch review, and a memory archive. Heavyweight; for a quick single-change anchor before coding, use groundwork instead. Keywords - tdd, dev-flow, feature, gherkin, strict TDD, craftsman, judge.
 ---
 
 # tu-agent tdd dev-flow (plugin orchestrator)
@@ -15,13 +15,14 @@ resuming — so they are `$BASE/spec.md`, `$BASE/features/<name>.feature`,
 
 Define `TU="${CLAUDE_PLUGIN_ROOT}/bin/tu-agent"` and use it for every binary call.
 
-## Step 0: Preflight — verify the dev-flow agents exist
+## Step 0: Preflight
 
 Run: `"$TU" version` — if it fails, STOP and show the shim's install instructions.
 
-Run: `"$TU" tdd check`. If it exits non-zero, the project's dev-flow agents are
-not provisioned — tell the user to run `/tu-agent:prepare` (or `tu-agent prepare`) and
-STOP. This flow never generates agents; init owns that.
+Run: `"$TU" tdd check` (informational, never fatal). Each dev-flow role resolves
+to an embedded generic shell unless the repo overrides it with its own
+`.claude/agents/<role>.md`, so a missing agent file is fine — the flow runs
+either way. This flow never generates agents.
 
 Run `"$TU" tdd status`. If its JSON has `"resumable": true`, show the user the
 done/pending features and ask **resume or restart**. On **resume**, read the
@@ -42,9 +43,11 @@ Read `.tu-agent/config.yaml` if present and note `tdd.mutation` (default off),
 
 Every non-interactive stage is run by dispatching the **`general-purpose`** agent
 with the composed stage prompt as its instructions. Fetch the prompt with
-`"$TU" tdd prompt <stage> --base "$BASE"` — the binary composes the project's
-enriched agent body (its knowledge) plus the generic TDD overlay (the
-contract), substituting the same `$BASE` this run resolved (fresh in Step 1,
+`"$TU" tdd prompt <stage> --base "$BASE"` — the binary composes the role's
+agent body (its knowledge — an embedded generic shell, or a repo-level
+`.claude/agents/<role>.md` override), the runtime language overlay, project
+rules, and the generic TDD overlay (the contract), substituting the same
+`$BASE` this run resolved (fresh in Step 1,
 or bound from `tdd status` on resume in Step 0). Prepend it to any runtime
 specifics (feature name, prior gate/judge feedback). This depends on NO agent
 being registered, so it works identically in a fresh session and right after
@@ -270,7 +273,10 @@ Repeat up to 3 times:
    - `"ok": false`: feed the `feedback` back to the implementer and loop (consume one budget).
    - `"ok": true`: continue. If the gate JSON carries a `warning` about a
      missing baseline, surface it to the user but continue.
-6. Run the judge stage (dispatch `general-purpose` with `"$TU" tdd prompt judge --base "$BASE"`). On its verdict:
+6. Run the judge stage (dispatch `general-purpose` with `"$TU" tdd prompt judge --base "$BASE"`,
+   plus the instruction to read
+   `${CLAUDE_PLUGIN_ROOT}/references/adversarial-verification.md` and run its
+   refutation pass on every finding before the verdict). On its verdict:
    - `revise`: feed the feedback to the test-writer and restart the sandwich
      from step 1 (consume one budget).
    - `fail`: call `"$TU" tdd state mark <slug> blocked --base "$BASE"` and stop the entire run.
@@ -307,7 +313,9 @@ case). Mirrors the CLI conductor's `internal/tdd/review.go`.
    run still ends `pass` on its feature gates.
 3. Fetch the stage prompt with `"$TU" tdd prompt review --base "$BASE"` and
    dispatch `general-purpose` with it plus the branch scope (merge-base and
-   changed files), same as any other stage.
+   changed files), same as any other stage — plus the instruction to read
+   `${CLAUDE_PLUGIN_ROOT}/references/adversarial-verification.md` and run its
+   refutation pass on each finding before reporting it.
 4. Route the verdict's findings:
    - `critical` or `important` findings: dispatch the review-fixer
      (`"$TU" tdd prompt review-fixer --base "$BASE"`) with the findings.

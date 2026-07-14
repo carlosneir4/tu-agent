@@ -3,7 +3,7 @@ package tdd
 import (
 	"testing"
 
-	"github.com/tu/tu-agent/internal/testresult"
+	"github.com/carlosneir4/tu-agent/internal/testresult"
 )
 
 func TestNewTestsRed(t *testing.T) {

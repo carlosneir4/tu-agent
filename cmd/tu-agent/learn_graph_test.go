@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
 )
 
 func writeJavaFixture(t *testing.T, root string) {

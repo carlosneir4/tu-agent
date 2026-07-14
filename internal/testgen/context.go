@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/query"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/query"
 )
 
 // DefaultContextBudget caps the assembled prompt context in bytes (spec: 16 KB).

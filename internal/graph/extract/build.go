@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/store"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
 )
 
 // BuildResult summarises one Build or Update run.
@@ -43,6 +43,13 @@ func underScope(rel, scope string) bool {
 // re-parsed. After parsing, a project-wide resolve runs.
 func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResult, error) {
 	var result BuildResult
+
+	unlock, err := acquireBuildLock(root)
+	if err != nil {
+		return result, err
+	}
+	defer unlock()
+
 	extSet := map[string]struct{}{}
 	for _, e := range exts {
 		extSet[e] = struct{}{}
@@ -111,11 +118,13 @@ func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResul
 		}
 		src, err := os.ReadFile(full)
 		if err != nil {
-			return result, fmt.Errorf("graph.Build: reading %s: %w", relPath, err)
+			slog.Warn("graph.Build: reading file, skipping", "path", relPath, "err", err)
+			continue
 		}
 		fi, err := os.Stat(full)
 		if err != nil {
-			return result, fmt.Errorf("graph.Build: stat %s: %w", relPath, err)
+			slog.Warn("graph.Build: stat file, skipping", "path", relPath, "err", err)
+			continue
 		}
 		sum := fileSHA256(src)
 		if knownFile && !forceReparse && rec.SHA256 == sum {
@@ -153,6 +162,36 @@ func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResul
 
 	// 5. Resolve project-wide.
 	return result, resolveFromStore(st, goModulePath(root))
+}
+
+// acquireBuildLock takes an exclusive, blocking advisory lock on
+// "<root>/.tu-agent/graph.build.lock" so concurrent BuildScoped calls against
+// the same root single-flight instead of racing the store. It returns a
+// release func the caller must defer; the lock file itself is created (but
+// not locked) on every platform, while the actual flock is unix-only — see
+// lock_unix.go / lock_windows.go.
+func acquireBuildLock(root string) (func(), error) {
+	lockDir := filepath.Join(root, ".tu-agent")
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		return nil, fmt.Errorf("graph.Build: creating lock dir %s: %w", lockDir, err)
+	}
+	lockPath := filepath.Join(lockDir, "graph.build.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("graph.Build: opening lock file %s: %w", lockPath, err)
+	}
+	if err := flockExclusive(f.Fd()); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("graph.Build: flock %s: %w", lockPath, err)
+	}
+	return func() {
+		if err := flockRelease(f.Fd()); err != nil {
+			slog.Warn("graph.Build: releasing single-flight lock", "path", lockPath, "err", err)
+		}
+		if err := f.Close(); err != nil {
+			slog.Warn("graph.Build: closing single-flight lock file", "path", lockPath, "err", err)
+		}
+	}, nil
 }
 
 // goModulePath reads the module path from root/go.mod. Returns "" when there is

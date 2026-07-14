@@ -3,7 +3,7 @@ package query
 import (
 	"sort"
 
-	"github.com/tu/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph"
 )
 
 // TestStructureResult describes how a class's existing tests are organized, as

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/carlosneir4/tu-agent/internal/codegen"
 	"github.com/spf13/cobra"
-	"github.com/tu/tu-agent/internal/codegen"
 )
 
 // mapDomain is one entry of `tu-agent map --json` output. Context is the
@@ -154,8 +154,9 @@ var (
 )
 
 var mapCmd = &cobra.Command{
-	Use:   "map [path]",
-	Short: "Print the domain map (deterministic, no model calls)",
+	GroupID: "graph",
+	Use:     "map [path]",
+	Short:   "Print the domain map (deterministic, no model calls)",
 	Long: `Clusters source files into domains exactly as 'tu-agent learn' would,
 and prints the result. With --json, each domain includes its structural
 context (inbound/outbound dependencies) so external orchestrators — like

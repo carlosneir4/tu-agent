@@ -7,18 +7,16 @@ import (
 	"testing"
 )
 
-// developerTemplatePaths lists the six developer.md surfaces that must all
-// carry the "Surgical & simple" judge-hardening rule (P2/P3 Karpathy gaps):
-// the plugin skeleton and the five codegen language templates. Paths are
-// relative to this package's directory (internal/codegen).
+// developerTemplatePaths lists the developer.md surfaces that must all carry
+// the "Surgical & simple" judge-hardening rule (P2/P3 Karpathy gaps): the
+// plugin skeleton and the codegen base template. The per-language codegen body
+// templates were removed (base is now the single body source); language
+// specialization lives in the runtime overlay, which carries no such prose.
+// Paths are relative to this package's directory (internal/codegen).
 func developerTemplatePaths() map[string]string {
 	return map[string]string{
-		"plugin":     filepath.Join("..", "..", "plugin", "agent-templates", "developer.md"),
-		"base":       filepath.Join("templates", "base", "developer.md"),
-		"go":         filepath.Join("templates", "go", "developer.md"),
-		"java":       filepath.Join("templates", "java", "developer.md"),
-		"python":     filepath.Join("templates", "python", "developer.md"),
-		"typescript": filepath.Join("templates", "typescript", "developer.md"),
+		"plugin": filepath.Join("..", "..", "plugin", "agents", "developer.md"),
+		"base":   filepath.Join("templates", "base", "developer.md"),
 	}
 }
 

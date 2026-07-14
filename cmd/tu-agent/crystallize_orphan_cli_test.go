@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // seedOrphanSkill stores a skill record whose provenance label matches NO live

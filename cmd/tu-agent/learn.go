@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
 	"github.com/spf13/cobra"
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/telemetry"
 )
 
 // learnOpts controls the learn pipeline.
@@ -164,11 +164,13 @@ var (
 )
 
 var learnCmd = &cobra.Command{
-	Use:   "learn [path]",
-	Short: "Build the concept index and register project knowledge as skills",
+	GroupID: "graph",
+	Use:     "learn [path]",
+	Short:   "Build the concept index and register project knowledge in the graph store",
 	Long: `Builds the dependency graph, computes one concept card per package cluster,
-optionally fills definitions with a single model call, writes cards under
-.claude/skills/, and registers the knowledge-pointer block in CLAUDE.md.
+optionally fills definitions with a single model call, stores the cards in the
+graph store (graph.db, queryable via get_concept), and registers the
+knowledge-pointer block in CLAUDE.md.
 
 Cards are ≤1 KB each; the whole pipeline is re-runnable and idempotent.
 Use --skip-llm to refresh the index without any model calls.`,

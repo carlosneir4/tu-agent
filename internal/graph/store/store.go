@@ -13,7 +13,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/tu/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph"
 )
 
 const schemaVersion = "6"
@@ -68,15 +68,37 @@ func Open(path, extractorVersion string) (*Store, error) {
 			return nil, fmt.Errorf("graph.Store.Open: %w", err)
 		}
 		if _, err := db.Exec(schema); err != nil {
+			// The graph is derived data: a schema-exec failure (e.g. a garbage
+			// or truncated graph.db surfaced lazily by sql.Open) is treated as
+			// corruption and routed through the same delete-and-retry-once
+			// rebuild used below for version mismatches.
 			db.Close()
-			return nil, fmt.Errorf("graph.Store.Open: applying schema: %w", err)
+			if giveUpErr := rebuildOrGiveUp(path, attempt, err); giveUpErr != nil {
+				return nil, giveUpErr
+			}
+			continue
 		}
 		// Serialize all writes through a single connection; SQLite does not support
 		// concurrent writers and WAL mode does not change that constraint.
 		db.SetMaxOpenConns(1)
 		s := &Store{db: db}
-		sv, _ := s.Meta("schema_version")
-		ev, _ := s.Meta("extractor_version")
+		sv, svErr := s.Meta("schema_version")
+		ev, evErr := s.Meta("extractor_version")
+		if svErr != nil || evErr != nil {
+			// A metadata read error (as opposed to ErrNoRows, which Meta
+			// already normalizes to ("", nil)) means the database is
+			// unreadable/corrupt: route through the same rebuild-once
+			// self-heal path used for a schema-exec failure.
+			s.Close()
+			cause := svErr
+			if cause == nil {
+				cause = evErr
+			}
+			if giveUpErr := rebuildOrGiveUp(path, attempt, cause); giveUpErr != nil {
+				return nil, giveUpErr
+			}
+			continue
+		}
 		fresh := sv == "" && ev == ""
 		if fresh {
 			if err := s.setMeta("schema_version", schemaVersion); err != nil {
@@ -94,19 +116,36 @@ func Open(path, extractorVersion string) (*Store, error) {
 		}
 		// Version mismatch: rebuild once, never loop.
 		s.Close()
-		if attempt > 0 {
-			return nil, fmt.Errorf("graph.Store.Open: version mismatch persists after rebuild")
-		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("graph.Store.Open: removing stale db: %w", err)
-		}
-		if err := os.Remove(path + "-wal"); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("graph.Store.Open: removing stale wal sidecar: %w", err)
-		}
-		if err := os.Remove(path + "-shm"); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("graph.Store.Open: removing stale shm sidecar: %w", err)
+		mismatchErr := fmt.Errorf("schema/extractor version mismatch (schema=%q want %q, extractor=%q want %q)", sv, schemaVersion, ev, extractorVersion)
+		if err := rebuildOrGiveUp(path, attempt, mismatchErr); err != nil {
+			return nil, err
 		}
 	}
+}
+
+// rebuildOrGiveUp deletes graph.db plus its -wal/-shm sidecars so the next
+// loop iteration in Open starts fresh, whether the trigger was a schema-exec
+// failure (corruption) or a schema/extractor version mismatch. It gives up
+// after one retry (attempt > 0), or if the removal itself fails, returning a
+// wrapped error rather than looping forever — the graph is derived data, so
+// deleting and rebuilding is always safe, but it must happen at most once.
+// cause is the error that triggered this rebuild attempt (schema-exec failure
+// or a synthesized version-mismatch description); it is wrapped into the
+// give-up error so the underlying reason is never discarded.
+func rebuildOrGiveUp(path string, attempt int, cause error) error {
+	if attempt > 0 {
+		return fmt.Errorf("graph.Store.Open: rebuild persists after retry: %w", cause)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("graph.Store.Open: removing stale db: %w", err)
+	}
+	if err := os.Remove(path + "-wal"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("graph.Store.Open: removing stale wal sidecar: %w", err)
+	}
+	if err := os.Remove(path + "-shm"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("graph.Store.Open: removing stale shm sidecar: %w", err)
+	}
+	return nil
 }
 
 // Close closes the underlying database.
@@ -124,6 +163,11 @@ func (s *Store) Meta(key string) (string, error) {
 	}
 	return v, nil
 }
+
+// SetMeta writes a metadata key/value pair (upsert). Exported form of setMeta
+// for callers outside the store package that persist derived, non-graph state —
+// e.g. the architecture overview narrative (see cmd/tu-agent architecture.go).
+func (s *Store) SetMeta(key, value string) error { return s.setMeta(key, value) }
 
 func (s *Store) setMeta(key, value string) error {
 	_, err := s.db.Exec(`INSERT INTO metadata(key,value) VALUES(?,?)

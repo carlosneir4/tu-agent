@@ -20,4 +20,40 @@ type Entry struct {
 	Skill string `json:"skill,omitempty"`
 	// Found reports whether a load_skill event hit an indexed skill.
 	Found bool `json:"found"`
+	// Tool is the name of the tool invoked, for mcp_call events.
+	Tool string `json:"tool,omitempty"`
+	// DurationMS is the wall-clock duration of the call in milliseconds.
+	DurationMS int64 `json:"duration_ms,omitempty"`
+	// OK reports whether the call succeeded. With omitempty, ok:true is written
+	// and ok:false is omitted, so absent-means-false on read. Only meaningful for
+	// call-style events (Event=="mcp_call"); other events (load_skill,
+	// graph_refresh, ...) leave it unset.
+	OK bool `json:"ok,omitempty"`
+	// ResultBytes is the size in bytes of the serialized result.
+	ResultBytes int `json:"result_bytes,omitempty"`
+	// ZeroResult reports whether a query-style call returned no results.
+	ZeroResult bool `json:"zero_result,omitempty"`
+	// Stage is the tdd stage name, for tdd_stage events.
+	Stage string `json:"stage,omitempty"`
+	// Outcome is the result of a stage or gate, for tdd_stage/violation events.
+	Outcome string `json:"outcome,omitempty"`
+	// SessionID identifies the work session this entry belongs to.
+	SessionID string `json:"session_id,omitempty"`
+	// Parsed/Unchanged/Deleted/Failed carry graph_refresh (staleness) counts.
+	Parsed    int `json:"parsed,omitempty"`
+	Unchanged int `json:"unchanged,omitempty"`
+	Deleted   int `json:"deleted,omitempty"`
+	Failed    int `json:"failed,omitempty"`
 }
+
+// Event values identify non-model telemetry rows.
+const (
+	EventLoadSkill    = "load_skill"
+	EventMCPCall      = "mcp_call"
+	EventHook         = "hook"
+	EventGraphRefresh = "graph_refresh"
+	EventTddStage     = "tdd_stage"
+	EventViolation    = "violation"
+	EventMutation     = "mutation"
+	EventPrompt       = "prompt"
+)

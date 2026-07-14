@@ -136,6 +136,9 @@ func mergeInto(dst *Config, src Config) {
 	if src.Tdd.TestCommand != "" {
 		dst.Tdd.TestCommand = src.Tdd.TestCommand
 	}
+	if src.Tdd.Language != "" {
+		dst.Tdd.Language = src.Tdd.Language
+	}
 	if src.Tdd.Mutation {
 		dst.Tdd.Mutation = true
 	}
@@ -147,5 +150,8 @@ func mergeInto(dst *Config, src Config) {
 	}
 	if src.Tdd.Strict {
 		dst.Tdd.Strict = true
+	}
+	if src.Telemetry.Level != "" {
+		dst.Telemetry.Level = src.Telemetry.Level
 	}
 }

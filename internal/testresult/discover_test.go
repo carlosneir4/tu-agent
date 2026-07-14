@@ -56,3 +56,47 @@ func TestLoadReportsStaleFilter(t *testing.T) {
 		t.Fatalf("stale report included: %d cases", len(rep.Cases))
 	}
 }
+
+func TestLoadReportsFreshnessSlack(t *testing.T) {
+	root := t.TempDir()
+	fresh := filepath.Join(root, "build", "test-results", "test", "fresh.xml")
+	writeReport(t, fresh, sampleJUnit)
+
+	since := time.Now()
+	// The report's modtime is a hair (500ms) before `since`, well within the
+	// slack that absorbs FS timestamp granularity/clock skew. It must still
+	// be treated as fresh, not dropped.
+	justBefore := since.Add(-500 * time.Millisecond)
+	if err := os.Chtimes(fresh, justBefore, justBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := LoadReports(root, since)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rep.Cases) != 3 {
+		t.Fatalf("loaded %d cases, want 3 (report within freshness slack dropped)", len(rep.Cases))
+	}
+}
+
+func TestLoadReportsFreshnessSlackDoesNotSwallowOldReport(t *testing.T) {
+	root := t.TempDir()
+	old := filepath.Join(root, "build", "test-results", "test", "old.xml")
+	writeReport(t, old, sampleJUnit)
+
+	since := time.Now()
+	// An hour older than `since`: far beyond the slack, must remain excluded.
+	hourAgo := since.Add(-time.Hour)
+	if err := os.Chtimes(old, hourAgo, hourAgo); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := LoadReports(root, since)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rep.Cases) != 0 {
+		t.Fatalf("hour-old report included: %d cases, want 0", len(rep.Cases))
+	}
+}
