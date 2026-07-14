@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/cluster"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/cluster"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // Cluster is a group of related observations dense enough to crystallize.

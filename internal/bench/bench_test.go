@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/bench"
-	"github.com/tu/tu-agent/internal/telemetry"
+	"github.com/carlosneir4/tu-agent/internal/bench"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
 )
 
 func entry(provider string, in, out int, cost float64) telemetry.Entry {

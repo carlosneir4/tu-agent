@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/graph/store"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
 )
 
 // persistConceptCardsTo must not clobber a previously generated (LLM) description

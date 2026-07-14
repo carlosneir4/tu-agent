@@ -3,7 +3,7 @@ package codegen_test
 import (
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
 )
 
 func TestParseKeyFiles_BulletsAndStop(t *testing.T) {

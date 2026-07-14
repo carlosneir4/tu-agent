@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // resetMemoryCmds clears package-level flag vars and resets command output

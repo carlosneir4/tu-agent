@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --quiet || exit 0"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent hook edit-check || exit 0"
           }
         ]
       },
@@ -16,6 +20,16 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --post-bash || exit 0"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent hook prompt-submit || exit 0"
           }
         ]
       }
@@ -41,7 +55,7 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent memory crystallize --nudge || exit 0"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent advise --nudge || exit 0"
           }
         ]
       }

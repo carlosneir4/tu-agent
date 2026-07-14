@@ -66,8 +66,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // setReconcileFlag sets a flag on the shared memoryReconcileCmd by name. It

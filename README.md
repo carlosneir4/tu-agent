@@ -76,11 +76,9 @@ no pinned version) refreshes it when a newer release ships. Opt out with
 (seconds, default 86400). The `tu-agent-graph` MCP server and the `/tu-agent:*`
 skills register automatically.
 
-> **Single-step install is the next step.** The shim already auto-fetches the
-> binary; what remains is publishing the per-platform release assets so the
-> marketplace install is the only thing you ever run. Until the first release is
-> published, install the binary yourself (see *Standalone CLI*) or point the shim
-> at a local build via `TU_AGENT_RELEASE_REPO` / `~/.tu-agent/bin/tu-agent`.
+Prefer not to auto-download? Build from source (`make build`) and place the
+binary at `~/.tu-agent/bin/tu-agent`, or point the shim at your own fork via
+`TU_AGENT_RELEASE_REPO`. See [SECURITY.md](SECURITY.md) for the trust model.
 
 ---
 
@@ -283,6 +281,5 @@ internal/
 ├── bench/             ← telemetry comparison
 └── telemetry/         ← JSONL token/latency logger
 plugin/                ← Claude Code plugin: skills, agents, hooks, MCP, binary shim
-docs/                  ← quickstarts, format extensions
 scripts/               ← java_ready_check.sh, fixtures, parity/demo scripts
 ```

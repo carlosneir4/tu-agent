@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 
+	"github.com/carlosneir4/tu-agent/internal/bench"
+	"github.com/carlosneir4/tu-agent/internal/stats"
 	"github.com/spf13/cobra"
-	"github.com/tu/tu-agent/internal/bench"
-	"github.com/tu/tu-agent/internal/stats"
 )
 
 var (

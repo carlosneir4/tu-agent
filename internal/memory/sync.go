@@ -94,8 +94,12 @@ func (s *Store) ImportRecords(records []ChunkRecord) (ImportResult, error) {
 		}
 		created := parseChunkTime("created_at", r.CreatedAt, r.SyncID)
 		updated := parseChunkTime("updated_at", r.UpdatedAt, r.SyncID)
+		id, err := newID()
+		if err != nil {
+			return res, fmt.Errorf("memory.Store.ImportRecords: %w", err)
+		}
 		incoming := Observation{
-			ID: newID(), TopicKey: r.TopicKey, Scope: r.Scope, Project: r.Project,
+			ID: id, TopicKey: r.TopicKey, Scope: r.Scope, Project: r.Project,
 			Title: r.Title, Content: r.Content, Type: r.Type, Source: r.Source,
 			Author: r.Author, SyncID: r.SyncID, Revision: r.Revision,
 			CreatedAt: created, UpdatedAt: updated,
@@ -237,9 +241,37 @@ func WriteChunk(dir, author string, records []ChunkRecord) (string, bool, error)
 	if err := gw.Close(); err != nil {
 		return "", false, fmt.Errorf("memory.WriteChunk: gzip close: %w", err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
-		return "", false, fmt.Errorf("memory.WriteChunk: write: %w", err)
+	// Write to a temp file in the SAME directory as the target, then rename over
+	// it. A plain os.WriteFile truncates the target in place: a crash mid-write
+	// or a concurrent reader can observe a torn/partial chunk, which breaks the
+	// whole team's import. os.Rename within one filesystem is atomic — readers
+	// always see either the old, complete file or the new, complete one.
+	tmp, err := os.CreateTemp(dir, ".chunk-*.tmp")
+	if err != nil {
+		return "", false, fmt.Errorf("memory.WriteChunk: create temp: %w", err)
 	}
+	tmpPath := tmp.Name()
+	renamed := false
+	defer func() {
+		if !renamed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		_ = tmp.Close()
+		return "", false, fmt.Errorf("memory.WriteChunk: write temp: %w", err)
+	}
+	if err := tmp.Chmod(0o644); err != nil { // CreateTemp defaults to 0o600
+		_ = tmp.Close()
+		return "", false, fmt.Errorf("memory.WriteChunk: chmod temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", false, fmt.Errorf("memory.WriteChunk: close temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return "", false, fmt.Errorf("memory.WriteChunk: rename: %w", err)
+	}
+	renamed = true
 	return path, true, nil
 }
 

@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func TestParseFrontmatter_Valid(t *testing.T) {
@@ -143,6 +146,47 @@ func TestScan_LaterDirOverrides(t *testing.T) {
 	e, _ := idx.Get("my-skill")
 	if e.Description != "from dir2" {
 		t.Errorf("expected dir2 to win, got %q", e.Description)
+	}
+}
+
+// TestScan_CrystallizedSkillWithProvenancePreamble is the RED case for the
+// C4 scanner regression: crystallize/materialize (cmd/tu-agent/memory.go
+// saveCrystallizedSkill, memory materialize) writes SKILL.md with a
+// provenance HTML comment BEFORE the "---" frontmatter delimiter, e.g.
+//
+//	<!-- tu-agent:crystallize source-hash=... label=bash-helpers -->
+//	---
+//	name: bash-helpers
+//	description: ...
+//	---
+//	body
+//
+// The scanner must still index it — frontmatter.Split requires "---" on
+// line 1 and would drop it (a zero Entry), so the scanner needs the loose
+// variant that tolerates a leading preamble.
+func TestScan_CrystallizedSkillWithProvenancePreamble(t *testing.T) {
+	dir := t.TempDir()
+	provenance := crystallize.ProvenanceLine("bash-helpers", []memory.Observation{
+		{TopicKey: "bash/quoting", Revision: 1},
+		{TopicKey: "bash/globbing", Revision: 2},
+	})
+	content := provenance + "\n" +
+		"---\nname: bash-helpers\ndescription: reusable bash snippets\n---\n# Body\nsome body text\n"
+	writeSkill(t, dir, "bash-helpers", content)
+
+	idx, err := Scan([]string{dir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if idx.Len() != 1 {
+		t.Fatalf("expected 1 entry for a crystallized skill with a provenance preamble, got %d", idx.Len())
+	}
+	e, ok := idx.Get("bash-helpers")
+	if !ok {
+		t.Fatal("bash-helpers not found")
+	}
+	if e.Description != "reusable bash snippets" {
+		t.Errorf("description: got %q", e.Description)
 	}
 }
 

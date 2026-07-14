@@ -13,12 +13,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tu/tu-agent/internal/coverage"
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/query"
-	"github.com/tu/tu-agent/internal/mutation"
-	"github.com/tu/tu-agent/internal/telemetry"
-	"github.com/tu/tu-agent/internal/testgen"
+	"github.com/carlosneir4/tu-agent/internal/coverage"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/query"
+	"github.com/carlosneir4/tu-agent/internal/mutation"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
+	"github.com/carlosneir4/tu-agent/internal/testgen"
 )
 
 // gapJSON is the stable machine-readable shape of one gap.
@@ -221,8 +221,9 @@ var (
 )
 
 var testCmd = &cobra.Command{
-	Use:   "test",
-	Short: "Test-coverage analysis backed by the knowledge graph",
+	GroupID: "feature",
+	Use:     "test",
+	Short:   "Test-coverage analysis backed by the knowledge graph",
 }
 
 var testGapsCmd = &cobra.Command{

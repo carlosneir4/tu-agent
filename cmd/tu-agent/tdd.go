@@ -5,169 +5,30 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/tu/tu-agent/internal/config"
-	"github.com/tu/tu-agent/internal/memory"
-	"github.com/tu/tu-agent/internal/mutation"
-	"github.com/tu/tu-agent/internal/orchestrator"
-	"github.com/tu/tu-agent/internal/subagent"
-	"github.com/tu/tu-agent/internal/tdd"
-	"github.com/tu/tu-agent/internal/telemetry"
-	"github.com/tu/tu-agent/internal/testresult"
-	"github.com/tu/tu-agent/internal/tool"
+	"github.com/carlosneir4/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/mutation"
+	"github.com/carlosneir4/tu-agent/internal/orchestrator"
+	"github.com/carlosneir4/tu-agent/internal/subagent"
+	"github.com/carlosneir4/tu-agent/internal/tdd"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
+	"github.com/carlosneir4/tu-agent/internal/testresult"
+	"github.com/carlosneir4/tu-agent/internal/tool"
 )
 
 var tddProviderOverride string
 var tddDesign string
 var tddTicket string
 
-// tddStage pairs a flow stage with the agent-file role that supplies its
-// project knowledge, the generic TDD overlay, and the stage's tool grant.
-type tddStage struct {
-	stage   string
-	role    string
-	overlay string
-	tools   []string
-}
-
-// tddStages is the single mapping of flow stages onto init-provisioned agents.
-func tddStages() []tddStage {
-	writeGrant := append([]string{}, tdd.CraftsmanToolGrant...) // Default + write_file
-	defaultGrant := append([]string{}, tdd.DefaultToolGrant...)
-	return []tddStage{
-		{"analyst", "analyst", tdd.AnalystPrompt, writeGrant},
-		{"architect", "architect", tdd.ArchitectPrompt, writeGrant},
-		{"craftsman", "developer", tdd.CraftsmanPrompt, writeGrant},
-		{"judge", "pr-reviewer", tdd.JudgePrompt, writeGrant},
-		// review/review-fixer are gate-2 (whole-branch) stages fetched by the
-		// plugin conductor via `tu-agent tdd prompt <name>`; they reuse the
-		// existing pr-reviewer and developer roles.
-		{"review", "pr-reviewer", tdd.ReviewPrompt, writeGrant},
-		{"review-fixer", "developer", tdd.ReviewFixerPrompt, writeGrant},
-		{"scribe", "scribe", tdd.ScribePrompt, defaultGrant},
-		// test-writer/implementer are not execution stages — Run/runFeatureTDD
-		// (internal/tdd/flow.go) dispatch the sandwich via the "craftsman" stage
-		// name only. These two exist solely so the plugin conductor can fetch
-		// their composed prompt via `tu-agent tdd prompt <name>`.
-		{"test-writer", "developer", tdd.TestWriterPrompt, writeGrant},
-		{"implementer", "developer", tdd.ImplementerPrompt, writeGrant},
-		// refactor is not dispatched by Run/runFeatureTDD either — it exists so
-		// the plugin conductor can fetch its composed prompt via `tu-agent tdd
-		// prompt refactor` for architect-emitted kind:"refactor" features.
-		{"refactor", "developer", tdd.RefactorPrompt, writeGrant},
-	}
-}
-
-// validateTddAgents returns the roles whose .claude/agents/<role>.md file is
-// missing. Empty means the flow can run; otherwise the caller tells the user to
-// run `tu-agent init`. Roles are deduplicated: test-writer/implementer share the
-// "developer" role with craftsman, so a missing developer.md is reported once.
-func validateTddAgents(root string) []string {
-	var missing []string
-	seen := make(map[string]bool)
-	for _, st := range tddStages() {
-		if seen[st.role] {
-			continue
-		}
-		seen[st.role] = true
-		if _, err := os.Stat(filepath.Join(root, ".claude", "agents", st.role+".md")); err != nil {
-			missing = append(missing, st.role)
-		}
-	}
-	return missing
-}
-
-// loadAgentBody returns the markdown body of .claude/agents/<role>.md with the
-// YAML frontmatter stripped — the role's durable project knowledge.
-func loadAgentBody(root, role string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(root, ".claude", "agents", role+".md"))
-	if err != nil {
-		return "", fmt.Errorf("loadAgentBody(%s): %w", role, err)
-	}
-	return stripFrontmatter(string(data)), nil
-}
-
-// stripFrontmatter removes a leading `---`…`---` YAML block if present.
-func stripFrontmatter(s string) string {
-	t := strings.TrimLeft(s, "\n")
-	if !strings.HasPrefix(t, "---\n") {
-		return s
-	}
-	rest := t[len("---\n"):]
-	if i := strings.Index(rest, "\n---"); i >= 0 {
-		return strings.TrimLeft(rest[i+len("\n---"):], "\n")
-	}
-	return s
-}
-
-// tddStageDefs builds the dispatched stage definitions (architect, craftsman,
-// judge, scribe) whose system prompt = agent body + stage overlay. The analyst
-// runs in the foreground and is built separately.
-func tddStageDefs(root, relBase string) ([]*subagent.Definition, error) {
-	var defs []*subagent.Definition
-	for _, st := range tddStages() {
-		if st.stage == "analyst" {
-			continue
-		}
-		body, err := loadAgentBody(root, st.role)
-		if err != nil {
-			return nil, err
-		}
-		defs = append(defs, &subagent.Definition{
-			Name:         st.stage,
-			Description:  st.stage,
-			SystemPrompt: body + "\n\n" + tdd.WithBaseDir(st.overlay, relBase),
-			ToolSubset:   append([]string{}, st.tools...),
-		})
-	}
-	return defs, nil
-}
-
-// resolveTestRunner builds the deterministic gate's TestRunner. Resolution:
-//  1. cfg.Tdd.TestCommand set    -> run it via `sh -c`.
-//  2. empty + go.mod at repoRoot -> default `go test ./...`.
-//  3. empty + no go.mod          -> error (caller must fail fast).
-func resolveTestRunner(cfg config.Config, repoRoot string) (tdd.TestRunner, error) {
-	if cmd := strings.TrimSpace(cfg.Tdd.TestCommand); cmd != "" {
-		return func(ctx context.Context) (bool, string, error) {
-			c := exec.CommandContext(ctx, "sh", "-c", cmd)
-			c.Dir = repoRoot
-			return runTestCmd(c)
-		}, nil
-	}
-	if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err == nil {
-		return func(ctx context.Context) (bool, string, error) {
-			c := exec.CommandContext(ctx, "go", "test", "./...")
-			c.Dir = repoRoot
-			return runTestCmd(c)
-		}, nil
-	}
-	return nil, fmt.Errorf("no test command configured; set tdd.test_command in .tu-agent/config.yaml")
-}
-
-// runTestCmd runs cmd and maps the outcome onto the TestRunner contract:
-// an *exec.ExitError means the tests ran and failed; any other error means
-// the command could not run.
-func runTestCmd(cmd *exec.Cmd) (bool, string, error) {
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
-			return false, string(out), nil // tests ran and failed
-		}
-		return false, string(out), err // could not run
-	}
-	return true, string(out), nil
-}
-
 var tddCmd = &cobra.Command{
-	Use:   "tdd",
-	Short: "TDD dev-flow orchestrator (analyst -> architect -> gate -> TDD -> judge)",
+	GroupID: "feature",
+	Use:     "tdd",
+	Short:   "TDD dev-flow orchestrator (analyst -> architect -> gate -> TDD -> judge)",
 }
 
 var tddRunCmd = &cobra.Command{
@@ -184,10 +45,6 @@ var tddRunCmd = &cobra.Command{
 			return fmt.Errorf("skill index: %w", err)
 		}
 		root := repoRoot()
-
-		if missing := validateTddAgents(root); len(missing) > 0 {
-			return fmt.Errorf("tdd run: missing dev-flow agents in .claude/agents/ (%s) — run `tu-agent init`", strings.Join(missing, ", "))
-		}
 
 		tel, err := telemetry.NewLogger(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
 		if err != nil {
@@ -217,25 +74,25 @@ var tddRunCmd = &cobra.Command{
 		tools.Register(tool.NewMemSearchTool(memStore))
 		tools.Register(tool.NewMemRecentTool(memStore))
 
-		slug := slugify(strings.Join(args, " "))
-		relBase := tddRelBase(tddTicket, slug)
+		slug := tdd.Slugify(strings.Join(args, " "))
+		relBase := tdd.TddRelBase(tddTicket, slug)
 		workDir := filepath.Join(root, relBase)
 		if err := os.MkdirAll(workDir, 0o755); err != nil {
 			return fmt.Errorf("tdd run: %w", err)
 		}
 		if tddTicket != "" {
-			warnBranch(currentBranch(root), sanitizeTicket(tddTicket), cmd.OutOrStdout())
+			tdd.WarnBranch(tdd.CurrentBranch(root), tdd.SanitizeTicket(tddTicket), cmd.OutOrStdout())
 		}
 
 		// Stage dispatcher for architect/craftsman/judge.
-		defs, err := tddStageDefs(root, relBase)
+		defs, err := tdd.TddStageDefs(root, relBase)
 		if err != nil {
 			return fmt.Errorf("tdd run: %w", err)
 		}
 		dispatcher := subagent.NewDispatcher(defs, prov, tools, tel, idx)
 
 		// Analyst orchestrator (interactive foreground).
-		analystBody, err := loadAgentBody(root, "analyst")
+		analystBody, err := tdd.LoadAgentBody(root, "analyst")
 		if err != nil {
 			return fmt.Errorf("tdd run: %w", err)
 		}
@@ -246,7 +103,7 @@ var tddRunCmd = &cobra.Command{
 			task = "Help me build the following.\n\n" + strings.Join(args, " ")
 		}
 
-		runner, err := resolveTestRunner(cfg, root)
+		runner, err := tdd.ResolveTestRunner(cfg, root)
 		if err != nil {
 			return fmt.Errorf("tdd run: %w", err)
 		}

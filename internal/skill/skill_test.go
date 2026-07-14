@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/skill"
+	"github.com/carlosneir4/tu-agent/internal/skill"
 )
 
 func TestIndex_AddGet(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/mutation"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/mutation"
 )
 
 // JavaAdapter implements LanguageAdapter for Maven and Gradle repos.

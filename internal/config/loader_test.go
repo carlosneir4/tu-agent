@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/config"
+	"github.com/carlosneir4/tu-agent/internal/config"
 )
 
 func writeFile(t *testing.T, dir, name, content string) {
@@ -569,5 +569,52 @@ func TestLoadLearnConceptRoot(t *testing.T) {
 	}
 	if cfg2.Learn.ConceptRoot != "" {
 		t.Errorf("ConceptRoot (absent) = %q, want empty", cfg2.Learn.ConceptRoot)
+	}
+}
+
+func TestLoadTelemetryLevel(t *testing.T) {
+	tests := []struct {
+		name        string
+		userYAML    string
+		projectYAML string
+		wantLevel   string
+	}{
+		{
+			name:      "defaults to empty (minimal)",
+			wantLevel: "",
+		},
+		{
+			name:        "project layer overrides",
+			projectYAML: "telemetry:\n  level: full\n",
+			wantLevel:   "full",
+		},
+		{
+			name:        "user layer sets minimal, project layer overrides to full (pins the mergeInto gotcha)",
+			userYAML:    "telemetry:\n  level: minimal\n",
+			projectYAML: "telemetry:\n  level: full\n",
+			wantLevel:   "full",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userDir, projDir := t.TempDir(), t.TempDir()
+			if tt.userYAML != "" {
+				if err := os.WriteFile(filepath.Join(userDir, "config.yaml"), []byte(tt.userYAML), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.projectYAML != "" {
+				if err := os.WriteFile(filepath.Join(projDir, "config.yaml"), []byte(tt.projectYAML), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg, err := config.NewLoader(t.TempDir(), userDir, projDir).Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.Telemetry.Level != tt.wantLevel {
+				t.Errorf("Telemetry.Level = %q, want %q", cfg.Telemetry.Level, tt.wantLevel)
+			}
+		})
 	}
 }

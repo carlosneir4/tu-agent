@@ -9,14 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/extract"
-	"github.com/tu/tu-agent/internal/graph/query"
-	"github.com/tu/tu-agent/internal/graph/store"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/extract"
+	"github.com/carlosneir4/tu-agent/internal/graph/query"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func graphDBPath(root string) string {
@@ -38,17 +39,29 @@ func runGraphBuild(subpath string) error {
 // runGraphBuildQuiet builds/updates the graph. In quiet mode it is safe to run
 // on every edit from a global hook: it no-ops when no graph exists, prints no
 // success output, and does not rewrite .mcp.json. Errors still surface.
-func runGraphBuildQuiet(subpath string, quiet bool) error {
+func runGraphBuildQuiet(subpath string, quiet bool) (err error) {
 	// No-op guard — must run BEFORE openGraphStore (which MkdirAll's .tu-agent
 	// and creates the DB). The global plugin hook fires in every repo, including
 	// those that never ran tu-agent; do not bootstrap an unwanted graph there.
 	if quiet {
-		if _, err := os.Stat(graphDBPath(repoRoot())); errors.Is(err, fs.ErrNotExist) {
+		if _, statErr := os.Stat(graphDBPath(repoRoot())); errors.Is(statErr, fs.ErrNotExist) {
 			return nil
-		} else if err != nil {
-			return fmt.Errorf("graph update: stat graph db: %w", err)
+		} else if statErr != nil {
+			return fmt.Errorf("graph update: stat graph db: %w", statErr)
 		}
 	}
+	start := time.Now()
+	defer func() {
+		// Only quiet mode is a hook invocation (graph update --quiet / --post-bash
+		// / --quiet --announce all pass quiet=true). A manual `graph update`
+		// (quiet=false) must NOT emit an Event=hook row on failure — that would
+		// pollute the hook failure-rate and p50/p95 in `stats --insights` with a
+		// non-hook event, symmetric with the memory hook commands gating on their
+		// hook-mode flag.
+		if err != nil && quiet {
+			recordHook("graph update", time.Since(start), err)
+		}
+	}()
 	s, err := openGraphStore()
 	if err != nil {
 		return err
@@ -76,6 +89,12 @@ func runGraphBuildQuiet(subpath string, quiet bool) error {
 	if err != nil {
 		return err
 	}
+	// A successful build records the graph_refresh row here. A later
+	// NodeCount/FileCount error (below) cannot also emit a hook-failure row for
+	// the same invocation: those calls only run in the !quiet branch, and the
+	// hook-failure emission above is gated on quiet — the two are mutually
+	// exclusive, so there is no double-count.
+	recordGraphRefresh(res, time.Since(start))
 	if quiet {
 		return nil
 	}
@@ -573,8 +592,9 @@ var graphBridgesCmd = &cobra.Command{
 }
 
 var graphCmd = &cobra.Command{
-	Use:   "graph",
-	Short: "Build and query the code knowledge graph",
+	GroupID: "graph",
+	Use:     "graph",
+	Short:   "Build and query the code knowledge graph",
 }
 
 var graphBuildCmd = &cobra.Command{

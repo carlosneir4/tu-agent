@@ -8,15 +8,20 @@ import (
 	"testing"
 )
 
-func TestRefreshArtifacts_UpdatesToolsAndBlockPreservingBody(t *testing.T) {
+// F7-C: prepare no longer owns .claude/agents, so --update (refreshArtifacts)
+// refreshes ONLY the CLAUDE.md knowledge block and leaves any existing agent
+// byte-identical — the agent-tools rewrite loop is gone.
+func TestRefreshArtifacts_RefreshesBlockLeavesAgentUntouched(t *testing.T) {
 	root := t.TempDir()
 	agentsDir := filepath.Join(root, ".claude", "agents")
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Enriched developer agent with a STALE tools line (missing mem_*).
+	// A developer agent with a STALE tools line (missing mem_*): --update must
+	// NOT touch it anymore.
 	agent := "---\nname: proj-developer\ndescription: \"d\"\ntools: Read, Write, Grep, Glob\n---\nYou are a senior developer.\n\n## Project Context\n- real enriched bullet about ServiceFoo\n"
-	if err := os.WriteFile(filepath.Join(agentsDir, "developer.md"), []byte(agent), 0o644); err != nil {
+	agentPath := filepath.Join(agentsDir, "developer.md")
+	if err := os.WriteFile(agentPath, []byte(agent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// CLAUDE.md with a knowledge block and out-of-block user content.
@@ -29,12 +34,9 @@ func TestRefreshArtifacts_UpdatesToolsAndBlockPreservingBody(t *testing.T) {
 		t.Fatalf("refreshArtifacts: %v", err)
 	}
 
-	got, _ := os.ReadFile(filepath.Join(agentsDir, "developer.md"))
-	if !strings.Contains(string(got), "mcp__tu-agent-graph__mem_save") {
-		t.Error("developer tools line was not refreshed with mem_save")
-	}
-	if !strings.Contains(string(got), "## Project Context\n- real enriched bullet about ServiceFoo") {
-		t.Error("enriched body was not preserved")
+	got, _ := os.ReadFile(agentPath)
+	if string(got) != agent {
+		t.Errorf("developer.md must be byte-identical after --update, got:\n%s", got)
 	}
 	gotClaude, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
 	if !strings.Contains(string(gotClaude), "# My project rules\nkeep me") {

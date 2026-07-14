@@ -72,7 +72,8 @@ ok "test gaps --json returns an array"
 
 # 6. mcp --list exposes every required tool
 list="$("$TU" mcp --list)"
-# Keep in sync with mcpToolNames in cmd/tu-agent/mcp.go — TestMCPListFlag guards the binary side.
+# mcp --list is derived from the tools newMCPServer actually registers (via the
+# addTool registry in cmd/tu-agent/mcp.go); TestMCPListMatchesRegisteredTools guards drift.
 for t in get_impact get_context find_symbol get_concept get_traits get_flow \
          mem_save mem_search mem_recent test_gaps test_scaffold; do
   echo "$list" | grep -qx "$t" || fail "mcp tool missing: $t"

@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
+	"github.com/carlosneir4/tu-agent/internal/codegen"
 	"github.com/spf13/cobra"
-	"github.com/tu/tu-agent/internal/codegen"
 )
 
 // runSkillPrune removes empty skill directories under root's generated skills

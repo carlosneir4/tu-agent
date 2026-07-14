@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/extract"
-	"github.com/tu/tu-agent/internal/graph/store"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/extract"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func TestRelinkObservations_DerivesAndIsIdempotent(t *testing.T) {

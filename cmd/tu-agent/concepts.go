@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
 	"github.com/spf13/cobra"
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/graph/store"
 )
 
 const conceptMaxLandmarks = 10
@@ -125,9 +125,10 @@ var (
 )
 
 var conceptsCmd = &cobra.Command{
-	Use:   "concepts [path]",
-	Short: "Print the concept index cards (deterministic; no model calls)",
-	Args:  cobra.MaximumNArgs(1),
+	GroupID: "graph",
+	Use:     "concepts [path]",
+	Short:   "Print the concept index cards (deterministic; no model calls)",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sub := ""
 		if len(args) == 1 {

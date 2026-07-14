@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/graph/store"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
 )
 
 func writeSrc(t *testing.T, root, rel, content string) {

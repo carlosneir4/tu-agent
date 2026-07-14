@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/carlosneir4/tu-agent/internal/config"
 	"github.com/spf13/cobra"
-	"github.com/tu/tu-agent/internal/config"
 )
 
 var (
@@ -47,6 +47,18 @@ func Execute() error {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enable debug logging (text format to stderr)")
+
+	// Register the help taxonomy groups. Commands reference these via their
+	// GroupID field; cobra's checkCommandGroups requires the groups to exist
+	// before Execute or it panics.
+	rootCmd.AddGroup(
+		&cobra.Group{ID: "setup", Title: "Setup"},
+		&cobra.Group{ID: "graph", Title: "Grafo"},
+		&cobra.Group{ID: "memory", Title: "Memoria"},
+		&cobra.Group{ID: "feature", Title: "Feature"},
+		&cobra.Group{ID: "diagnostics", Title: "Diagnóstico"},
+	)
+
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(learnCmd)
@@ -58,6 +70,8 @@ func init() {
 	rootCmd.AddCommand(setupCmd)
 	rootCmd.AddCommand(mapCmd)
 	rootCmd.AddCommand(guardPathCmd)
+	rootCmd.AddCommand(hookCmd)
+	rootCmd.AddCommand(topStatusCmd)
 }
 
 func initLogger(debug bool) {

@@ -63,9 +63,10 @@ func TestPluginHooksConfig(t *testing.T) {
 		want  []string
 	}{
 		{"PostToolUse", []string{"graph update"}},
-		{"SessionStart", []string{"graph update --quiet --announce", "memory import"}},
+		{"SessionStart", []string{"graph update --quiet --announce", "memory import", "advise --nudge"}},
 		{"Stop", []string{"memory export"}},
 		{"SessionEnd", []string{"memory export"}},
+		{"UserPromptSubmit", []string{"hook prompt-submit"}},
 	}
 	for _, tc := range cases {
 		got := cfg.eventCommands(tc.event)
@@ -88,6 +89,13 @@ func TestPluginHooksConfig(t *testing.T) {
 	// would spam the agent's context on every tool call.
 	if got := cfg.eventCommands("PostToolUse"); strings.Contains(got, "--announce") {
 		t.Errorf("PostToolUse must not carry --announce (SessionStart-only); got %q", got)
+	}
+
+	// C7: the standalone `memory crystallize --nudge` hook command was
+	// replaced by `advise --nudge` (advise's crystallize-ready rule absorbs
+	// it) — a single deterministic suggestion channel on SessionStart.
+	if got := cfg.eventCommands("SessionStart"); strings.Contains(got, "memory crystallize --nudge") {
+		t.Errorf("SessionStart must no longer run the standalone crystallize nudge (superseded by advise --nudge); got %q", got)
 	}
 }
 
@@ -131,5 +139,26 @@ func TestPluginHasPostBashHook(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("plugin PostToolUse missing a Bash --post-bash hook")
+	}
+}
+
+// TestPluginHasEditCheckHook asserts the plugin installs the
+// edit-without-context behavioral hook alongside the graph update hook on the
+// same Write|Edit PostToolUse matcher.
+func TestPluginHasEditCheckHook(t *testing.T) {
+	cfg := loadPluginHooks(t)
+	found := false
+	for _, e := range cfg.Hooks["PostToolUse"] {
+		if e.Matcher != "Write|Edit" {
+			continue
+		}
+		for _, h := range e.Hooks {
+			if strings.Contains(h.Command, "hook edit-check") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("plugin PostToolUse (Write|Edit) missing a hook edit-check command")
 	}
 }

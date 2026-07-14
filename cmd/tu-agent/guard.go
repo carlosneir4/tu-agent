@@ -8,16 +8,27 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tu/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
 )
+
+// guardDecision reports whether a PreToolUse call touches a secret/credential
+// file, plus the session and tool context needed to record a violation row.
+type guardDecision struct {
+	touched   bool
+	sessionID string
+	tool      string
+}
 
 // guardFromHook decodes a PreToolUse hook payload and reports whether the call
 // touches a secret/credential file — either the Write/Edit target path
-// (file_path) or a secret path named in the Bash command. A malformed or empty
-// payload yields false so the guard fails open (the permissions.deny rules
-// remain the primary protection).
-func guardFromHook(r io.Reader) bool {
+// (file_path) or a secret path named in the Bash command — along with the
+// session_id and tool_name from the payload. A malformed or empty payload
+// yields a zero-value guardDecision (touched=false) so the guard fails open
+// (the permissions.deny rules remain the primary protection).
+func guardFromHook(r io.Reader) guardDecision {
 	var payload struct {
+		SessionID string `json:"session_id"`
+		ToolName  string `json:"tool_name"`
 		ToolInput struct {
 			FilePath string `json:"file_path"`
 			Path     string `json:"path"`
@@ -25,20 +36,23 @@ func guardFromHook(r io.Reader) bool {
 		} `json:"tool_input"`
 	}
 	if err := json.NewDecoder(r).Decode(&payload); err != nil {
-		return false
+		return guardDecision{}
 	}
+	d := guardDecision{sessionID: payload.SessionID, tool: payload.ToolName}
 	p := payload.ToolInput.FilePath
 	if p == "" {
 		p = payload.ToolInput.Path
 	}
 	if p != "" && codegen.IsSecretPath(p) {
-		return true
+		d.touched = true
+		return d
 	}
 	if c := payload.ToolInput.Command; c != "" &&
 		(codegen.CommandTouchesSecret(c) || codegen.CommandExposesEnvSecret(c)) {
-		return true
+		d.touched = true
+		return d
 	}
-	return false
+	return d
 }
 
 // guardPathCmd is the PreToolUse hook target. It reads the hook JSON on stdin
@@ -50,7 +64,9 @@ var guardPathCmd = &cobra.Command{
 	Hidden: true,
 	Args:   cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if guardFromHook(cmd.InOrStdin()) {
+		d := guardFromHook(cmd.InOrStdin())
+		if d.touched {
+			recordViolation("secret-guard", d.tool, d.sessionID)
 			fmt.Fprintln(cmd.ErrOrStderr(), "tu-agent: refusing to read/modify secret files or print environment secrets")
 			os.Exit(2)
 		}

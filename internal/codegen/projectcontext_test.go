@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/provider"
-	"github.com/tu/tu-agent/internal/telemetry"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
 )
 
 type recordProvider struct {

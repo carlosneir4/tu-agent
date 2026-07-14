@@ -3,7 +3,7 @@ package crystallize
 import (
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // @s1 ParseLabel extracts the label from the provenance marker line embedded in

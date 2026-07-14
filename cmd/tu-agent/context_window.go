@@ -1,6 +1,6 @@
 package main
 
-import "github.com/tu/tu-agent/internal/provider"
+import "github.com/carlosneir4/tu-agent/internal/provider"
 
 // effectiveContextSize returns the token window to budget against: the
 // configured context_size when set (> 0), otherwise the provider's native

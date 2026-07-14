@@ -32,12 +32,20 @@ func (s *Store) migrateFromJSON(dbPath string) error {
 	for _, l := range lite {
 		id := l.ID
 		if id == "" {
-			id = newID()
+			genID, genErr := newID()
+			if genErr != nil {
+				return fmt.Errorf("memory.migrateFromJSON: %w", genErr)
+			}
+			id = genID
+		}
+		syncID, err := randomSyncID()
+		if err != nil {
+			return fmt.Errorf("memory.migrateFromJSON: %w", err)
 		}
 		ts := l.Timestamp.UTC().Format(timeFormat)
 		// insertObsSQL columns end with author, sync_id
 		if _, err := tx.Exec(insertObsSQL,
-			id, "", "project", "", l.Topic, l.Content, "", l.Source, 1, ts, ts, "", randomSyncID()); err != nil {
+			id, "", "project", "", l.Topic, l.Content, "", l.Source, 1, ts, ts, "", syncID); err != nil {
 			return fmt.Errorf("memory.migrateFromJSON: importing %s: %w", id, err)
 		}
 	}

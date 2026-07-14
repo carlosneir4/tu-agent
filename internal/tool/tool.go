@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/tu/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/provider"
 )
 
 // Tool is a function callable by the agent.

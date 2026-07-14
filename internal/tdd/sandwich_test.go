@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/testresult"
+	"github.com/carlosneir4/tu-agent/internal/testresult"
 )
 
 // scriptDispatcher returns queued outputs in order, recording the tasks it saw.

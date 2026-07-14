@@ -5,9 +5,9 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/tu/tu-agent/internal/autolink"
-	"github.com/tu/tu-agent/internal/graph"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/autolink"
+	"github.com/carlosneir4/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // buildNameIndex maps node name -> node ID for class and file nodes whose name

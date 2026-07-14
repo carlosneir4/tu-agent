@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/provider"
 )
 
 type winStub struct{ win int }

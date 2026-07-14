@@ -150,7 +150,9 @@ no failing test demanded (scope creep). Flag speculative generality → revise: 
 nothing reads (unread), abstractions with a single caller, error handling for unreachable states
 no test hits. Demand surgical discipline → revise: every changed line must trace to the task;
 drive-by reformat/rename/comment-churn in code the task did not require is out. Preexisting
-dead code is signalled, never deleted. You do not edit code — you prune. Write your review to
+dead code is signalled, never deleted. You do not edit code — you prune. A violation of a
+project rule (see the "Project rules" section injected above, when present) is also grounds to
+revise: cite the exact rule that was violated. Write your review to
 __TDDDIR__/progress/judge_<name>.md and set contract.verdict to {result: pass|revise|fail,
 feedback, score 0-10}. Be concrete: cite file:line.` + contractInstruction
 

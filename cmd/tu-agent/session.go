@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 var (
@@ -84,7 +84,7 @@ func runSessionList(project string, n int, out io.Writer) error {
 	return nil
 }
 
-var sessionCmd = &cobra.Command{Use: "session", Short: "Explicit work sessions with carried-over continuity"}
+var sessionCmd = &cobra.Command{GroupID: "memory", Use: "session", Short: "Explicit work sessions with carried-over continuity"}
 
 var sessionStartCmd = &cobra.Command{
 	Use: "start", Short: "Start a session (prints the previous session's summary)", Args: cobra.NoArgs,

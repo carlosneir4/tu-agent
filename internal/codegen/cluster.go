@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/tu/tu-agent/internal/cluster"
+	"github.com/carlosneir4/tu-agent/internal/cluster"
 )
 
 // WeightedEdge is a coupling between two files with a strength. Direction is

@@ -8,7 +8,7 @@
       {
         "hooks": [
           {
-            "command": "go vet ./... 2\u003e\u00261 | head -20 \u0026\u0026 golangci-lint run --fast 2\u003e\u00261 | head -20",
+            "command": "go vet ./... 2>&1 | head -20 && golangci-lint run --fast 2>&1 | head -20",
             "type": "command"
           }
         ],
@@ -19,7 +19,7 @@
       {
         "hooks": [
           {
-            "command": "go test ./... -count=1 -timeout 60s 2\u003e\u00261",
+            "command": "go test ./... -count=1 -timeout 60s 2>&1",
             "type": "command"
           }
         ],
@@ -28,7 +28,7 @@
       {
         "hooks": [
           {
-            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; exec tu-agent guard-path",
+            "command": "command -v tu-agent >/dev/null 2>&1 || exit 0; exec tu-agent guard-path",
             "type": "command"
           }
         ],
@@ -39,7 +39,7 @@
       {
         "hooks": [
           {
-            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; tu-agent memory export --quiet",
+            "command": "command -v tu-agent >/dev/null 2>&1 || exit 0; tu-agent memory export --quiet",
             "type": "command"
           }
         ]
@@ -49,11 +49,11 @@
       {
         "hooks": [
           {
-            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; tu-agent graph update --quiet",
+            "command": "command -v tu-agent >/dev/null 2>&1 || exit 0; tu-agent graph update --quiet",
             "type": "command"
           },
           {
-            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; tu-agent memory import --quiet",
+            "command": "command -v tu-agent >/dev/null 2>&1 || exit 0; tu-agent memory import --quiet",
             "type": "command"
           }
         ]
@@ -63,7 +63,7 @@
       {
         "hooks": [
           {
-            "command": "command -v tu-agent \u003e/dev/null 2\u003e\u00261 || exit 0; tu-agent memory export --quiet",
+            "command": "command -v tu-agent >/dev/null 2>&1 || exit 0; tu-agent memory export --quiet",
             "type": "command"
           }
         ]
@@ -147,5 +147,8 @@
       "Bash(cat *.key)",
       "Bash(cat *.env*)"
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": false
   }
 }

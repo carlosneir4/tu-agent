@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/provider"
-	"github.com/tu/tu-agent/internal/skill"
-	"github.com/tu/tu-agent/internal/subagent"
-	"github.com/tu/tu-agent/internal/telemetry"
-	"github.com/tu/tu-agent/internal/tool"
+	"github.com/carlosneir4/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/skill"
+	"github.com/carlosneir4/tu-agent/internal/subagent"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
+	"github.com/carlosneir4/tu-agent/internal/tool"
 )
 
 func newTestDispatchTool(t *testing.T, prov provider.Provider) *subagent.DispatchAgentTool {

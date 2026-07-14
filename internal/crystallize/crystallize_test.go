@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func obs(topic, typ, title, content string, daysAgo int) memory.Observation {

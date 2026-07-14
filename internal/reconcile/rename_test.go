@@ -78,8 +78,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/crystallize"
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // syncIDFor reproduces computeSyncID(scope="project", topic) — the deterministic
@@ -320,8 +320,10 @@ func TestApplyRename_FolderReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No orphans to rebind; the folder reconciliation runs regardless.
-	if _, err := ApplyPlanWithOptions(store, Plan{}, nil, skillsDir, ApplyOptions{}); err != nil {
+	// No orphans to rebind; the folder reconciliation runs regardless (gated
+	// behind PruneFolders since the F0 prune gate — these mechanics are what
+	// this test pins, so it opts in).
+	if _, err := ApplyPlanWithOptions(store, Plan{}, nil, skillsDir, ApplyOptions{PruneFolders: true}); err != nil {
 		t.Fatalf("ApplyPlanWithOptions: %v", err)
 	}
 

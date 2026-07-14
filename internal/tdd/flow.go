@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tu/tu-agent/internal/testresult"
+	"github.com/carlosneir4/tu-agent/internal/testresult"
 )
 
 // Options configures one flow run.

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/graph/store"
-	"github.com/tu/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
+	"github.com/carlosneir4/tu-agent/internal/provider"
 )
 
 // The post-learn reminder must tell the user to start a fresh session (or
@@ -331,10 +331,9 @@ func TestRunSynthesizeAndEnrich_MergedSingleCall(t *testing.T) {
 	if p.calls != 1 {
 		t.Errorf("merged path should make exactly 1 model call, made %d", p.calls)
 	}
-	archPath := filepath.Join(root, ".claude", "skills", "architecture", "SKILL.md")
-	arch, err := os.ReadFile(archPath)
-	if err != nil || !strings.Contains(string(arch), "map body") {
-		t.Errorf("architecture skill not written from merged call: err=%v", err)
+	arch, err := loadArchitecture()
+	if err != nil || !strings.Contains(arch, "map body") {
+		t.Errorf("architecture overview not stored from merged call: err=%v got=%q", err, arch)
 	}
 	md, _ := os.ReadFile("CLAUDE.md")
 	if !strings.Contains(string(md), "## Coding Conventions") {

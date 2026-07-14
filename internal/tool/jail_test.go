@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/tool"
+	"github.com/carlosneir4/tu-agent/internal/tool"
 )
 
 func TestConfinedPath_AllowsInsideRoot(t *testing.T) {

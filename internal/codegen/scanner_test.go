@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
 )
 
 // mkFixture creates a small fake codebase for scanner tests.

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/config"
-	"github.com/tu/tu-agent/internal/memory"
-	"github.com/tu/tu-agent/internal/skill"
+	"github.com/carlosneir4/tu-agent/internal/config"
+	"github.com/carlosneir4/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/skill"
 )
 
 func TestResolveProviderName(t *testing.T) {

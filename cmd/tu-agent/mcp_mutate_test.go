@@ -3,15 +3,11 @@ package main
 import "testing"
 
 func TestMCPToolNamesIncludesMutators(t *testing.T) {
-	want := map[string]bool{"mem_rescope": false, "mem_delete": false}
-	for _, n := range mcpToolNames {
-		if _, ok := want[n]; ok {
-			want[n] = true
-		}
-	}
-	for name, present := range want {
-		if !present {
-			t.Errorf("mcpToolNames missing %q", name)
+	t.Chdir(t.TempDir())
+	served := servedToolNames(t)
+	for _, name := range []string{"mem_rescope", "mem_delete"} {
+		if !served[name] {
+			t.Errorf("newMCPServer does not serve %q", name)
 		}
 	}
 }

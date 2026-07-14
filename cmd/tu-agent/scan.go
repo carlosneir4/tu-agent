@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tu/tu-agent/internal/config"
-	"github.com/tu/tu-agent/internal/skill"
-	"github.com/tu/tu-agent/internal/subagent"
+	"github.com/carlosneir4/tu-agent/internal/config"
+	"github.com/carlosneir4/tu-agent/internal/skill"
+	"github.com/carlosneir4/tu-agent/internal/subagent"
 )
 
 type skillRow struct {
@@ -71,9 +71,11 @@ func buildInventory(home, cwd string, routing config.RoutingConfig) Inventory {
 
 	// Agents: file-based per layer + built-ins.
 	agentDirs := subagent.SearchPaths(home, cwd)
+	// Agents loaded from the project directory are untrusted (see buildAgentDefs
+	// in chat.go); mirror that here so the inventory reports the correct dir.
 	roDirs := map[string]bool{}
-	if home != "" {
-		roDirs[filepath.Clean(filepath.Join(home, ".claude", "agents"))] = true
+	if cwd != "" {
+		roDirs[filepath.Clean(filepath.Join(cwd, ".claude", "agents"))] = true
 	}
 	awin := map[string]agentRow{}
 	for _, dir := range agentDirs {
@@ -162,8 +164,9 @@ func renderInventory(w io.Writer, inv Inventory, asJSON bool) error {
 var scanJSON bool
 
 var scanCmd = &cobra.Command{
-	Use:   "scan",
-	Short: "List the skills, agents, config, and plugins available to this repo",
+	GroupID: "diagnostics",
+	Use:     "scan",
+	Short:   "List the skills, agents, config, and plugins available to this repo",
 	Long: `Read-only inventory of what tu-agent would use in the current repo:
 skills and agents (effective, after layer precedence, with origin and shadowing),
 the resolved routing config, and the Claude Code plugins installed (listed for

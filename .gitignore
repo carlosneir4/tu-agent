@@ -44,6 +44,7 @@ scripts/fixtures/**/package-lock.json
 .tu-agent/memory.db
 .tu-agent/memory.db-wal
 .tu-agent/memory.db-shm
+.tu-agent/graph.build.lock
 .claude/settings.json.bak
 # .tu-agent/memory/chunks/ is intentionally versioned (shared team memory)
 # <<< tu-agent <<<

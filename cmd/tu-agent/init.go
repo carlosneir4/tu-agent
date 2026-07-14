@@ -11,7 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tu/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/tdd"
 )
 
 const defaultInitPatterns = ".go,.java,.py,.ts,.js,.kt,.scala,.rb"
@@ -46,9 +47,10 @@ type initSetupOpts struct {
 	Plugin        bool
 }
 
-// runInitSetup performs setup-only init: detect language/build tooling and
-// generate CLAUDE.md plus the five dev-flow agents from templates. No LLM calls.
-func runInitSetup(_ context.Context, opts initSetupOpts) error {
+// runInitSetup performs setup-only init: detect language/build tooling, generate
+// a CLAUDE.md knowledge block plus a hardened settings.json, and seed .tu-agent
+// config. It does not materialize dev-flow agents. No LLM calls.
+func runInitSetup(ctx context.Context, opts initSetupOpts) error {
 	if opts.Update && opts.Force {
 		return fmt.Errorf("init: --update and --force are mutually exclusive")
 	}
@@ -71,13 +73,17 @@ func runInitSetup(_ context.Context, opts initSetupOpts) error {
 	}
 	buildTool := codegen.DetectBuildTool(".")
 	testCmd := codegen.DetectTestCommandForRoot(".")
-	// Emit the detected facts so the plugin orchestrator can pass the real test
-	// command to the enricher (which fills __TEST_COMMAND__ in dev-flow agents).
+	// Emit the detected facts for the plugin orchestrator (informational).
 	fmt.Printf("Detected language=%s build-tool=%s test-command=%q\n", lang, buildTool, testCmd)
-	if changed, err := seedProjectTestCommand(".", testCmd); err != nil {
+	if changed, err := tdd.SeedProjectTestCommand(".", testCmd); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: seeding tdd.test_command: %v\n", err)
 	} else if changed {
 		fmt.Printf("Seeded tdd.test_command=%q into .tu-agent/config.yaml\n", testCmd)
+	}
+	if changed, err := tdd.SeedProjectLanguage(".", lang); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: seeding tdd.language: %v\n", err)
+	} else if changed {
+		fmt.Printf("Seeded tdd.language=%q into .tu-agent/config.yaml\n", lang)
 	}
 
 	if opts.Update {
@@ -88,9 +94,6 @@ func runInitSetup(_ context.Context, opts initSetupOpts) error {
 		if err := generateClaudeMD(info, lang, buildTool, testCmd, opts.Force); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: CLAUDE.md: %v\n", err)
 		}
-		if err := generateAgents(info, lang, buildTool, testCmd, opts.Force); err != nil {
-			return err
-		}
 	}
 	if !opts.NoHarden {
 		home, _ := os.UserHomeDir()
@@ -99,16 +102,23 @@ func runInitSetup(_ context.Context, opts initSetupOpts) error {
 			fmt.Fprintf(os.Stderr, "warning: hardening: %v\n", err)
 		}
 	}
+	// Auto-learn: if the concept store is empty, populate it deterministically so
+	// prepare leaves a usable knowledge index without a second manual step. A
+	// missing/unreadable store counts as empty. Note this fires on --update too
+	// when the store is empty: there is nothing to refresh, so a full build is
+	// the right degrade (idempotent once populated — a later run is a no-op).
+	if concepts, cerr := loadConceptSkills(); cerr != nil || len(concepts) == 0 {
+		fmt.Println("prepare: concept store is empty — running the deterministic learn pipeline")
+		if err := runLearn(ctx, learnOpts{SkipLLM: true, Subpath: opts.Subpath}); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: auto-learn: %v\n", err)
+		}
+	}
 	return nil
 }
 
-// devFlowRoles are the agent role files init manages, by filename stem.
-var devFlowRoles = []string{"developer", "qa", "architect", "pr-reviewer", "security-reviewer"}
-
-// refreshArtifacts re-applies the managed regions of already-deployed artifacts
-// in place: the CLAUDE.md knowledge block (if CLAUDE.md exists) and each agent's
-// frontmatter tools: line. It never creates CLAUDE.md, never regenerates an
-// agent body, and never runs the LLM.
+// refreshArtifacts re-applies the managed region of already-deployed artifacts
+// in place: the CLAUDE.md knowledge block (if CLAUDE.md exists). It never creates
+// CLAUDE.md, never touches agent files, and never runs the LLM.
 func refreshArtifacts(root string) error {
 	claudePath := filepath.Join(root, "CLAUDE.md")
 	if _, err := os.Stat(claudePath); err == nil {
@@ -121,39 +131,39 @@ func refreshArtifacts(root string) error {
 	} else {
 		return fmt.Errorf("init --update: stat CLAUDE.md: %w", err)
 	}
-
-	updated := 0
-	for _, role := range devFlowRoles {
-		path := filepath.Join(root, ".claude", "agents", role+".md")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("init --update: reading %s: %w", path, err)
-		}
-		toolsValue, ok := codegen.AgentTools(role)
-		if !ok {
-			continue
-		}
-		out, changed, had := codegen.ReplaceFrontmatterTools(string(data), toolsValue)
-		if !had {
-			fmt.Printf("  %s.md: no tools line — skipped\n", role)
-			continue
-		}
-		if !changed {
-			continue
-		}
-		if werr := os.WriteFile(path, []byte(out), 0o644); werr != nil {
-			return fmt.Errorf("init --update: writing %s: %w", path, werr)
-		}
-		fmt.Printf("  Updated: .claude/agents/%s.md (tools)\n", role)
-		updated++
-	}
-	if updated == 0 {
-		fmt.Println("  Agent tools already current.")
-	}
 	return nil
+}
+
+// writeBackupOnce writes content to bakPath with O_EXCL semantics: the first
+// backup wins and a repeat run keeps it instead of clobbering it with content
+// that is itself generated (same idiom as applyHardening's settings.json
+// backup). Anything already at bakPath that is not a regular file — e.g. a
+// directory — is an error, never treated as a usable backup.
+func writeBackupOnce(bakPath string, content []byte) error {
+	bak, err := os.OpenFile(bakPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	switch {
+	case err == nil:
+		_, werr := bak.Write(content)
+		cerr := bak.Close()
+		if werr != nil {
+			return fmt.Errorf("writeBackupOnce: %w", werr)
+		}
+		if cerr != nil {
+			return fmt.Errorf("writeBackupOnce: %w", cerr)
+		}
+		return nil
+	case errors.Is(err, os.ErrExist):
+		fi, serr := os.Stat(bakPath)
+		if serr != nil {
+			return fmt.Errorf("writeBackupOnce: %w", serr)
+		}
+		if !fi.Mode().IsRegular() {
+			return fmt.Errorf("writeBackupOnce: %s exists and is not a regular file", bakPath)
+		}
+		return nil // keep the existing original backup
+	default:
+		return fmt.Errorf("writeBackupOnce: %w", err)
+	}
 }
 
 // generateClaudeMD renders CLAUDE.md from the static template using detected data.
@@ -169,6 +179,17 @@ func generateClaudeMD(info *codegen.ProjectInfo, lang, buildTool, testCmd string
 	if err != nil {
 		return fmt.Errorf("generateClaudeMD: %w", err)
 	}
+	// Back up an existing CLAUDE.md ONLY when the overwrite will actually
+	// happen (file exists AND force is set — writeAgentFile's own skip
+	// condition). Write-once: a repeat --force must not clobber the first
+	// backup with content that is itself generated. A failed backup
+	// hard-fails the whole step so a bad --force regen never destroys a
+	// hand-edited CLAUDE.md with no working backup.
+	if existing, readErr := os.ReadFile("CLAUDE.md"); readErr == nil && force {
+		if bakErr := writeBackupOnce("CLAUDE.md.bak", existing); bakErr != nil {
+			return fmt.Errorf("generateClaudeMD: backing up CLAUDE.md: %w", bakErr)
+		}
+	}
 	skipped, writeErr := writeAgentFile("CLAUDE.md", content, force)
 	if writeErr != nil {
 		return fmt.Errorf("generateClaudeMD: %w", writeErr)
@@ -177,61 +198,6 @@ func generateClaudeMD(info *codegen.ProjectInfo, lang, buildTool, testCmd string
 		fmt.Println("  CLAUDE.md already exists — skipped (use --force to regenerate)")
 	} else {
 		fmt.Println("  Created: CLAUDE.md")
-	}
-	return nil
-}
-
-// generateAgents renders the seven dev-flow agent files from per-language templates.
-func generateAgents(info *codegen.ProjectInfo, lang, buildTool, testCmd string, force bool) error {
-	fmt.Println("\nGenerating dev-flow agents...")
-	agentsDir := filepath.Join(".claude", "agents")
-	written, skippedCount := 0, 0
-	for _, role := range codegen.AgentRoles {
-		tmpl, tmplErr := codegen.LoadTemplate(lang, role)
-		if tmplErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: no template for role %q: %v\n", role, tmplErr)
-			continue
-		}
-		rendered, renderErr := codegen.RenderTemplate(tmpl, codegen.AgentTemplateData{
-			ProjectName: info.Name,
-			Language:    lang,
-			BuildTool:   buildTool,
-			TestCommand: testCmd,
-		})
-		if renderErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: rendering role %q failed: %v\n", role, renderErr)
-			continue
-		}
-		dest := filepath.Join(agentsDir, role+".md")
-		// Back up hand-tuned agents ONLY when the overwrite will actually
-		// happen (file exists AND force is set — writeAgentFile's own skip
-		// condition). Backing up whenever the file merely exists would, on a
-		// force=false run, clobber a meaningful older .bak from a prior
-		// --force run with a redundant copy while writing nothing. A failed
-		// backup hard-fails the whole step (mirrors applyHardening's
-		// settings.json backup) so a bad --force regen never destroys
-		// enrichment with no working backup.
-		if existing, readErr := os.ReadFile(dest); readErr == nil && force {
-			if bakErr := os.WriteFile(dest+".bak", existing, 0o644); bakErr != nil {
-				return fmt.Errorf("generateAgents: backing up %s: %w", role, bakErr)
-			}
-		}
-		skipped, writeErr := writeAgentFile(dest, rendered, force)
-		if writeErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not write agent %q: %v\n", role, writeErr)
-			continue
-		}
-		if skipped {
-			fmt.Printf("  %s.md already exists — skipped\n", role)
-			skippedCount++
-		} else {
-			fmt.Printf("  Created: %s\n", dest)
-			written++
-		}
-	}
-	fmt.Printf("\nCreated %d agent(s), skipped %d existing.\n", written, skippedCount)
-	if skippedCount > 0 {
-		fmt.Println("Use --force to overwrite existing agents.")
 	}
 	return nil
 }
@@ -355,20 +321,22 @@ func applyGitInfoExclude() error {
 }
 
 var initCmd = &cobra.Command{
+	GroupID: "setup",
 	Use:     "prepare [path]",
 	Aliases: []string{"init"},
-	Short:   "Prepare a repository: dev-flow agents, CLAUDE.md, hardened settings",
+	Short:   "Prepare a repository: CLAUDE.md knowledge block + hardened settings",
 	Long: `Detects the project language (or takes --lang for empty/new repos) and
-generates the 5 dev-flow agents (.claude/agents/) plus a CLAUDE.md at the repo
-root, all from templates (no API calls). It also writes a hardened
-.claude/settings.json (permissions, security/quality hooks, MCP allowlist) and,
-by default (private), keeps tu-agent/Claude artifacts out of commits via
+writes a CLAUDE.md knowledge block at the repo root, a hardened
+.claude/settings.json (permissions, security/quality hooks, MCP allowlist), and
+seeds .tu-agent config — all deterministically (no API calls). By default
+(private) it keeps tu-agent/Claude artifacts out of commits via
 .git/info/exclude; pass --public to commit a .gitignore block instead, or
 --no-harden to skip hardening entirely.
 
-The dev-flow agents are skeletons until enriched. To fill them with project
-knowledge and capture domain concepts, run the /tu-agent:prepare plugin skill in
-Claude Code, or run: tu-agent learn`,
+Dev-flow agents are NOT materialized: the tdd flow resolves each role to an
+embedded generic shell at runtime. Role knowledge comes from the graph
+(get_context) plus those shells, not per-repo enrichment; override a role by
+adding your own .claude/agents/<role>.md.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		subpath := ""
@@ -421,11 +389,11 @@ func init() {
 	initCmd.Flags().StringVar(&initLang, "lang", "",
 		"project language (go|java|python|typescript); required for empty repos, overrides detection")
 	initCmd.Flags().BoolVar(&initNoLLM, "no-llm", false,
-		"skip LLM calls; generate agents and CLAUDE.md from templates only")
+		"skip LLM calls; deterministic setup only (CLAUDE.md + hardened settings)")
 	initCmd.Flags().BoolVar(&initForce, "force", false,
-		"overwrite existing CLAUDE.md and agent files")
+		"overwrite an existing CLAUDE.md")
 	initCmd.Flags().BoolVar(&initUpdate, "update", false,
-		"refresh managed regions (CLAUDE.md knowledge block, agent tools) in place without overwriting enrichment")
+		"refresh the CLAUDE.md knowledge block in place")
 	initCmd.Flags().StringVar(&initProvider, "provider", "",
 		"provider override (claude|local)")
 	initCmd.Flags().BoolVar(&initNoHarden, "no-harden", false,

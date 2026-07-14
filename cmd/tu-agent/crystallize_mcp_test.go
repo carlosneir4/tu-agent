@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func TestHandleMemClusters_ReturnsClusters(t *testing.T) {
@@ -37,13 +37,8 @@ func TestHandleMemClusters_ReturnsClusters(t *testing.T) {
 }
 
 func TestMemClustersInMCPToolNames(t *testing.T) {
-	found := false
-	for _, n := range mcpToolNames {
-		if n == "mem_clusters" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("mcpToolNames missing mem_clusters")
+	t.Chdir(t.TempDir())
+	if !servedToolNames(t)["mem_clusters"] {
+		t.Error("newMCPServer does not serve mem_clusters")
 	}
 }

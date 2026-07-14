@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tu/tu-agent/internal/graph"
+	"github.com/carlosneir4/tu-agent/internal/graph"
 )
 
 // SymbolCoverer reports the covered fraction of a symbol's span. Implemented by

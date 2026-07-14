@@ -1,4 +1,4 @@
-module github.com/tu/tu-agent
+module github.com/carlosneir4/tu-agent
 
 go 1.25.0
 

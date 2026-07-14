@@ -458,6 +458,47 @@ func TestCommandExposesEnvSecret(t *testing.T) {
 	}
 }
 
+func TestContentLikelySecret(t *testing.T) {
+	// Must flag: free-text note content that appears to embed a live secret.
+	for _, c := range []string{
+		"AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		"api_key: sk-abcdef123456",
+		"we found the token in the logs\n-----BEGIN RSA PRIVATE KEY-----\nMII...\n-----END RSA PRIVATE KEY-----",
+		"leaked credential: AKIAIOSFODNN7EXAMPLE",
+	} {
+		if !ContentLikelySecret(c) {
+			t.Errorf("ContentLikelySecret(%q) = false, want true", c)
+		}
+	}
+	// Must flag: high-precision credential-prefix token shapes (GitHub/Slack).
+	for _, c := range []string{
+		"ghp_0123456789abcdefABCDEF0123456789abcd",
+		"xoxb-123456789012-abcdefABCDEF",
+	} {
+		if !ContentLikelySecret(c) {
+			t.Errorf("ContentLikelySecret(%q) = false, want true", c)
+		}
+	}
+	// Must NOT flag: ordinary prose that merely mentions secret-adjacent words.
+	for _, c := range []string{
+		"we rotated the API key policy last week",
+		"the token bucket algorithm",
+		"password reset flow",
+		"",
+		// Shell parameter-expansion default/alt values after a marker+colon are
+		// NOT a credential value — they must not trip the assignment pattern.
+		`echo "...${ANTHROPIC_API_KEY:-UNSET}..."`,
+		"set env TOKEN: ${FOO:-defaultval}",
+		"${API_KEY:+altvalue}",
+		// Prose that merely names a token-prefix without a long credential body.
+		"the ghp_ prefix marks a token",
+	} {
+		if ContentLikelySecret(c) {
+			t.Errorf("ContentLikelySecret(%q) = true, want false", c)
+		}
+	}
+}
+
 func TestHardenHooksGuardMatchesBash(t *testing.T) {
 	s := HardenedSettings("go", "go", false)
 	hooks := s["hooks"].(map[string]any)
@@ -503,6 +544,17 @@ func TestSecretGuardUsesGuardPathNotJq(t *testing.T) {
 func TestGitignoreBlockIgnoresSettingsBackup(t *testing.T) {
 	if !strings.Contains(GitignoreBlock(), ".claude/settings.json.bak") {
 		t.Error("GitignoreBlock should ignore .claude/settings.json.bak")
+	}
+}
+
+// TestGitignoreBlockIgnoresBuildLock verifies the managed .gitignore block
+// covers the single-flight build lock file that BuildScoped takes at
+// "<root>/.tu-agent/graph.build.lock" (see internal/graph/extract's
+// build-single-flight-lock feature). Consumer repos must never commit this
+// lock file.
+func TestGitignoreBlockIgnoresBuildLock(t *testing.T) {
+	if !strings.Contains(GitignoreBlock(), ".tu-agent/graph.build.lock") {
+		t.Error("GitignoreBlock should ignore .tu-agent/graph.build.lock")
 	}
 }
 
@@ -740,7 +792,7 @@ func TestGitignoreBlockKeepsChunksVersioned(t *testing.T) {
 	}
 }
 
-func TestHardenSessionStartIncludesCrystallize(t *testing.T) {
+func TestHardenSessionStartIncludesAdviseNudge(t *testing.T) {
 	s := HardenedSettings("go", "go", false)
 	hooks, ok := s["hooks"].(map[string]any)
 	if !ok {
@@ -759,8 +811,14 @@ func TestHardenSessionStartIncludesCrystallize(t *testing.T) {
 	if !strings.Contains(joined, "memory materialize") {
 		t.Errorf("SessionStart must materialize crystallized skills; got:\n%s", joined)
 	}
-	if !strings.Contains(joined, "memory crystallize --nudge") {
-		t.Errorf("SessionStart must run the crystallize nudge; got:\n%s", joined)
+	// The crystallize --nudge hook was replaced by advise --nudge (C7):
+	// advise's crystallize-ready rule absorbs the crystallize nudge, and
+	// SessionStart gets a single deterministic suggestion channel.
+	if !strings.Contains(joined, "tu-agent advise --nudge") {
+		t.Errorf("SessionStart must run the advise nudge; got:\n%s", joined)
+	}
+	if strings.Contains(joined, "memory crystallize --nudge") {
+		t.Errorf("SessionStart must no longer run the standalone crystallize nudge (superseded by advise --nudge); got:\n%s", joined)
 	}
 }
 
@@ -864,7 +922,7 @@ func TestMergeSettingsPluginStripsSupersededHooks(t *testing.T) {
 
 func TestHardenHooksPluginPresent(t *testing.T) {
 	h := hardenHooks("go", true)
-	for _, k := range []string{"SessionStart", "Stop", "SessionEnd"} {
+	for _, k := range []string{"SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"} {
 		if _, ok := h[k]; ok {
 			t.Errorf("pluginPresent hooks include %s — duplicated with plugin/hooks/hooks.json", k)
 		}
@@ -877,9 +935,39 @@ func TestHardenHooksPluginPresent(t *testing.T) {
 	}
 	// Without the plugin nothing changes.
 	full := hardenHooks("go", false)
-	for _, k := range []string{"SessionStart", "Stop", "SessionEnd", "PreToolUse", "PostToolUse"} {
+	for _, k := range []string{"SessionStart", "Stop", "SessionEnd", "PreToolUse", "PostToolUse", "UserPromptSubmit"} {
 		if _, ok := full[k]; !ok {
 			t.Errorf("standalone hooks missing %s", k)
 		}
+	}
+}
+
+// TestHardenHooksUserPromptSubmit asserts the standalone (no-plugin) hooks
+// register the friction/prompt-submit hook via the tu-agent binary, guarded
+// the same way as every other standalone hook (binaryGuardClause).
+func TestHardenHooksUserPromptSubmit(t *testing.T) {
+	h := hardenHooks("go", false)
+	entries, ok := h["UserPromptSubmit"].([]any)
+	if !ok || len(entries) == 0 {
+		t.Fatal("no UserPromptSubmit hook")
+	}
+	var cmds []string
+	for _, e := range entries {
+		em, _ := e.(map[string]any)
+		inner, _ := em["hooks"].([]any)
+		for _, hh := range inner {
+			if hm, ok := hh.(map[string]any); ok {
+				if c, ok := hm["command"].(string); ok {
+					cmds = append(cmds, c)
+				}
+			}
+		}
+	}
+	joined := strings.Join(cmds, "\n")
+	if !strings.Contains(joined, "tu-agent hook prompt-submit") {
+		t.Errorf("UserPromptSubmit must run tu-agent hook prompt-submit; got %q", joined)
+	}
+	if !strings.Contains(joined, binaryGuardClause) {
+		t.Errorf("UserPromptSubmit must use the binary guard clause; got %q", joined)
 	}
 }

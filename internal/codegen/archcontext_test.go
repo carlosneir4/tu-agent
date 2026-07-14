@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/provider"
 )
 
 // textProvider returns a fixed text block for every Send call.

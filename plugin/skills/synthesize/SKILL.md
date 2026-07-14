@@ -5,8 +5,9 @@ description: Use when the user wants to (re)generate the architecture overview s
 
 # tu-agent synthesize (plugin)
 
-Regenerates `.claude/skills/architecture/SKILL.md` and the CLAUDE.md
-knowledge block from the concept cards already in the graph store.
+Regenerates the architecture overview (stored in the graph store, read via
+`get_architecture`) and the CLAUDE.md knowledge block from the concept cards
+already in the graph store.
 
 Define `TU="${CLAUDE_PLUGIN_ROOT}/bin/tu-agent"`.
 

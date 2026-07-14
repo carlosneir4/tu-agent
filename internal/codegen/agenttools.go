@@ -1,10 +1,14 @@
 package codegen
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/carlosneir4/tu-agent/internal/frontmatter"
+)
 
 // AgentTools returns the canonical Claude Code `tools:` line value (the text
 // after "tools: ") for a dev-flow agent role, and whether the role is known.
-// These mirror plugin/agent-templates/<role>.md verbatim and are pinned by a
+// These mirror plugin/agents/<role>.md verbatim and are pinned by a
 // drift test.
 func AgentTools(role string) (string, bool) {
 	const (
@@ -30,39 +34,6 @@ func AgentTools(role string) (string, bool) {
 	}
 }
 
-// ReplaceFrontmatterTools replaces the `tools:` line inside the leading
-// `---`…`---` YAML frontmatter of an agent file with "tools: " + toolsValue,
-// preserving every other byte. It returns the new content, whether anything
-// changed (false if the line already matched), and whether a frontmatter
-// `tools:` line was present at all (false → content returned unchanged).
-func ReplaceFrontmatterTools(content, toolsValue string) (out string, changed, hadToolsLine bool) {
-	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return content, false, false
-	}
-	end := -1
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			end = i
-			break
-		}
-	}
-	if end == -1 {
-		return content, false, false
-	}
-	want := "tools: " + toolsValue
-	for i := 1; i < end; i++ {
-		if strings.HasPrefix(lines[i], "tools:") {
-			if lines[i] == want {
-				return content, false, true
-			}
-			lines[i] = want
-			return strings.Join(lines, "\n"), true, true
-		}
-	}
-	return content, false, false
-}
-
 // GraphAgentTools returns the graph/memory MCP tools injected into agents so they
 // can query the dependency graph and memory. Single source of truth.
 func GraphAgentTools() []string {
@@ -86,17 +57,8 @@ func GraphAgentTools() []string {
 // It returns (false, false) when no YAML frontmatter is present at all.
 func FrontmatterToolsIsInline(content string) (inline bool, hadFrontmatter bool) {
 	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return false, false
-	}
-	end := -1
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			end = i
-			break
-		}
-	}
-	if end == -1 {
+	_, end, ok := frontmatter.Bounds(lines)
+	if !ok {
 		return false, false
 	}
 	for i := 1; i < end; i++ {
@@ -128,17 +90,8 @@ func FrontmatterToolsIsInline(content string) (inline bool, hadFrontmatter bool)
 // frontmatter was present at all.
 func UnionFrontmatterTools(content string, add []string) (out string, changed, had bool) {
 	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return content, false, false
-	}
-	end := -1
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			end = i
-			break
-		}
-	}
-	if end == -1 {
+	_, end, ok := frontmatter.Bounds(lines)
+	if !ok {
 		return content, false, false
 	}
 	if len(add) == 0 {

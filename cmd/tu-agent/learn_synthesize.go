@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/telemetry"
 	"github.com/spf13/cobra"
-	"github.com/tu/tu-agent/internal/codegen"
-	"github.com/tu/tu-agent/internal/provider"
-	"github.com/tu/tu-agent/internal/telemetry"
 )
 
 // loadConceptSkills reads concept cards from the graph store and parses each
@@ -62,34 +62,38 @@ func loadConceptSkillDocs() ([]codegen.SkillDoc, error) {
 
 // prepareSynthesisInputs runs the deterministic part of synthesis: scan Java,
 // persist the file-level graph, load skills, and aggregate domain edges. It is
-// the testable seam (no model call). When buildGraph is true the graph is
-// rebuilt from source; pass false when the caller has already built it.
-func prepareSynthesisInputs(root, subpath string, buildGraph bool) (string, []codegen.DomainFact, []codegen.Edge, error) {
+// the testable seam (no model call) and is read-only w.r.t. disk state — it
+// computes but does not write skill-fingerprints.json; the caller writes them
+// only after synthesis (the model call) actually succeeds, so a failed
+// synthesis never leaves fingerprints falsely claiming freshness. When
+// buildGraph is true the graph is rebuilt from source; pass false when the
+// caller has already built it.
+func prepareSynthesisInputs(root, subpath string, buildGraph bool) (string, []codegen.DomainFact, []codegen.Edge, codegen.SkillFingerprints, error) {
 	if buildGraph {
 		if err := runGraphBuild(subpath); err != nil {
-			return "", nil, nil, fmt.Errorf("building graph: %w", err)
+			return "", nil, nil, nil, fmt.Errorf("building graph: %w", err)
 		}
 	}
 	s, err := openGraphStore()
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
 	_, edges, _, err := loadSourceUnits(s)
 	if cerr := s.Close(); cerr != nil {
 		slog.Warn("learn: closing graph store", "err", cerr)
 	}
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
 
 	// Second store open (loadSourceUnits above used and closed the first);
 	// loadConceptSkills is self-contained. SQLite WAL tolerates this.
 	skills, err := loadConceptSkills()
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("loading concepts: %w", err)
+		return "", nil, nil, nil, fmt.Errorf("loading concepts: %w", err)
 	}
 	if len(skills) == 0 {
-		return "", nil, nil, fmt.Errorf("no concepts found — run 'tu-agent learn <path>' first")
+		return "", nil, nil, nil, fmt.Errorf("no concepts found — run 'tu-agent learn <path>' first")
 	}
 	var domains []codegen.DomainFact
 	for _, s := range skills {
@@ -101,7 +105,7 @@ func prepareSynthesisInputs(root, subpath string, buildGraph bool) (string, []co
 		})
 	}
 	if len(domains) == 0 {
-		return "", nil, nil, fmt.Errorf("no domain skills found — run 'tu-agent learn <path>' first")
+		return "", nil, nil, nil, fmt.Errorf("no domain skills found — run 'tu-agent learn <path>' first")
 	}
 
 	fileToDomain := codegen.BuildFileToDomain(skills)
@@ -109,19 +113,16 @@ func prepareSynthesisInputs(root, subpath string, buildGraph bool) (string, []co
 
 	fps, err := codegen.RecordFingerprints(root, skills)
 	if err != nil {
-		return "", nil, nil, err
-	}
-	if err := fps.WriteJSON(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
 
 	abs, _ := filepath.Abs(root)
-	return filepath.Base(abs), domains, domainEdges, nil
+	return filepath.Base(abs), domains, domainEdges, fps, nil
 }
 
 func runSynthesize(ctx context.Context, subpath, providerOverride string) error {
 	root := "."
-	project, domains, domainEdges, err := prepareSynthesisInputs(root, subpath, true)
+	project, domains, domainEdges, fps, err := prepareSynthesisInputs(root, subpath, true)
 	if err != nil {
 		return err
 	}
@@ -150,65 +151,28 @@ func runSynthesize(ctx context.Context, subpath, providerOverride string) error 
 	if err != nil {
 		return err
 	}
-
-	outDir := filepath.Join(generatedSkillsDir(root), "architecture")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return fmt.Errorf("creating architecture skill dir: %w", err)
-	}
-	outPath := filepath.Join(outDir, "SKILL.md")
-	wrote, err := writeArchitectureSkill(outPath, content)
+	// Persist the overview to the graph store (F7-A: the narrative lives in
+	// graph.db, read via get_architecture / `tu-agent graph architecture`).
+	wrote, err := persistArchitecture(content)
 	if err != nil {
 		return err
 	}
-	if wrote {
-		fmt.Printf("Wrote %s (%d domains, %d domain edges)\n", outPath, len(domains), len(domainEdges))
+	if !wrote {
+		// The model produced no usable overview (empty after stripping
+		// frontmatter). Do NOT record fingerprints — that would falsely claim
+		// the skills are up-to-date when the store still holds the old/absent
+		// overview.
+		fmt.Fprintln(os.Stderr, "warning: synthesis produced an empty architecture overview — nothing stored, fingerprints not updated")
+		return nil
 	}
+	// Only record fingerprints once the overview has actually been persisted —
+	// otherwise a failed synthesis would leave fingerprints on disk falsely
+	// claiming the skills are up-to-date.
+	if err := fps.WriteJSON(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); err != nil {
+		return err
+	}
+	fmt.Printf("Stored architecture overview (%d domains, %d domain edges)\n", len(domains), len(domainEdges))
 	return nil
-}
-
-// architectureGeneratedMarker tags a generated architecture/SKILL.md as owned
-// by tu-agent codegen. It lives on its own line right after the closing
-// frontmatter delimiter (never before the leading "---", which
-// codegen.ParseSkillContent requires as the file's first line) so a
-// hand-edited replacement can be told apart from a generated one.
-const architectureGeneratedMarker = "<!-- tu-agent:generated -->"
-
-// injectArchitectureMarker inserts architectureGeneratedMarker as the first
-// line of the body, right after the closing "---" of the YAML frontmatter.
-// If no frontmatter is found (unexpected for model output), the marker is
-// prepended as the file's first line instead — still "near the top".
-func injectArchitectureMarker(content string) string {
-	if strings.Contains(content, architectureGeneratedMarker) {
-		return content
-	}
-	if strings.HasPrefix(content, "---\n") {
-		if end := strings.Index(content[4:], "\n---\n"); end >= 0 {
-			splitAt := 4 + end + len("\n---\n")
-			return content[:splitAt] + architectureGeneratedMarker + "\n" + content[splitAt:]
-		}
-	}
-	return architectureGeneratedMarker + "\n" + content
-}
-
-// writeArchitectureSkill writes the generated architecture SKILL.md to
-// outPath, injecting architectureGeneratedMarker near the top. If outPath
-// already exists without the marker, it was hand-edited: the write is
-// skipped (a warning is printed) rather than clobbering it. Returns whether
-// the file was (over)written.
-func writeArchitectureSkill(outPath, content string) (bool, error) {
-	existing, err := os.ReadFile(outPath)
-	if err == nil {
-		if !strings.Contains(string(existing), architectureGeneratedMarker) {
-			fmt.Fprintln(os.Stderr, "architecture skill exists without the tu-agent marker — hand-edited, not overwriting (delete it to regenerate)")
-			return false, nil
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("writeArchitectureSkill: reading %s: %w", outPath, err)
-	}
-	if err := os.WriteFile(outPath, []byte(injectArchitectureMarker(content)), 0o644); err != nil {
-		return false, fmt.Errorf("writeArchitectureSkill: writing %s: %w", outPath, err)
-	}
-	return true, nil
 }
 
 // mergedSynthesizeAndEnrich runs phase 4 via the single merged model call,
@@ -216,7 +180,7 @@ func writeArchitectureSkill(outPath, content string) (bool, error) {
 // block. On an unparseable merged response it falls back to the two separate
 // generators. Failures of the fallback warn but do not abort.
 func mergedSynthesizeAndEnrich(ctx context.Context, root string, prov provider.Provider, contextSize int) {
-	project, domains, domainEdges, err := prepareSynthesisInputs(root, "", false)
+	project, domains, domainEdges, fps, err := prepareSynthesisInputs(root, "", false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: synthesize inputs: %v\n", err)
 		return
@@ -250,11 +214,20 @@ func mergedSynthesizeAndEnrich(ctx context.Context, root string, prov provider.P
 	}
 
 	if arch != "" {
-		outDir := filepath.Join(generatedSkillsDir(root), "architecture")
-		if mkErr := os.MkdirAll(outDir, 0o755); mkErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: creating architecture dir: %v\n", mkErr)
-		} else if _, wErr := writeArchitectureSkill(filepath.Join(outDir, "SKILL.md"), arch); wErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: writing architecture skill: %v\n", wErr)
+		if wrote, wErr := persistArchitecture(arch); wErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: storing architecture overview: %v\n", wErr)
+		} else if !wrote {
+			// arch was non-empty but stripped to nothing (frontmatter only).
+			// Do not record fingerprints — the store keeps its old/absent
+			// overview, so claiming freshness would be a lie (mirrors
+			// runSynthesize).
+			fmt.Fprintln(os.Stderr, "warning: merged synthesis produced an empty architecture overview — nothing stored, fingerprints not updated")
+		} else if fpErr := fps.WriteJSON(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); fpErr != nil {
+			// Fingerprints are only recorded once the architecture overview was
+			// actually persisted (mirrors runSynthesize) — a write failure
+			// above must not leave fingerprints falsely claiming freshness
+			// for an overview that was never stored.
+			fmt.Fprintf(os.Stderr, "warning: writing skill-fingerprints.json: %v\n", fpErr)
 		}
 	}
 	if ctxBlock != "" {
@@ -269,7 +242,7 @@ var synthesizeProvider string
 
 var synthesizeCmd = &cobra.Command{
 	Use:   "synthesize [path]",
-	Short: "Synthesize an architecture overview skill from existing skills + Java deps",
+	Short: "Synthesize an architecture overview skill from the concept index",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sub := ""
@@ -281,6 +254,15 @@ var synthesizeCmd = &cobra.Command{
 }
 
 func runStatus(root string) error {
+	return runStatusTo(os.Stdout, root)
+}
+
+// runStatusTo renders the knowledge-index (skill staleness) report to w and
+// returns an error describing why the report could not be produced (e.g. no
+// concepts). Callers that need to surface that error inline (the top-level
+// `status` command) pass their own writer; `learn status` writes to os.Stdout
+// via runStatus.
+func runStatusTo(w io.Writer, root string) error {
 	skills, err := loadConceptSkills()
 	if err != nil {
 		return fmt.Errorf("loading concepts: %w", err)
@@ -298,19 +280,19 @@ func runStatus(root string) error {
 	}
 	needRefresh := 0
 	for _, s := range states {
-		fmt.Printf("  %-30s %s\n", s.Name, s.Status)
+		fmt.Fprintf(w, "  %-30s %s\n", s.Name, s.Status)
 		if s.Status != "up-to-date" {
 			needRefresh++
 		}
 	}
 	if needRefresh > 0 {
-		fmt.Printf("\n%d skill(s) need refresh — re-run 'tu-agent learn <path>' for the changed area, then 'tu-agent learn synthesize'.\n", needRefresh)
+		fmt.Fprintf(w, "\n%d skill(s) need refresh — re-run 'tu-agent learn <path>' for the changed area, then 'tu-agent learn synthesize'.\n", needRefresh)
 	} else {
-		fmt.Println("\nAll skills up to date.")
+		fmt.Fprintln(w, "\nAll skills up to date.")
 	}
 	if orphans, err := codegen.ListEmptySkillDirs(generatedSkillsDir(root)); err == nil && len(orphans) > 0 {
-		fmt.Printf("\n%d empty skill dir(s) with no SKILL.md: %v\n", len(orphans), orphans)
-		fmt.Println("Run 'tu-agent skill prune' to remove them.")
+		fmt.Fprintf(w, "\n%d empty skill dir(s) with no SKILL.md: %v\n", len(orphans), orphans)
+		fmt.Fprintln(w, "Run 'tu-agent skill prune' to remove them.")
 	}
 	return nil
 }

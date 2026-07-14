@@ -55,7 +55,7 @@ func TestAgentTools_Variants(t *testing.T) {
 // skeletons. Test CWD is the package dir, so the plugin dir is two levels up.
 func TestAgentTools_PinnedToSkeletons(t *testing.T) {
 	for _, role := range []string{"developer", "qa", "architect", "pr-reviewer", "security-reviewer"} {
-		data, err := os.ReadFile(filepath.Join("..", "..", "plugin", "agent-templates", role+".md"))
+		data, err := os.ReadFile(filepath.Join("..", "..", "plugin", "agents", role+".md"))
 		if err != nil {
 			t.Fatalf("read skeleton %s: %v", role, err)
 		}
@@ -73,39 +73,6 @@ func TestAgentTools_PinnedToSkeletons(t *testing.T) {
 		if skeletonTools != want {
 			t.Errorf("role %s drift:\n skeleton: %q\n AgentTools: %q", role, skeletonTools, want)
 		}
-	}
-}
-
-func TestReplaceFrontmatterTools(t *testing.T) {
-	agent := "---\nname: x-developer\ndescription: \"d\"\ntools: Read, Grep\n---\nbody\n\n## Project Context\n- enriched bullet\n"
-	out, changed, had := ReplaceFrontmatterTools(agent, "Read, Write, Grep, Glob")
-	if !changed || !had {
-		t.Fatalf("want changed+had, got changed=%v had=%v", changed, had)
-	}
-	if !strings.Contains(out, "tools: Read, Write, Grep, Glob\n") {
-		t.Errorf("tools line not replaced: %q", out)
-	}
-	if !strings.Contains(out, "## Project Context\n- enriched bullet\n") {
-		t.Errorf("enriched body not preserved: %q", out)
-	}
-	if !strings.Contains(out, "name: x-developer\n") {
-		t.Errorf("other frontmatter not preserved")
-	}
-	// Idempotent: replacing with the same value reports unchanged.
-	out2, changed2, _ := ReplaceFrontmatterTools(out, "Read, Write, Grep, Glob")
-	if changed2 || out2 != out {
-		t.Errorf("second replace must be a no-op (unchanged)")
-	}
-	// No tools line → hadToolsLine false, content untouched.
-	noTools := "---\nname: y\n---\nbody\n"
-	out3, changed3, had3 := ReplaceFrontmatterTools(noTools, "Read")
-	if changed3 || had3 || out3 != noTools {
-		t.Errorf("no tools line must yield (content,false,false), got changed=%v had=%v", changed3, had3)
-	}
-	// No frontmatter → untouched.
-	noFront := "body without frontmatter\ntools: x\n"
-	if _, _, had4 := ReplaceFrontmatterTools(noFront, "Read"); had4 {
-		t.Errorf("a tools: line outside frontmatter must not match")
 	}
 }
 
@@ -291,7 +258,7 @@ func diffSets(a, b map[string]bool) (equal bool, onlyA, onlyB []string) {
 }
 
 // TestToolMatrix_ThreeSurfaces is the drift pin across all three agent-tool
-// surfaces: (a) the AgentTools Go map, (b) plugin/agent-templates/<role>.md
+// surfaces: (a) the AgentTools Go map, (b) plugin/agents/<role>.md
 // `tools:` frontmatter, and (c) internal/codegen/templates/base/<role>.md
 // `tool_subset:` frontmatter. (a) only defines 5 of the 7 roles; analyst and
 // scribe are compared (b)-vs-(c) only. Known, accepted, out-of-scope
@@ -306,7 +273,7 @@ func TestToolMatrix_ThreeSurfaces(t *testing.T) {
 	for _, role := range roles {
 		extras := roleSurfaceExtras[role]
 
-		pluginPath := filepath.Join("..", "..", "plugin", "agent-templates", role+".md")
+		pluginPath := filepath.Join("..", "..", "plugin", "agents", role+".md")
 		pluginData, err := os.ReadFile(pluginPath)
 		if err != nil {
 			t.Fatalf("%s: read plugin skeleton: %v", role, err)

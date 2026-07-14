@@ -7,6 +7,7 @@ type Config struct {
 	Providers map[string]ProviderConfig `yaml:"providers"`
 	Learn     LearnConfig               `yaml:"learn"`
 	Tdd       TddConfig                 `yaml:"tdd"`
+	Telemetry TelemetryConfig           `yaml:"telemetry"`
 }
 
 // RoutingConfig controls which provider handles each task or sub-agent.
@@ -57,6 +58,16 @@ type TddConfig struct {
 	// Strict runs the sandwich one @s at a time (test->red->impl->green->next)
 	// instead of batching all of a sub-feature's tests. Default false.
 	Strict bool `yaml:"strict"`
+	// Language is the repo's primary language, resolved once at prepare and
+	// persisted so the runtime overlay is deterministic (honors an explicit
+	// --lang). Empty means: fall back to build-tool detection at runtime.
+	Language string `yaml:"language"`
+}
+
+// TelemetryConfig selects how much telemetry the binary records locally.
+// Level is "minimal" (default) or "full". It never sends data anywhere.
+type TelemetryConfig struct {
+	Level string `yaml:"level"`
 }
 
 func defaultConfig() Config {

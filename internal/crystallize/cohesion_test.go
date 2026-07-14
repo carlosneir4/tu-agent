@@ -43,7 +43,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 var baseTime = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

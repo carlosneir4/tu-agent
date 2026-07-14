@@ -1,6 +1,6 @@
 ---
 name: groundwork
-description: Use at the START of any build or implementation work — creating a file, building a feature or execution flow, writing tests, or any non-trivial change — BEFORE writing code. Anchors in the project graph and memory, asks the human only what code can't answer, confirms the approach, builds incrementally, and captures new gotchas/decisions. Keywords - build, implement, create, add feature, new flow, start a task, before coding, groundwork.
+description: Lightweight anchor BEFORE a single non-trivial change (one file, one edit, one flow) — grounds in the project graph and memory, asks the human only what code can't answer, confirms the approach, and captures new gotchas/decisions. For a whole feature built spec-to-merge under strict TDD, use tdd instead. Keywords - build, implement, create, add feature, new flow, start a task, before coding, groundwork.
 ---
 
 # groundwork — anchor & confirm before building
@@ -75,3 +75,13 @@ atomic note right then:
 
 A captured answer becomes a note; next time, the anchor (step 1) finds it and
 you stop re-asking. groundwork gets quieter as memory fills.
+
+## Red flags — stop and re-anchor
+
+| The excuse | Why it is wrong |
+|---|---|
+| "I already know how this area works" | Knowing the *language* is not knowing *this repo's* conventions. The anchor costs one query. |
+| "The user is in a hurry, skip the anchor" | Skip the *questions*, never the anchor — it is silent and cheap; being wrong is not. |
+| "The graph returned (none), so nothing depends on this" | Cross-check with a targeted grep before concluding — the graph can miss framework/DI edges. |
+| "I'll save the gotcha when the task is done" | Later never comes. Save it the moment it bites (step 5). |
+| "Memory says X but my approach differs slightly" | Deviating from a recalled decision silently reverses it. Say so explicitly and let the human decide. |

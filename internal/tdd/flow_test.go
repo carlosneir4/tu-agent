@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/testresult"
+	"github.com/carlosneir4/tu-agent/internal/testresult"
 )
 
 // seqDispatcher returns replies keyed by agent name, in call order per agent.

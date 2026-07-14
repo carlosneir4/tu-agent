@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 func TestHandleMemConflicts_ListsEdges(t *testing.T) {
@@ -33,13 +33,8 @@ func TestHandleMemConflicts_ListsEdges(t *testing.T) {
 }
 
 func TestMemConflictsInMCPToolNames(t *testing.T) {
-	found := false
-	for _, n := range mcpToolNames {
-		if n == "mem_conflicts" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("mcpToolNames missing mem_conflicts")
+	t.Chdir(t.TempDir())
+	if !servedToolNames(t)["mem_conflicts"] {
+		t.Error("newMCPServer does not serve mem_conflicts")
 	}
 }

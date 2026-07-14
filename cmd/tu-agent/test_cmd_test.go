@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/mutation"
-	"github.com/tu/tu-agent/internal/testgen"
+	"github.com/carlosneir4/tu-agent/internal/mutation"
+	"github.com/carlosneir4/tu-agent/internal/testgen"
 )
 
 func setupGapsFixture(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tu/tu-agent/internal/tool"
+	"github.com/carlosneir4/tu-agent/internal/tool"
 )
 
 func bashInput(t *testing.T, command string) json.RawMessage {

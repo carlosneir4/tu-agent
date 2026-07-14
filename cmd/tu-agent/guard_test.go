@@ -15,7 +15,7 @@ func TestGuardFromHook(t *testing.T) {
 		`{"tool_input":{"command":"printenv OPENAI_API_KEY"}}`,
 	}
 	for _, p := range block {
-		if !guardFromHook(strings.NewReader(p)) {
+		if d := guardFromHook(strings.NewReader(p)); !d.touched {
 			t.Errorf("expected BLOCK for %s", p)
 		}
 	}
@@ -25,8 +25,28 @@ func TestGuardFromHook(t *testing.T) {
 		`not json`,
 	}
 	for _, p := range allow {
-		if guardFromHook(strings.NewReader(p)) {
+		if d := guardFromHook(strings.NewReader(p)); d.touched {
 			t.Errorf("expected ALLOW for %s", p)
 		}
+	}
+}
+
+func TestGuardFromHook_ExtractsSessionAndTool(t *testing.T) {
+	d := guardFromHook(strings.NewReader(`{"session_id":"s1","tool_name":"Write","tool_input":{"file_path":"./.env"}}`))
+	if !d.touched {
+		t.Fatal("expected touched=true")
+	}
+	if d.sessionID != "s1" {
+		t.Errorf("sessionID = %q, want s1", d.sessionID)
+	}
+	if d.tool != "Write" {
+		t.Errorf("tool = %q, want Write", d.tool)
+	}
+}
+
+func TestGuardFromHook_MalformedYieldsZeroValue(t *testing.T) {
+	d := guardFromHook(strings.NewReader("not json"))
+	if (d != guardDecision{}) {
+		t.Errorf("expected zero-value guardDecision, got %+v", d)
 	}
 }

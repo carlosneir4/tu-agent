@@ -107,7 +107,7 @@ The harness extends with:
 - `~/.tu-agent/config.yaml` — tu-agent config
 - `./.tu-agent/*` — project-local overrides
 
-**Parser rule: the Claude Code format is the source of truth for the schema.** When in doubt about a field, mirror what Claude Code does. Document any tu-agent-specific extensions in `docs/format-extensions.md`.
+**Parser rule: the Claude Code format is the source of truth for the schema.** When in doubt about a field, mirror what Claude Code does. Document any tu-agent-specific extensions in `plugin/README.md`.
 
 ---
 
@@ -138,10 +138,9 @@ By week 8 the repo has:
 1. A working `tu-agent` binary that builds with `go build ./cmd/tu-agent` on Linux/macOS.
 2. The 4 commands documented in PRD: `init`, `chat`, `stats`, plus `version` and `help`.
 3. The 4 buy-in claims have data backing them.
-4. A `docs/demo.md` walking a stakeholder through reproducing the demo.
-5. Clean architecture for Phase 1 to extend (memory daemon, more sub-agents).
+4. Clean architecture for Phase 1 to extend (memory daemon, more sub-agents).
 
-If at any point in Phase 0 we cannot trace what we are working on back to one of those five outcomes, we are off track.
+If at any point in Phase 0 we cannot trace what we are working on back to one of those four outcomes, we are off track.
 
 ---
 

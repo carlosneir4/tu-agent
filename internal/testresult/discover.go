@@ -42,20 +42,28 @@ func DiscoverJUnitReports(root string) ([]string, error) {
 	return out, nil
 }
 
+// reportFreshnessSlack is how far a report's modtime may precede `since` and
+// still count as fresh — enough to absorb filesystem timestamp granularity or
+// clock skew (a report written during the run can be stamped a hair before
+// `since`, which is captured just before the run starts), while still
+// rejecting a prior run's report left seconds-to-minutes older.
+const reportFreshnessSlack = 2 * time.Second
+
 // LoadReports parses and merges every discovered report modified at or after
-// since. A zero since includes all reports.
+// since (minus reportFreshnessSlack). A zero since includes all reports.
 func LoadReports(root string, since time.Time) (Report, error) {
 	paths, err := DiscoverJUnitReports(root)
 	if err != nil {
 		return Report{}, err
 	}
+	cutoff := since.Add(-reportFreshnessSlack)
 	var merged Report
 	for _, p := range paths {
 		info, err := os.Stat(p)
 		if err != nil {
 			return Report{}, fmt.Errorf("testresult.LoadReports: stat %s: %w", p, err)
 		}
-		if !since.IsZero() && info.ModTime().Before(since) {
+		if !since.IsZero() && info.ModTime().Before(cutoff) {
 			continue
 		}
 		f, err := os.Open(p)

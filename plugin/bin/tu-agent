@@ -99,6 +99,10 @@ install_binary() { # asset -> download + verify + install, record stamp. nonzero
       rm -rf "$tmp"
       return 1
     fi
+  else
+    rm -rf "$tmp"
+    echo "tu-agent: checksum unavailable, refusing unverified install. Install manually: fetch ${asset} + SHA256SUMS from the Release and place at ${INSTALL_BIN}." >&2
+    return 1
   fi
   if ! tar -C "$tmp" -xzf "${tmp}/${asset}" tu-agent 2>/dev/null; then
     rm -rf "$tmp"

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/memory"
+	"github.com/carlosneir4/tu-agent/internal/memory"
 )
 
 // TestOpenMigratesLegacyDBWithoutSyncID guards the in-place migration of a
@@ -453,5 +453,42 @@ func TestRelationsByType_FiltersByType(t *testing.T) {
 		if r.Type != "conflicts_with" {
 			t.Errorf("got relation of type %q", r.Type)
 		}
+	}
+}
+
+// TestMetaSetMetaRoundTrip guards the exported Meta/SetMeta wrappers used by
+// advise to persist its dedup/dismiss state in the metadata table.
+func TestMetaSetMetaRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+
+	got, err := s.Meta("advise_state")
+	if err != nil {
+		t.Fatalf("Meta (absent key): %v", err)
+	}
+	if got != "" {
+		t.Fatalf("Meta (absent key) = %q, want empty", got)
+	}
+
+	if err := s.SetMeta("advise_state", `{"rules":{}}`); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	got, err = s.Meta("advise_state")
+	if err != nil {
+		t.Fatalf("Meta: %v", err)
+	}
+	if got != `{"rules":{}}` {
+		t.Fatalf("Meta = %q, want %q", got, `{"rules":{}}`)
+	}
+
+	// SetMeta overwrites (upsert), not appends.
+	if err := s.SetMeta("advise_state", `{"rules":{"secret-guard":{"dismissed":true}}}`); err != nil {
+		t.Fatalf("SetMeta (overwrite): %v", err)
+	}
+	got, err = s.Meta("advise_state")
+	if err != nil {
+		t.Fatalf("Meta (after overwrite): %v", err)
+	}
+	if got != `{"rules":{"secret-guard":{"dismissed":true}}}` {
+		t.Fatalf("Meta (after overwrite) = %q", got)
 	}
 }

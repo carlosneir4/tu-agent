@@ -32,8 +32,8 @@ func TestWriteKnowledgeBlock_InsertsOnce(t *testing.T) {
 	if string(first) != string(second) {
 		t.Errorf("re-run changed file:\nfirst:\n%s\nsecond:\n%s", first, second)
 	}
-	if !strings.Contains(string(second), ".claude/skills/") {
-		t.Errorf("block missing skills path reference:\n%s", second)
+	if !strings.Contains(string(second), "get_architecture") {
+		t.Errorf("block missing get_architecture reference:\n%s", second)
 	}
 }
 
@@ -78,7 +78,7 @@ func TestUpsertMarkedBlock_InsertThenReplace(t *testing.T) {
 
 func TestKnowledgeBody_DocumentsBrainArtifacts(t *testing.T) {
 	for _, want := range []string{
-		".claude/skills/",
+		"get_architecture",
 		"architecture",
 		"## PROTOCOL",
 		"get_context",

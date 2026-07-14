@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/crystallize"
 )
 
 // RED-phase test for feature `mem-reconcile-mcp` (leg 5, feature 4 of 4) —
@@ -18,27 +18,24 @@ import (
 // --list` alongside the sibling mutators mem_rescope and mem_delete.
 //
 // This mirrors the existing registry tests (TestMCPToolNamesIncludesMutators,
-// TestMemRelationToolsRegistered): it asserts membership in the EXISTING
-// mcpToolNames registry using only symbols that already exist, so the failure is
-// an ASSERTION failure (mem_reconcile absent), NOT a compile break of package
-// main. It goes GREEN once newMCPServer registers the tool and mem_reconcile is
-// added to mcpToolNames.
+// TestMemRelationToolsRegistered): it asserts the tool is actually served by
+// newMCPServer (enumerated via the MCP client), so the failure is an ASSERTION
+// failure (mem_reconcile absent), NOT a compile break of package main. It goes
+// GREEN once newMCPServer registers the tool.
 func TestMemReconcileToolRegistered(t *testing.T) {
-	names := make(map[string]bool, len(mcpToolNames))
-	for _, n := range mcpToolNames {
-		names[n] = true
-	}
+	t.Chdir(t.TempDir())
+	names := servedToolNames(t)
 
 	// Anchor: the sibling mutators must already be present. If they are not, the
 	// registry itself changed shape and the @s3 assertion below is meaningless.
 	for _, anchor := range []string{"mem_rescope", "mem_delete"} {
 		if !names[anchor] {
-			t.Fatalf("precondition: mcpToolNames missing sibling mutator %q", anchor)
+			t.Fatalf("precondition: newMCPServer does not serve sibling mutator %q", anchor)
 		}
 	}
 
 	if !names["mem_reconcile"] {
-		t.Errorf("mcpToolNames missing %q; the bundled MCP server must register mem_reconcile alongside mem_rescope and mem_delete (§10 dual-availability)", "mem_reconcile")
+		t.Errorf("newMCPServer does not serve %q; the bundled MCP server must register mem_reconcile alongside mem_rescope and mem_delete (§10 dual-availability)", "mem_reconcile")
 	}
 }
 

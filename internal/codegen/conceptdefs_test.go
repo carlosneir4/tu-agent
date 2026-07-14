@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tu/tu-agent/internal/provider"
+	"github.com/carlosneir4/tu-agent/internal/provider"
 )
 
 func TestIsDeterministicDescription(t *testing.T) {
