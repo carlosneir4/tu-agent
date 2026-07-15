@@ -23,8 +23,12 @@ type guardDecision struct {
 // touches a secret/credential file — either the Write/Edit target path
 // (file_path) or a secret path named in the Bash command — along with the
 // session_id and tool_name from the payload. A malformed or empty payload
-// yields a zero-value guardDecision (touched=false) so the guard fails open
-// (the permissions.deny rules remain the primary protection).
+// yields a zero-value guardDecision (touched=false) so the guard fails open.
+//
+// On the read side the permissions.deny Read(...) rules are the primary
+// protection and this guard is defence in depth. On the write side it is the
+// other way round: deny only gates paths a rule spells out, so this guard —
+// which resolves the path through IsSecretPath — is the broader net.
 func guardFromHook(r io.Reader) guardDecision {
 	var payload struct {
 		SessionID string `json:"session_id"`

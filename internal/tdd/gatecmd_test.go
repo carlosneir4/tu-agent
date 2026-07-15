@@ -261,14 +261,14 @@ func TestGateRedGoScopedProof(t *testing.T) {
 	// A "cheating" new test that already PASSES: scoped proof must reject it.
 	writeFileT(t, root, "pkg/pkg_test.go",
 		"package pkg\n\nimport \"testing\"\n\nfunc TestVal(t *testing.T) {\n\tif Val() != 1 {\n\t\tt.Fatal(\"nope\")\n\t}\n}\n")
-	fb := goNewTestsRed(context.Background(), root, []string{"pkg/pkg_test.go"})
+	fb := goNewTestsRed(context.Background(), root, []string{"pkg/pkg_test.go"}, nil)
 	if fb == "" || !strings.Contains(fb, "passes") {
 		t.Fatalf("passing new test not rejected: %q", fb)
 	}
 	// A genuinely red test: scoped proof accepts it.
 	writeFileT(t, root, "pkg/red_test.go",
 		"package pkg\n\nimport \"testing\"\n\nfunc TestRed(t *testing.T) {\n\tif Val() != 2 {\n\t\tt.Fatal(\"red\")\n\t}\n}\n")
-	if fb := goNewTestsRed(context.Background(), root, []string{"pkg/red_test.go"}); fb != "" {
+	if fb := goNewTestsRed(context.Background(), root, []string{"pkg/red_test.go"}, nil); fb != "" {
 		t.Fatalf("red test rejected: %q", fb)
 	}
 	// A new test file that fails to COMPILE (undefined symbol) is not a
@@ -276,9 +276,38 @@ func TestGateRedGoScopedProof(t *testing.T) {
 	// feedback, not accepted as red.
 	writeFileT(t, root, "pkg/compileerr_test.go",
 		"package pkg\n\nimport \"testing\"\n\nfunc TestCompileErr(t *testing.T) {\n\tundefinedFunc()\n}\n")
-	fb = goNewTestsRed(context.Background(), root, []string{"pkg/compileerr_test.go"})
+	fb = goNewTestsRed(context.Background(), root, []string{"pkg/compileerr_test.go"}, nil)
 	if fb == "" || !strings.Contains(fb, "build") {
 		t.Fatalf("build failure accepted as legitimate red: %q", fb)
+	}
+}
+
+// TestGateRedGoScopedHonorsBuildTags proves the scoped RED proof compiles the
+// package the way the PROJECT does. A repo whose real test command carries a
+// build tag (this repo runs `go test -tags sqlite_fts5`) has code that only
+// exists under that tag; running the scoped proof without it compiles a
+// different program, where the failing assertion is unreachable and the test
+// passes. The gate would then call a genuinely-red test green — and, worse,
+// would call a vacuous test green too.
+func TestGateRedGoScopedHonorsBuildTags(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "go.mod", "module fixture\n\ngo 1.22\n")
+	// Val() returns 2 only when built with the `featureon` tag; 1 otherwise.
+	writeFileT(t, root, "pkg/on.go", "//go:build featureon\n\npackage pkg\n\nfunc Val() int { return 2 }\n")
+	writeFileT(t, root, "pkg/off.go", "//go:build !featureon\n\npackage pkg\n\nfunc Val() int { return 1 }\n")
+	// The test asserts the UNTAGGED behavior, so it is RED under the tag and
+	// green without it — the shape of a test that only fails in the real build.
+	writeFileT(t, root, "pkg/tag_test.go",
+		"package pkg\n\nimport \"testing\"\n\nfunc TestTagged(t *testing.T) {\n\tif Val() != 1 {\n\t\tt.Fatal(\"red under the project's build tags\")\n\t}\n}\n")
+
+	// With the project's tags, the proof must see the real red.
+	if fb := goNewTestsRed(context.Background(), root, []string{"pkg/tag_test.go"}, []string{"featureon"}); fb != "" {
+		t.Fatalf("red-under-tags test rejected: %q", fb)
+	}
+	// Without tags declared, the same file is green — the proof must still be
+	// able to say so (no tags configured means the bare build IS the project's).
+	if fb := goNewTestsRed(context.Background(), root, []string{"pkg/tag_test.go"}, nil); fb == "" {
+		t.Fatal("green test accepted as red when no build tags are configured")
 	}
 }
 
@@ -292,7 +321,7 @@ func TestGateRedGoScopedBuildTagExcluded(t *testing.T) {
 	writeFileT(t, root, "go.mod", "module fixture\n\ngo 1.22\n")
 	writeFileT(t, root, "pkg2/excluded_test.go",
 		"//go:build neverbuild\n\npackage pkg2\n\nimport \"testing\"\n\nfunc TestExcluded(t *testing.T) {}\n")
-	fb := goNewTestsRed(context.Background(), root, []string{"pkg2/excluded_test.go"})
+	fb := goNewTestsRed(context.Background(), root, []string{"pkg2/excluded_test.go"}, nil)
 	if fb == "" {
 		t.Fatalf("build-tag-excluded new test file accepted as red — permanent cheat: file can never turn green")
 	}
@@ -317,7 +346,7 @@ func TestGateRedGoScopedNoTestsToRun(t *testing.T) {
 	writeFileT(t, root, "pkg3/other_test.go", "package pkg3\n\nimport \"testing\"\n\nfunc TestOther(t *testing.T) {}\n")
 	writeFileT(t, root, "pkg3/new_test.go",
 		"//go:build neverbuild\n\npackage pkg3\n\nimport \"testing\"\n\nfunc TestNew(t *testing.T) {}\n")
-	fb := goNewTestsRed(context.Background(), root, []string{"pkg3/new_test.go"})
+	fb := goNewTestsRed(context.Background(), root, []string{"pkg3/new_test.go"}, nil)
 	if fb == "" {
 		t.Fatalf("new test file whose -run matched nothing was accepted as red")
 	}

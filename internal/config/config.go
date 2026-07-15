@@ -62,6 +62,13 @@ type TddConfig struct {
 	// persisted so the runtime overlay is deterministic (honors an explicit
 	// --lang). Empty means: fall back to build-tool detection at runtime.
 	Language string `yaml:"language"`
+	// BuildTags are the Go build tags this repo's code needs to compile the way
+	// TestCommand compiles it (e.g. ["sqlite_fts5"]). The RED gate runs a scoped
+	// `go test` of its own to prove each new test file red, and without these it
+	// would build a different program than the project's real test command —
+	// reaching the opposite verdict on any code guarded by a tag. Empty means the
+	// bare build is the project's build, which is true for most repos.
+	BuildTags []string `yaml:"build_tags"`
 }
 
 // TelemetryConfig selects how much telemetry the binary records locally.

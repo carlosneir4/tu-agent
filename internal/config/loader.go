@@ -139,6 +139,9 @@ func mergeInto(dst *Config, src Config) {
 	if src.Tdd.Language != "" {
 		dst.Tdd.Language = src.Tdd.Language
 	}
+	if len(src.Tdd.BuildTags) > 0 {
+		dst.Tdd.BuildTags = src.Tdd.BuildTags
+	}
 	if src.Tdd.Mutation {
 		dst.Tdd.Mutation = true
 	}

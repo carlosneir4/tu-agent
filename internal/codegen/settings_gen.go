@@ -31,7 +31,8 @@ func strSlice(ss ...string) []any {
 
 // hardenDeny lists hard-blocked operations: destructive shell, irreversible git
 // (reset --hard, clean -fd), privilege escalation, pipe-to-shell, and
-// reading/writing secrets and credentials.
+// reading/writing secrets and credentials. Read(...) rules gate the Read tool;
+// Edit(...) rules gate every file-editing tool.
 func hardenDeny() []any {
 	return strSlice(
 		"Bash(rm -rf *)",
@@ -49,8 +50,12 @@ func hardenDeny() []any {
 		"Bash(sudo *)",
 		"Read(./.env)", "Read(./.env.*)", "Read(**/*.pem)", "Read(**/*.key)",
 		"Read(**/id_rsa*)", "Read(**/id_ed25519*)", "Read(**/.ssh/**)", "Read(**/.aws/**)", "Read(./secrets/**)",
-		"Write(./.env)", "Write(./.env.*)", "Write(**/*.pem)", "Write(**/*.key)",
-		"Write(**/id_rsa*)", "Write(**/id_ed25519*)", "Write(**/.ssh/**)", "Write(**/.aws/**)", "Write(./secrets/**)",
+		// Edit(...), not Write(...): Claude Code matches file-permission rules
+		// only against Edit(path), which covers every file-editing tool (Write,
+		// Edit, NotebookEdit). A Write(path) rule matches nothing and the
+		// harness reports it as inert at startup.
+		"Edit(./.env)", "Edit(./.env.*)", "Edit(**/*.pem)", "Edit(**/*.key)",
+		"Edit(**/id_rsa*)", "Edit(**/id_ed25519*)", "Edit(**/.ssh/**)", "Edit(**/.aws/**)", "Edit(./secrets/**)",
 		// Belt-and-suspenders only: these catch `cat` of common secrets. The robust
 		// layer is the Write|Edit|Bash guard hook (CommandTouchesSecret), which
 		// covers any reader (less/head/base64/cp) of any secret path.
