@@ -133,7 +133,13 @@ var goTestFuncRe = regexp.MustCompile(`(?m)^func (Test\w+)\s*\(`)
 // violation feedback. A genuine test FAILURE at runtime counts as red; a
 // BUILD/COMPILE failure of the scoped package does not — it is not a
 // legitimately-failing test.
-func goNewTestsRed(ctx context.Context, root string, goFiles []string) string {
+//
+// buildTags carries config's tdd.build_tags. This scoped run is a second way to
+// compile the project, next to TestCommand, so it must be told how the project
+// builds: without the tags it produces a DIFFERENT program, and code that only
+// exists under a tag cannot fail there. The verdict then inverts — a genuinely
+// red test reads as green.
+func goNewTestsRed(ctx context.Context, root string, goFiles []string, buildTags []string) string {
 	for _, rel := range goFiles {
 		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
@@ -148,14 +154,27 @@ func goNewTestsRed(ctx context.Context, root string, goFiles []string) string {
 			names = append(names, g[1])
 		}
 		pkgDir := "./" + path.Dir(rel)
-		c := exec.CommandContext(ctx, "go", "test", "-count=1", "-run", "^("+strings.Join(names, "|")+")$", pkgDir)
+		args := []string{"test", "-count=1"}
+		if len(buildTags) > 0 {
+			args = append(args, "-tags", strings.Join(buildTags, ","))
+		}
+		args = append(args, "-run", "^("+strings.Join(names, "|")+")$", pkgDir)
+		c := exec.CommandContext(ctx, "go", args...)
 		c.Dir = root
 		out, err := c.CombinedOutput()
 		if err == nil {
 			if strings.Contains(string(out), "no tests to run") {
 				return fmt.Sprintf("new test file %s matched no tests — scoped run must fail, not report zero matches", rel)
 			}
-			return fmt.Sprintf("new test file %s passes — tests must fail before implementation (write a failing assertion first)", rel)
+			// With no tags configured we cannot tell a test that is genuinely
+			// green from one that is red only under the project's real build, so
+			// name both rather than assert the first.
+			if len(buildTags) == 0 {
+				return fmt.Sprintf("new test file %s passes — either it needs a failing assertion first, "+
+					"or this repo builds with tags that tdd.build_tags in .tu-agent/config.yaml does not declare", rel)
+			}
+			return fmt.Sprintf("new test file %s passes (built with -tags %s) — tests must fail before implementation "+
+				"(write a failing assertion first)", rel, strings.Join(buildTags, ","))
 		}
 		if strings.Contains(string(out), "build constraints exclude all Go files") || strings.Contains(string(out), "no Go files in") {
 			return fmt.Sprintf("new test file %s is excluded by build constraints — tests must compile and fail, not be skipped", rel)
@@ -224,7 +243,7 @@ func RunGate(ctx context.Context, cfg config.Config, root, ticket, feature, cove
 				}
 			}
 			if len(goFiles) > 0 {
-				if fb := goNewTestsRed(ctx, root, goFiles); fb != "" {
+				if fb := goNewTestsRed(ctx, root, goFiles, cfg.Tdd.BuildTags); fb != "" {
 					return GateResult{OK: false, Feedback: fb}, nil
 				}
 				goScopedConfirmed = true

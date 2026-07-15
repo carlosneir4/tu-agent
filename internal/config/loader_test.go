@@ -480,6 +480,36 @@ routing:
 	}
 }
 
+// TestLoad_TddBuildTags_ProjectLayer pins the layer that actually matters for
+// build tags: they describe ONE repo, so they are declared in the project's
+// config.yaml, not the user's. A new field that mergeInto does not handle is
+// silently dropped from the project layer (see the config/mergeInto trap), and
+// a dropped build tag makes the gate compile the wrong program.
+func TestLoad_TddBuildTags_ProjectLayer(t *testing.T) {
+	base := t.TempDir()
+	userDir := filepath.Join(base, "tu-agent")
+	projDir := filepath.Join(base, "project")
+
+	writeFile(t, projDir, "config.yaml", `
+tdd:
+  build_tags: [sqlite_fts5, integration]
+`)
+
+	cfg, err := config.NewLoader(filepath.Join(base, "claude"), userDir, projDir).Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"sqlite_fts5", "integration"}
+	if len(cfg.Tdd.BuildTags) != len(want) {
+		t.Fatalf("Tdd.BuildTags = %v, want %v (project layer dropped?)", cfg.Tdd.BuildTags, want)
+	}
+	for i, w := range want {
+		if cfg.Tdd.BuildTags[i] != w {
+			t.Errorf("Tdd.BuildTags[%d] = %q, want %q", i, cfg.Tdd.BuildTags[i], w)
+		}
+	}
+}
+
 func TestLoad_RoutingDisabled_NotSetByDefault(t *testing.T) {
 	base := t.TempDir()
 	userDir := filepath.Join(base, "tu-agent")

@@ -5,10 +5,49 @@ import (
 	"strings"
 )
 
+// stripRenamedWriteRules drops Write(path) entries from existing when generated
+// carries the Edit(path) twin. tu-agent used to spell its write-side file rules
+// Write(...); Claude Code matches file-permission rules only against Edit(...),
+// so those entries are inert. Because MergeSettings unions rather than replaces,
+// a repo hardened before the rename would otherwise keep the dead rules through
+// every upgrade.
+//
+// The generated Edit twin is what makes a drop safe, so it is also what gates
+// it: a Write(...) rule tu-agent never emitted has no twin and survives
+// untouched — inert or not, it is the user's to keep. And the permission
+// surface can never widen here, since every dropped rule matched nothing and
+// its live replacement is added by the same merge.
+func stripRenamedWriteRules(existing, generated []any) []any {
+	twins := make(map[string]struct{}, len(generated))
+	for _, g := range generated {
+		s, ok := g.(string)
+		if !ok {
+			continue
+		}
+		if path, found := strings.CutPrefix(s, "Edit("); found && strings.HasSuffix(path, ")") {
+			twins["Write("+path] = struct{}{}
+		}
+	}
+	if len(twins) == 0 {
+		return existing
+	}
+	out := make([]any, 0, len(existing))
+	for _, e := range existing {
+		if s, ok := e.(string); ok {
+			if _, renamed := twins[s]; renamed {
+				continue
+			}
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 // MergeSettings deep-merges generated into existing, preserving the user's
 // entries. Permission/mcp arrays are unioned (existing first, generated extras
-// appended); hook lists are unioned by matcher; scalars tu-agent owns are set
-// only when absent; unknown user keys are left untouched. Pure: no I/O.
+// appended), minus tu-agent's own rules that a rename made inert; hook lists are
+// unioned by matcher; scalars tu-agent owns are set only when absent; unknown
+// user keys are left untouched. Pure: no I/O.
 func MergeSettings(existing, generated map[string]any) map[string]any {
 	out := cloneMap(existing)
 
@@ -19,7 +58,7 @@ func MergeSettings(existing, generated map[string]any) map[string]any {
 		}
 		for _, k := range []string{"allow", "deny", "ask"} {
 			if gv, ok := gp[k].([]any); ok {
-				ep[k] = unionAny(asAnySlice(ep[k]), gv)
+				ep[k] = unionAny(stripRenamedWriteRules(asAnySlice(ep[k]), gv), gv)
 			}
 		}
 		if _, ok := ep["defaultMode"]; !ok {

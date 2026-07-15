@@ -40,10 +40,20 @@ func TestHardenedSettings_PermissionsAndScalars(t *testing.T) {
 	deny := permList(t, s, "deny")
 	for _, want := range []string{
 		"Read(./.env)", "Read(**/*.pem)", "Read(**/id_rsa*)", "Read(./secrets/**)",
-		"Write(./.env)", "Bash(rm -rf *)", "Bash(sudo *)", "Bash(git push --force*)",
+		"Edit(./.env)", "Bash(rm -rf *)", "Bash(sudo *)", "Bash(git push --force*)",
 	} {
 		if !contains(deny, want) {
 			t.Errorf("deny missing %q", want)
+		}
+	}
+
+	// Claude Code matches file-permission rules only against Edit(path); a
+	// Write(path) rule silently matches nothing and the harness warns about it
+	// at startup. Every write-side secret rule must be spelled Edit(...), which
+	// covers Write, Edit and NotebookEdit alike.
+	for _, r := range deny {
+		if strings.HasPrefix(r, "Write(") {
+			t.Errorf("deny has inert rule %q: use Edit(...) — Write(...) matches no file tool", r)
 		}
 	}
 
@@ -223,6 +233,41 @@ func TestSecretPathPattern(t *testing.T) {
 		if re.MatchString(p) {
 			t.Errorf("expected %q to be allowed", p)
 		}
+	}
+}
+
+// TestMergeSettings_DropsRenamedWriteRules pins the migration for repos hardened
+// before the Write(...)->Edit(...) rename. The permission lists are unioned, so
+// without an explicit strip the inert Write rules would survive every upgrade.
+func TestMergeSettings_DropsRenamedWriteRules(t *testing.T) {
+	existing := map[string]any{
+		"permissions": map[string]any{
+			"deny": []any{
+				"Write(./.env)",     // tu-agent's own, renamed to Edit(./.env)
+				"Write(**/.ssh/**)", // idem
+				"Write(./mine/**)",  // the user's own rule: no Edit twin generated
+				"Bash(rm -rf *)",
+			},
+		},
+	}
+	merged := MergeSettings(existing, HardenedSettings("go", "go", false))
+	deny := permList(t, merged, "deny")
+
+	for _, gone := range []string{"Write(./.env)", "Write(**/.ssh/**)"} {
+		if contains(deny, gone) {
+			t.Errorf("deny kept inert rule %q: the Edit twin replaces it", gone)
+		}
+	}
+	// Dropping is only safe because the live replacement lands in the same merge.
+	for _, want := range []string{"Edit(./.env)", "Edit(**/.ssh/**)", "Bash(rm -rf *)"} {
+		if !contains(deny, want) {
+			t.Errorf("deny missing %q after merge", want)
+		}
+	}
+	// The strip must never reach a rule tu-agent did not emit, even an inert one:
+	// guessing at the user's intent is not ours to do.
+	if !contains(deny, "Write(./mine/**)") {
+		t.Error("merge dropped the user's own Write(./mine/**); strip must require a generated Edit twin")
 	}
 }
 
