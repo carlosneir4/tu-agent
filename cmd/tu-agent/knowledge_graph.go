@@ -30,7 +30,7 @@ func buildKnowledgeNodes(skills []codegen.Skill, root string) ([]graph.Node, []g
 			path = rel
 		}
 		nodes = append(nodes, graph.Node{ID: id, Kind: graph.KindSkill, Name: sk.Name, Path: path, Line: 1})
-		for _, kf := range codegen.ParseKeyFiles(sk.Body) {
+		for _, kf := range sk.Files {
 			edges = append(edges, graph.Edge{From: id, To: kf, Kind: graph.EdgeDocuments, Confidence: graph.ConfHigh})
 		}
 	}

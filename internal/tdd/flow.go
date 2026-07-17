@@ -101,7 +101,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		for designBudget := 3; designBudget > 0; designBudget-- {
 			base := o.RelBase
 			if base == "" {
-				base = ".tu-agent/tdd"
+				base = tddRelDir()
 			}
 			task := "Read " + base + "/spec.md and produce the design, scenarios, and complexity classification."
 			if archFeedback != "" {

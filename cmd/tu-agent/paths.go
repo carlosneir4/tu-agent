@@ -39,15 +39,49 @@ func generatedSkillsDir(root string) string {
 	return filepath.Join(root, ".claude", "skills")
 }
 
+// tuAgentDir returns the project-local tu-agent data directory under root.
+// Every helper below builds on it, so the project layout has a single
+// definition here instead of a ".tu-agent" literal per call site.
+func tuAgentDir(root string) string {
+	return filepath.Join(root, ".tu-agent")
+}
+
 // memoryDBPath returns the project-local memory database path under root.
-// Memory is durable (unlike graph.db) — see internal/memory.
+// Memory is durable (unlike graph.db) — see internal/memory. It lives under a
+// per-subsystem memory/ subdir; memory.Open MkdirAll's the parent, so no caller
+// needs to create it.
 func memoryDBPath(root string) string {
-	return filepath.Join(root, ".tu-agent", "memory.db")
+	return filepath.Join(tuAgentDir(root), "memory", "memory.db")
 }
 
 // memoryChunksDir returns the directory holding committed memory chunk files.
 // Unlike memory.db (gitignored), this directory is versioned so the team shares
 // observations through git.
+//
+// The repo-relative twin of this path lives in internal/memory (RelChunkPath):
+// that package cannot import cmd, so the two must be changed together.
 func memoryChunksDir(root string) string {
-	return filepath.Join(root, ".tu-agent", "memory", "chunks")
+	return filepath.Join(tuAgentDir(root), "share", "memory", "chunks")
+}
+
+// telemetryPath returns the project-local telemetry log path under root. It
+// lives under a per-subsystem logs/ subdir; telemetry.NewLogger's Log MkdirAll's
+// the parent on first write, so no caller needs to create it.
+//
+// Callers pass the root they already resolve today: generated-artifact writers
+// and the live stats command pass repoRoot(), while the frozen standalone
+// commands (chat, run) pass "." and stay CWD-relative — filepath.Join drops the
+// leading "." so their result is byte-identical to the
+// ".tu-agent/logs/telemetry.jsonl" path they resolve. That CWD-relative
+// anchoring is pre-existing behavior in those two frozen commands, not a choice
+// made here.
+func telemetryPath(root string) string {
+	return filepath.Join(tuAgentDir(root), "logs", "telemetry.jsonl")
+}
+
+// promptsDir returns the directory holding per-provider prompt suffix files for
+// the frozen standalone chat command. dir is the directory being probed, which
+// chat walks up from the working directory — not necessarily the repo root.
+func promptsDir(dir string) string {
+	return filepath.Join(tuAgentDir(dir), "prompts")
 }

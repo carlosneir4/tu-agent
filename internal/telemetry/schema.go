@@ -6,14 +6,14 @@ import "time"
 // Every model API call appends one Entry.
 type Entry struct {
 	Timestamp      time.Time `json:"timestamp"`
-	Provider       string    `json:"provider"`
-	Model          string    `json:"model"`
-	InputTokens    int       `json:"input_tokens"`
-	OutputTokens   int       `json:"output_tokens"`
-	LatencyMS      int64     `json:"latency_ms"`
-	CostUSD        float64   `json:"cost_usd"`
+	Provider       string    `json:"provider,omitempty"`
+	Model          string    `json:"model,omitempty"`
+	InputTokens    int       `json:"input_tokens,omitempty"`
+	OutputTokens   int       `json:"output_tokens,omitempty"`
+	LatencyMS      int64     `json:"latency_ms,omitempty"`
+	CostUSD        float64   `json:"cost_usd,omitempty"`
 	SubAgent       string    `json:"sub_agent,omitempty"`
-	ToolCallsCount int       `json:"tool_calls_count"`
+	ToolCallsCount int       `json:"tool_calls_count,omitempty"`
 	// Event marks non-model rows (e.g. "load_skill"). Empty for model calls.
 	Event string `json:"event,omitempty"`
 	// Skill is the skill name for load_skill events.
@@ -29,6 +29,9 @@ type Entry struct {
 	// call-style events (Event=="mcp_call"); other events (load_skill,
 	// graph_refresh, ...) leave it unset.
 	OK bool `json:"ok,omitempty"`
+	// Error carries a failure message for call/hook-style events; empty when the
+	// call succeeded.
+	Error string `json:"error,omitempty"`
 	// ResultBytes is the size in bytes of the serialized result.
 	ResultBytes int `json:"result_bytes,omitempty"`
 	// ZeroResult reports whether a query-style call returned no results.

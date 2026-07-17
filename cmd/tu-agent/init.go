@@ -85,6 +85,11 @@ func runInitSetup(ctx context.Context, opts initSetupOpts) error {
 	} else if changed {
 		fmt.Printf("Seeded tdd.language=%q into .tu-agent/config.yaml\n", lang)
 	}
+	if created, err := tdd.SeedRulesReadme("."); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: seeding rules README: %v\n", err)
+	} else if created {
+		fmt.Println("prepare: seeded .tu-agent/rules/README.md")
+	}
 
 	if opts.Update {
 		if err := refreshArtifacts("."); err != nil {

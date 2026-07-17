@@ -19,8 +19,9 @@ import (
 type Skill struct {
 	Name        string
 	Description string
-	Dir         string // absolute path to the skill directory
-	Body        string // post-frontmatter content of SKILL.md
+	Dir         string   // absolute path to the skill directory
+	Body        string   // post-frontmatter content of SKILL.md
+	Files       []string // member source files from the store's concept->files link
 }
 
 type skillFrontmatter struct {

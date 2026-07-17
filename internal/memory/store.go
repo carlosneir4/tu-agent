@@ -115,6 +115,13 @@ type UpsertOpts struct {
 type Store struct {
 	db  *sql.DB
 	fts bool
+	// openDrift is a one-shot, in-memory-only snapshot of the count-drift
+	// probe (see countsDrifted), taken once when this Store is opened and
+	// consulted (then cleared) by maybeRebuildFTS. It exists to catch drift
+	// left by a writer from before the fts_dirty mechanism existed — see
+	// maybeRebuildFTS's doc comment for why it is snapshotted at Open instead
+	// of recomputed on every search.
+	openDrift bool
 }
 
 // Open opens (or creates) the memory database at path.
@@ -122,7 +129,24 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("memory.Open: mkdir: %w", err)
 	}
-	db, err := sql.Open("sqlite3", "file:"+path+"?_journal_mode=WAL&_busy_timeout=5000")
+	// _txlock=immediate makes every s.db.Begin() acquire the write lock at BEGIN
+	// instead of upgrading a deferred read lock on first write. Not every
+	// explicit transaction in this package writes on every path — Rescope,
+	// Retopic, Delete, and ImportRecords all have read-only outcomes, and for
+	// ImportRecords (the SessionStart hook) the read-only outcome is in fact the
+	// steady state: it opens a tx, finds every record already imported, and
+	// commits without writing. Paying BEGIN IMMEDIATE's pessimistic cost on
+	// those is still the right trade-off store-wide, because the cost is close
+	// to nil here: SetMaxOpenConns(1)
+	// (below) already serialises all access through this *sql.DB to one
+	// connection, and database/sql has no way to request a per-transaction
+	// BEGIN IMMEDIATE without a second handle that would break that
+	// serialisation. It matters for rebuildFTS: two stores opened concurrently
+	// that both try to rebuild would otherwise race to upgrade the same read
+	// snapshot and get SQLITE_BUSY_SNAPSHOT immediately, bypassing
+	// _busy_timeout. BEGIN IMMEDIATE makes the loser queue on busy_timeout
+	// instead of failing.
+	db, err := sql.Open("sqlite3", "file:"+path+"?_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("memory.Open: %w", err)
 	}

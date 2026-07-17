@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/carlosneir4/tu-agent/internal/codegen"
+	"github.com/carlosneir4/tu-agent/internal/graph/store"
 	"github.com/carlosneir4/tu-agent/internal/provider"
 	"github.com/carlosneir4/tu-agent/internal/telemetry"
 	"github.com/spf13/cobra"
@@ -36,6 +38,7 @@ func loadConceptSkills() ([]codegen.Skill, error) {
 		if perr != nil {
 			return nil, fmt.Errorf("loadConceptSkills: parsing %s: %w", r.Name, perr)
 		}
+		sk.Files = r.Files // member files from the store's concept->files link
 		out = append(out, sk)
 	}
 	return out, nil
@@ -62,38 +65,35 @@ func loadConceptSkillDocs() ([]codegen.SkillDoc, error) {
 
 // prepareSynthesisInputs runs the deterministic part of synthesis: scan Java,
 // persist the file-level graph, load skills, and aggregate domain edges. It is
-// the testable seam (no model call) and is read-only w.r.t. disk state — it
-// computes but does not write skill-fingerprints.json; the caller writes them
-// only after synthesis (the model call) actually succeeds, so a failed
-// synthesis never leaves fingerprints falsely claiming freshness. When
+// the testable seam (no model call) and is read-only w.r.t. disk state. When
 // buildGraph is true the graph is rebuilt from source; pass false when the
 // caller has already built it.
-func prepareSynthesisInputs(root, subpath string, buildGraph bool) (string, []codegen.DomainFact, []codegen.Edge, codegen.SkillFingerprints, error) {
+func prepareSynthesisInputs(root, subpath string, buildGraph bool) (string, []codegen.DomainFact, []codegen.Edge, error) {
 	if buildGraph {
 		if err := runGraphBuild(subpath); err != nil {
-			return "", nil, nil, nil, fmt.Errorf("building graph: %w", err)
+			return "", nil, nil, fmt.Errorf("building graph: %w", err)
 		}
 	}
 	s, err := openGraphStore()
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, err
 	}
 	_, edges, _, err := loadSourceUnits(s)
 	if cerr := s.Close(); cerr != nil {
 		slog.Warn("learn: closing graph store", "err", cerr)
 	}
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, err
 	}
 
 	// Second store open (loadSourceUnits above used and closed the first);
 	// loadConceptSkills is self-contained. SQLite WAL tolerates this.
 	skills, err := loadConceptSkills()
 	if err != nil {
-		return "", nil, nil, nil, fmt.Errorf("loading concepts: %w", err)
+		return "", nil, nil, fmt.Errorf("loading concepts: %w", err)
 	}
 	if len(skills) == 0 {
-		return "", nil, nil, nil, fmt.Errorf("no concepts found — run 'tu-agent learn <path>' first")
+		return "", nil, nil, fmt.Errorf("no concepts found — run 'tu-agent learn <path>' first")
 	}
 	var domains []codegen.DomainFact
 	for _, s := range skills {
@@ -101,28 +101,23 @@ func prepareSynthesisInputs(root, subpath string, buildGraph bool) (string, []co
 			continue
 		}
 		domains = append(domains, codegen.DomainFact{
-			Name: s.Name, Description: s.Description, KeyFiles: codegen.ParseKeyFiles(s.Body),
+			Name: s.Name, Description: s.Description, KeyFiles: s.Files,
 		})
 	}
 	if len(domains) == 0 {
-		return "", nil, nil, nil, fmt.Errorf("no domain skills found — run 'tu-agent learn <path>' first")
+		return "", nil, nil, fmt.Errorf("no domain skills found — run 'tu-agent learn <path>' first")
 	}
 
 	fileToDomain := codegen.BuildFileToDomain(skills)
 	domainEdges := codegen.AggregateToDomains(edges, fileToDomain)
 
-	fps, err := codegen.RecordFingerprints(root, skills)
-	if err != nil {
-		return "", nil, nil, nil, err
-	}
-
 	abs, _ := filepath.Abs(root)
-	return filepath.Base(abs), domains, domainEdges, fps, nil
+	return filepath.Base(abs), domains, domainEdges, nil
 }
 
 func runSynthesize(ctx context.Context, subpath, providerOverride string) error {
 	root := "."
-	project, domains, domainEdges, fps, err := prepareSynthesisInputs(root, subpath, true)
+	project, domains, domainEdges, err := prepareSynthesisInputs(root, subpath, true)
 	if err != nil {
 		return err
 	}
@@ -138,7 +133,7 @@ func runSynthesize(ctx context.Context, subpath, providerOverride string) error 
 	if err != nil {
 		return err
 	}
-	tel, err := telemetry.NewLogger(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	tel, err := telemetry.NewLogger(telemetryPath(root))
 	if err != nil {
 		return fmt.Errorf("telemetry init: %w", err)
 	}
@@ -159,17 +154,9 @@ func runSynthesize(ctx context.Context, subpath, providerOverride string) error 
 	}
 	if !wrote {
 		// The model produced no usable overview (empty after stripping
-		// frontmatter). Do NOT record fingerprints — that would falsely claim
-		// the skills are up-to-date when the store still holds the old/absent
-		// overview.
-		fmt.Fprintln(os.Stderr, "warning: synthesis produced an empty architecture overview — nothing stored, fingerprints not updated")
+		// frontmatter), so the store still holds the old/absent overview.
+		fmt.Fprintln(os.Stderr, "warning: synthesis produced an empty architecture overview — nothing stored")
 		return nil
-	}
-	// Only record fingerprints once the overview has actually been persisted —
-	// otherwise a failed synthesis would leave fingerprints on disk falsely
-	// claiming the skills are up-to-date.
-	if err := fps.WriteJSON(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); err != nil {
-		return err
 	}
 	fmt.Printf("Stored architecture overview (%d domains, %d domain edges)\n", len(domains), len(domainEdges))
 	return nil
@@ -180,7 +167,7 @@ func runSynthesize(ctx context.Context, subpath, providerOverride string) error 
 // block. On an unparseable merged response it falls back to the two separate
 // generators. Failures of the fallback warn but do not abort.
 func mergedSynthesizeAndEnrich(ctx context.Context, root string, prov provider.Provider, contextSize int) {
-	project, domains, domainEdges, fps, err := prepareSynthesisInputs(root, "", false)
+	project, domains, domainEdges, err := prepareSynthesisInputs(root, "", false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: synthesize inputs: %v\n", err)
 		return
@@ -190,7 +177,7 @@ func mergedSynthesizeAndEnrich(ctx context.Context, root string, prov provider.P
 		fmt.Fprintf(os.Stderr, "warning: reading concepts: %v\n", err)
 		return
 	}
-	tel, telErr := telemetry.NewLogger(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	tel, telErr := telemetry.NewLogger(telemetryPath(root))
 	if telErr != nil {
 		slog.Warn("learn: telemetry init failed, proceeding without logging", "err", telErr)
 	}
@@ -217,17 +204,9 @@ func mergedSynthesizeAndEnrich(ctx context.Context, root string, prov provider.P
 		if wrote, wErr := persistArchitecture(arch); wErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: storing architecture overview: %v\n", wErr)
 		} else if !wrote {
-			// arch was non-empty but stripped to nothing (frontmatter only).
-			// Do not record fingerprints — the store keeps its old/absent
-			// overview, so claiming freshness would be a lie (mirrors
-			// runSynthesize).
-			fmt.Fprintln(os.Stderr, "warning: merged synthesis produced an empty architecture overview — nothing stored, fingerprints not updated")
-		} else if fpErr := fps.WriteJSON(filepath.Join(root, ".tu-agent", "skill-fingerprints.json")); fpErr != nil {
-			// Fingerprints are only recorded once the architecture overview was
-			// actually persisted (mirrors runSynthesize) — a write failure
-			// above must not leave fingerprints falsely claiming freshness
-			// for an overview that was never stored.
-			fmt.Fprintf(os.Stderr, "warning: writing skill-fingerprints.json: %v\n", fpErr)
+			// arch was non-empty but stripped to nothing (frontmatter only), so
+			// the store keeps its old/absent overview (mirrors runSynthesize).
+			fmt.Fprintln(os.Stderr, "warning: merged synthesis produced an empty architecture overview — nothing stored")
 		}
 	}
 	if ctxBlock != "" {
@@ -257,24 +236,91 @@ func runStatus(root string) error {
 	return runStatusTo(os.Stdout, root)
 }
 
+// conceptState is the freshness of one concept's generated skill.
+type conceptState struct {
+	Name   string
+	Status string // "up-to-date" | "stale" | "new"
+}
+
+// conceptStates reports each concept's freshness, ordered by name. The
+// "architecture" concept is skipped (derived, not a domain).
+//
+// Member files come from the store's concept -> files link, never from the
+// concept card's body: bodies carry no "## Key Files" section since concepts
+// moved into graph.db, which is exactly what made the retired
+// skill-fingerprints.json hash the empty string for every concept and report
+// "up-to-date" forever.
+func conceptStates(root string) ([]conceptState, error) {
+	st, err := openGraphStore()
+	if err != nil {
+		return nil, err
+	}
+	defer st.Close()
+	concepts, err := st.ListConcepts()
+	if err != nil {
+		return nil, fmt.Errorf("loading concepts: %w", err)
+	}
+	if len(concepts) == 0 {
+		return nil, fmt.Errorf("no concepts found — run 'tu-agent learn <path>' first")
+	}
+	// The sha256 the graph recorded per file when it was last built — the "as
+	// learned" baseline that live content is compared against.
+	recorded, err := st.Files()
+	if err != nil {
+		return nil, fmt.Errorf("loading graph files: %w", err)
+	}
+	states := make([]conceptState, 0, len(concepts))
+	for _, c := range concepts {
+		if c.Name == "architecture" {
+			continue
+		}
+		states = append(states, conceptState{Name: c.Name, Status: conceptStatus(root, c, recorded)})
+	}
+	return states, nil
+}
+
+// conceptStatus reports one concept's freshness: "new" when it has no generated
+// SKILL.md yet, "up-to-date" when every member file still hashes to what the
+// graph recorded, "stale" otherwise.
+func conceptStatus(root string, c store.ConceptRow, recorded map[string]store.FileRecord) string {
+	if _, err := os.Stat(filepath.Join(generatedSkillsDir(root), c.Name, "SKILL.md")); err != nil {
+		return "new"
+	}
+	if len(c.Files) == 0 {
+		// No member files linked, so there is no evidence the skill still
+		// matches the code. Report "stale" rather than claim freshness we
+		// cannot verify — a concept learned before the link existed then
+		// prompts a re-learn instead of lying.
+		return "stale"
+	}
+	for _, rel := range c.Files {
+		if recorded[rel].SHA256 != liveSHA256(root, rel) {
+			return "stale"
+		}
+	}
+	return "up-to-date"
+}
+
+// liveSHA256 hashes rel's current content exactly the way the graph extractor
+// does (lowercase hex of the sha256 over the raw bytes), so a value equal to
+// the store's means the file has not changed since the graph was built. A file
+// that cannot be read yields a marker no real hash can equal, which reads as
+// changed.
+func liveSHA256(root, rel string) string {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return "<unreadable>"
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
 // runStatusTo renders the knowledge-index (skill staleness) report to w and
 // returns an error describing why the report could not be produced (e.g. no
 // concepts). Callers that need to surface that error inline (the top-level
 // `status` command) pass their own writer; `learn status` writes to os.Stdout
 // via runStatus.
 func runStatusTo(w io.Writer, root string) error {
-	skills, err := loadConceptSkills()
-	if err != nil {
-		return fmt.Errorf("loading concepts: %w", err)
-	}
-	if len(skills) == 0 {
-		return fmt.Errorf("no concepts found — run 'tu-agent learn <path>' first")
-	}
-	recorded, err := codegen.LoadFingerprints(filepath.Join(root, ".tu-agent", "skill-fingerprints.json"))
-	if err != nil {
-		return err
-	}
-	states, err := codegen.ComputeSkillStatus(root, skills, recorded)
+	states, err := conceptStates(root)
 	if err != nil {
 		return err
 	}
@@ -299,7 +345,7 @@ func runStatusTo(w io.Writer, root string) error {
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Report which skills are stale (their Key Files changed since last synthesize)",
+	Short: "Report which skills are stale (their member files changed since the graph was built)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runStatus(".")

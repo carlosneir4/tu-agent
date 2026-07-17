@@ -337,8 +337,8 @@ func TestMergeSettings_UnionsHooksByMatcher(t *testing.T) {
 
 func TestMergeGitignore_AddsBlockOnce(t *testing.T) {
 	out := MergeGitignore("")
-	if !strings.Contains(out, ".tu-agent/graph.db") {
-		t.Error("missing graph.db entry")
+	if !strings.Contains(out, ".tu-agent/*") || !strings.Contains(out, "!.tu-agent/share/") {
+		t.Error("missing default-deny .tu-agent/* + !.tu-agent/share/ re-include")
 	}
 	if !strings.Contains(out, "# >>> tu-agent >>>") {
 		t.Error("missing managed-block marker")
@@ -357,7 +357,7 @@ func TestMergeGitignore_PreservesExisting(t *testing.T) {
 	if !strings.Contains(out, "node_modules/") || !strings.Contains(out, "*.log") {
 		t.Error("dropped existing .gitignore lines")
 	}
-	if !strings.Contains(out, ".tu-agent/graph.db") {
+	if !strings.Contains(out, ".tu-agent/*") {
 		t.Error("did not append tu-agent block")
 	}
 }
@@ -382,10 +382,10 @@ func TestMergeGitignore_ReplaceInPlacePreservesSurrounding(t *testing.T) {
 
 func TestGitInfoExcludeBlock_SharesMemoryChunks(t *testing.T) {
 	b := GitInfoExcludeBlock()
-	// The shared-memory chunks dir is re-included so a team can still commit it
+	// The shared subtree is re-included so a team can still commit it
 	// even in private mode (everything else tu-agent stays local).
-	if !strings.Contains(b, "!.tu-agent/memory/chunks/") {
-		t.Error("private exclude must re-include .tu-agent/memory/chunks/ so memory can be shared")
+	if !strings.Contains(b, "!.tu-agent/share/") {
+		t.Error("private exclude must re-include .tu-agent/share/ so memory can be shared")
 	}
 	// The rest of .tu-agent (graph.db, memory.db, telemetry) must still be ignored
 	// via a contents glob, not a wholesale dir exclude (which would block re-include).
@@ -598,8 +598,8 @@ func TestGitignoreBlockIgnoresSettingsBackup(t *testing.T) {
 // build-single-flight-lock feature). Consumer repos must never commit this
 // lock file.
 func TestGitignoreBlockIgnoresBuildLock(t *testing.T) {
-	if !strings.Contains(GitignoreBlock(), ".tu-agent/graph.build.lock") {
-		t.Error("GitignoreBlock should ignore .tu-agent/graph.build.lock")
+	if !gitIgnores(t, ".gitignore", MergeGitignore(""), ".tu-agent/graph/graph.build.lock") {
+		t.Error("default-deny should ignore .tu-agent/graph/graph.build.lock")
 	}
 }
 
@@ -816,24 +816,13 @@ func TestMergeSettingsPreservesGraphFreshnessHook(t *testing.T) {
 }
 
 func TestGitignoreBlockKeepsChunksVersioned(t *testing.T) {
-	block := GitignoreBlock()
-	// The DB stays ignored.
-	if !strings.Contains(block, ".tu-agent/memory.db") {
+	// The DB stays local.
+	if !gitIgnores(t, ".gitignore", MergeGitignore(""), ".tu-agent/memory/memory.db") {
 		t.Fatal("memory.db must remain gitignored")
 	}
-	// Chunks must NOT be ignored: no line may match the chunks directory.
-	for _, line := range strings.Split(block, "\n") {
-		l := strings.TrimSpace(line)
-		if l == "" || strings.HasPrefix(l, "#") {
-			continue
-		}
-		if strings.HasPrefix(l, ".tu-agent/memory/") || l == ".tu-agent/memory" || l == ".tu-agent/" {
-			t.Fatalf("gitignore line %q would ignore committed memory chunks", l)
-		}
-	}
-	// The block documents why chunks are versioned.
-	if !strings.Contains(block, "memory/chunks") {
-		t.Fatal("block should mention memory/chunks are versioned")
+	// Shared chunks must remain committable.
+	if gitIgnores(t, ".gitignore", MergeGitignore(""), ".tu-agent/share/memory/chunks/chunk-alice.jsonl.gz") {
+		t.Fatal("shared memory chunks must not be ignored")
 	}
 }
 

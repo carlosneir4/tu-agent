@@ -212,7 +212,7 @@ func RunGate(ctx context.Context, cfg config.Config, root, ticket, feature, cove
 		if b, ok := ResolveTddBaseForFeature(root, ticket, feature); ok {
 			base = b
 		} else {
-			base = filepath.Join(root, ".tu-agent", "tdd")
+			base = tddDir(root)
 		}
 	} else if !filepath.IsAbs(base) {
 		base = filepath.Join(root, filepath.FromSlash(base))

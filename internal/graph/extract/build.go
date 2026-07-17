@@ -164,18 +164,25 @@ func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResul
 	return result, resolveFromStore(st, goModulePath(root))
 }
 
+// buildLockPath returns the single-flight lock file for graph builds against
+// root. It is the authoritative definition of that path: this package cannot
+// import cmd, so the project layout for the lock lives here.
+func buildLockPath(root string) string {
+	return filepath.Join(root, ".tu-agent", "graph", "graph.build.lock")
+}
+
 // acquireBuildLock takes an exclusive, blocking advisory lock on
-// "<root>/.tu-agent/graph.build.lock" so concurrent BuildScoped calls against
+// "<root>/.tu-agent/graph/graph.build.lock" so concurrent BuildScoped calls against
 // the same root single-flight instead of racing the store. It returns a
 // release func the caller must defer; the lock file itself is created (but
 // not locked) on every platform, while the actual flock is unix-only — see
 // lock_unix.go / lock_windows.go.
 func acquireBuildLock(root string) (func(), error) {
-	lockDir := filepath.Join(root, ".tu-agent")
+	lockPath := buildLockPath(root)
+	lockDir := filepath.Dir(lockPath)
 	if err := os.MkdirAll(lockDir, 0o755); err != nil {
 		return nil, fmt.Errorf("graph.Build: creating lock dir %s: %w", lockDir, err)
 	}
-	lockPath := filepath.Join(lockDir, "graph.build.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("graph.Build: opening lock file %s: %w", lockPath, err)

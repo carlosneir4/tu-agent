@@ -17,10 +17,10 @@ func TestRelinkObservations_DerivesAndIsIdempotent(t *testing.T) {
 	t.Chdir(dir)
 
 	// Seed a graph with one class node named OrderService.
-	if err := os.MkdirAll(filepath.Join(dir, ".tu-agent"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".tu-agent", "graph"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	gs, err := store.Open(filepath.Join(dir, ".tu-agent", "graph.db"), extract.ExtractorVersion)
+	gs, err := store.Open(filepath.Join(dir, ".tu-agent", "graph", "graph.db"), extract.ExtractorVersion)
 	if err != nil {
 		t.Fatalf("graph open: %v", err)
 	}

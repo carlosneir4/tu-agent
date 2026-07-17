@@ -146,10 +146,10 @@ func TestComposeStagePromptIncludesRulesInOrder(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "developer.md"), []byte("---\nname: x\n---\nDEV-BODY\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, ".tu-agent"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".tu-agent", "rules"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".tu-agent", "rules.md"), []byte("REPO-WIDE-RULE"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".tu-agent", "rules", "all.md"), []byte("REPO-WIDE-RULE"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

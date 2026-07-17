@@ -100,8 +100,8 @@ func appendLastSessionSummary(prompt, summary string) string {
 // Returns "" when no file is found.
 func loadPromptSuffix(dir, task, provider string) string {
 	candidates := []string{
-		filepath.Join(dir, ".tu-agent", "prompts", task+"-"+provider+".md"),
-		filepath.Join(dir, ".tu-agent", "prompts", provider+".md"),
+		filepath.Join(promptsDir(dir), task+"-"+provider+".md"),
+		filepath.Join(promptsDir(dir), provider+".md"),
 	}
 	for _, p := range candidates {
 		data, err := os.ReadFile(p)
@@ -154,7 +154,7 @@ var chatCmd = &cobra.Command{
 			return fmt.Errorf("memory last summary: %w", err)
 		}
 
-		tel, err := telemetry.NewLogger(".tu-agent/telemetry.jsonl")
+		tel, err := telemetry.NewLogger(telemetryPath("."))
 		if err != nil {
 			return fmt.Errorf("telemetry init: %w", err)
 		}

@@ -51,7 +51,9 @@ func TestBuildKnowledgeNodes(t *testing.T) {
 		Name:        "billing",
 		Description: "Billing domain",
 		Dir:         filepath.Join(root, ".claude", "skills", "billing"),
-		Body:        "## Key Files\n- src/billing/InvoiceService.java: core\n- src/billing/Ledger.java\n",
+		// Member files come from the store's concept->files link (Skill.Files),
+		// not a "## Key Files" body section.
+		Files: []string{"src/billing/InvoiceService.java", "src/billing/Ledger.java"},
 	}}
 	claude := "# Title\n\n" + projectContextOpen + "\nConventions here\n" + projectContextClose + "\n"
 	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte(claude), 0o644); err != nil {
@@ -101,7 +103,7 @@ func TestBuildKnowledgeNodesNoConventionsBlock(t *testing.T) {
 
 func TestBuildKnowledgeNodesFromConcepts(t *testing.T) {
 	skills := []codegen.Skill{
-		{Name: "widgets", Description: "d", Body: "## key files\n- core/Widget.java: the type\n"}, // Dir empty → store-sourced
+		{Name: "widgets", Description: "d", Files: []string{"core/Widget.java"}}, // Dir empty → store-sourced; member files from the store link
 	}
 	nodes, edges := buildKnowledgeNodes(skills, t.TempDir())
 	var found bool

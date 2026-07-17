@@ -17,15 +17,16 @@ var statsCmd = &cobra.Command{
 	GroupID: "diagnostics",
 	Use:     "stats",
 	Short:   "Summarize token usage and cost from recent sessions",
-	Long: `Reads .tu-agent/telemetry.jsonl and prints a summary of model calls,
+	Long: `Reads .tu-agent/logs/telemetry.jsonl and prints a summary of model calls,
 token usage, cost, and average latency grouped by provider.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		entries, err := stats.ReadEntries(".tu-agent/telemetry.jsonl")
+		root := repoRoot()
+		entries, err := stats.ReadEntries(telemetryPath(root))
 		if err != nil {
 			return fmt.Errorf("reading telemetry: %w", err)
 		}
 		if len(entries) == 0 {
-			fmt.Println("No telemetry data found in .tu-agent/telemetry.jsonl")
+			fmt.Println("No telemetry data found in .tu-agent/logs/telemetry.jsonl")
 			return nil
 		}
 		if statsLast > 0 && statsLast < len(entries) {

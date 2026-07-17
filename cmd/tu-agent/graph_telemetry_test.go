@@ -24,7 +24,7 @@ func TestRunGraphBuildQuiet_FullLevelRecordsGraphRefresh(t *testing.T) {
 		t.Fatalf("runGraphBuild: %v", err)
 	}
 
-	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		t.Fatalf("ReadEntries: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestRunGraphBuildQuiet_HookModeErrorRecordsOneHookFailure(t *testing.T) {
 		t.Fatalf("bootstrap build: %v", err)
 	}
 	// Reset the telemetry log so only the error-path row is under test.
-	if err := os.Remove(filepath.Join(root, ".tu-agent", "telemetry.jsonl")); err != nil {
+	if err := os.Remove(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,7 +96,7 @@ func TestRunGraphBuildQuiet_HookModeErrorRecordsOneHookFailure(t *testing.T) {
 		t.Fatal("expected an out-of-root error, got nil")
 	}
 
-	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		t.Fatalf("ReadEntries: %v", err)
 	}

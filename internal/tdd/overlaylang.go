@@ -1,7 +1,6 @@
 package tdd
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/carlosneir4/tu-agent/internal/codegen"
@@ -48,7 +47,7 @@ func buildToolToLang(tool string) string {
 // root — an empty userDir would make Load read a cwd-relative config.yaml,
 // leaking the process working directory into a root-scoped query.
 func resolveOverlayLangForRoot(root string) string {
-	projectDir := filepath.Join(root, ".tu-agent")
+	projectDir := tuAgentDir(root)
 	loader := config.NewLoader("", projectDir, projectDir)
 	cfg, err := loader.Load()
 	if err != nil {

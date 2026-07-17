@@ -3,13 +3,12 @@ package tdd
 import (
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
 // rulesHeader marks the user-owned project rules block as authoritative: the
 // judge and stage agents must treat a violation as a defect, not a suggestion.
-const rulesHeader = "## Project rules (.tu-agent/rules.md) — user-owned, authoritative\n" +
+const rulesHeader = "## Project rules (.tu-agent/rules/all.md) — user-owned, authoritative\n" +
 	"These rules are binding; a violation is grounds to revise.\n\n"
 
 // readRulesFile reads path and returns its trimmed content. An absent file is
@@ -31,17 +30,17 @@ func readRulesFile(path string) string {
 // loadProjectRules returns the user-owned project rules for a role, ready to
 // splice between an agent body and its stage overlay in composeStagePrompt.
 //
-// It reads the repo-wide .tu-agent/rules.md, then (if role != "") the optional
+// It reads the repo-wide .tu-agent/rules/all.md, then (if role != "") the optional
 // per-role .tu-agent/rules/<role>.md, and joins the non-empty parts under an
 // authoritative header. It never creates files or directories — read-only.
 func loadProjectRules(root, role string) string {
 	parts := make([]string, 0, 2)
 
-	if repoWide := readRulesFile(filepath.Join(root, ".tu-agent", "rules.md")); repoWide != "" {
+	if repoWide := readRulesFile(rulesPath(root)); repoWide != "" {
 		parts = append(parts, repoWide)
 	}
 	if role != "" {
-		if perRole := readRulesFile(filepath.Join(root, ".tu-agent", "rules", role+".md")); perRole != "" {
+		if perRole := readRulesFile(roleRulesPath(root, role)); perRole != "" {
 			parts = append(parts, perRole)
 		}
 	}

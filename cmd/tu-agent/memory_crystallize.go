@@ -60,7 +60,7 @@ func runCrystallizeGenerate(cmd *cobra.Command, label string) error {
 	if err != nil {
 		return fmt.Errorf("crystallize needs a configured provider for CLI generation (or use the plugin path): %w", err)
 	}
-	tel, err := telemetry.NewLogger(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	tel, err := telemetry.NewLogger(telemetryPath(root))
 	if err != nil {
 		return fmt.Errorf("telemetry init: %w", err)
 	}

@@ -158,7 +158,7 @@ func TestTopLevelStatus_GraphOpenFailureDoesNotSuppressKnowledge(t *testing.T) {
 	// deleting and retrying once, but os.Remove of a non-empty directory fails,
 	// so Open gives up and returns an error (an empty dir would be removed and
 	// silently rebuilt, defeating the failure injection).
-	dbDir := filepath.Join(root, ".tu-agent", "graph.db")
+	dbDir := filepath.Join(root, ".tu-agent", "graph", "graph.db")
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

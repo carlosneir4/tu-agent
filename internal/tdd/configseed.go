@@ -18,7 +18,7 @@ func SeedTddStringField(root, key, val string) (bool, error) {
 	if val == "" {
 		return false, nil
 	}
-	path := filepath.Join(root, ".tu-agent", "config.yaml")
+	path := projectConfigPath(root)
 	m := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil {
 		if err := yaml.Unmarshal(data, &m); err != nil {

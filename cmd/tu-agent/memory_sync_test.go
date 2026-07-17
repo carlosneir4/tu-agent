@@ -62,7 +62,7 @@ func TestMemoryExportImportCLI(t *testing.T) {
 
 func TestMemoryChunksDirPath(t *testing.T) {
 	got := memoryChunksDir("/repo")
-	want := filepath.Join("/repo", ".tu-agent", "memory", "chunks")
+	want := filepath.Join("/repo", ".tu-agent", "share", "memory", "chunks")
 	if got != want {
 		t.Fatalf("memoryChunksDir = %q, want %q", got, want)
 	}
@@ -292,7 +292,7 @@ func TestMemoryPending(t *testing.T) {
 		t.Fatalf("export run: %v", err)
 	}
 
-	runGitIn(t, dir, "add", ".tu-agent/memory/chunks")
+	runGitIn(t, dir, "add", ".tu-agent/share/memory/chunks")
 	runGitIn(t, dir, "commit", "-m", "chunk: initial")
 
 	var pendingOut bytes.Buffer
@@ -335,7 +335,7 @@ func TestMemoryPending(t *testing.T) {
 	}
 
 	// Commit again: nothing pending.
-	runGitIn(t, dir, "add", ".tu-agent/memory/chunks")
+	runGitIn(t, dir, "add", ".tu-agent/share/memory/chunks")
 	runGitIn(t, dir, "commit", "-m", "chunk: second")
 
 	var pendingOut3 bytes.Buffer
@@ -459,7 +459,7 @@ func TestMemoryPendingCorruptCommittedChunk(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runGitIn(t, dir, "add", ".tu-agent/memory/chunks")
+	runGitIn(t, dir, "add", ".tu-agent/share/memory/chunks")
 	runGitIn(t, dir, "commit", "-m", "chunk: corrupt")
 
 	var out bytes.Buffer
@@ -611,7 +611,7 @@ func TestMemoryPendingSurfacesRemovedNotes(t *testing.T) {
 	if _, _, err := memory.WriteChunk(chunksDir, author, []memory.ChunkRecord{noteA, noteB}); err != nil {
 		t.Fatal(err)
 	}
-	runGitIn(t, dir, "add", ".tu-agent/memory/chunks")
+	runGitIn(t, dir, "add", ".tu-agent/share/memory/chunks")
 	runGitIn(t, dir, "commit", "-m", "chunk: both notes")
 
 	// Overwrite the WORKING chunk with only note A — note B silently dropped

@@ -25,13 +25,11 @@ func GitInfoExcludeBlock() string {
 		"AGENTS.md\n" +
 		"# Assistant-authored planning docs (specs/plans) — never committed in private repos.\n" +
 		"docs/superpowers/\n" +
-		"# Everything under .tu-agent stays local EXCEPT the shared-memory chunks,\n" +
-		"# re-included (step by step, since git won't re-include under an excluded dir)\n" +
-		"# so a team can still commit them. graph.db / memory.db / telemetry stay local.\n" +
+		"# Everything under .tu-agent stays local EXCEPT the shared subtree,\n" +
+		"# re-included so a team can still commit its memory chunks.\n" +
+		"# graph.db / memory.db / telemetry stay local.\n" +
 		".tu-agent/*\n" +
-		"!.tu-agent/memory/\n" +
-		".tu-agent/memory/*\n" +
-		"!.tu-agent/memory/chunks/\n" +
+		"!.tu-agent/share/\n" +
 		gitExcludeClose
 }
 
@@ -41,19 +39,18 @@ func MergeGitInfoExclude(existing string) string {
 	return mergeManagedBlock(existing, GitInfoExcludeBlock(), gitExcludeOpen, gitExcludeClose)
 }
 
-// GitignoreBlock returns the managed block listing tu-agent's derived artifacts.
+// GitignoreBlock returns the managed block that ignores tu-agent's derived
+// artifacts by default-deny: everything under .tu-agent is ignored, and only the
+// shared subtree is re-included so team-shared memory chunks stay committable.
 func GitignoreBlock() string {
 	return gitignoreOpen + "\n" +
-		".tu-agent/graph.db\n" +
-		".tu-agent/graph.db-wal\n" +
-		".tu-agent/graph.db-shm\n" +
-		".tu-agent/telemetry.jsonl\n" +
-		".tu-agent/memory.db\n" +
-		".tu-agent/memory.db-wal\n" +
-		".tu-agent/memory.db-shm\n" +
-		".tu-agent/graph.build.lock\n" +
+		"# Default-deny: ignore every tu-agent artifact; re-include only the shared\n" +
+		"# subtree. git cannot re-include a path under an excluded directory in one step,\n" +
+		"# so .tu-agent/share/ (holding the team-shared memory chunks) is re-included as a\n" +
+		"# whole; graph.db, memory.db, telemetry and every future artifact stay local.\n" +
+		".tu-agent/*\n" +
+		"!.tu-agent/share/\n" +
 		".claude/settings.json.bak\n" +
-		"# .tu-agent/memory/chunks/ is intentionally versioned (shared team memory)\n" +
 		gitignoreClose
 }
 

@@ -33,7 +33,7 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 }
 
 func TestGraphDBPath(t *testing.T) {
-	if got := graphDBPath("."); got != filepath.Join(".tu-agent", "graph.db") {
+	if got := graphDBPath("."); got != filepath.Join(".tu-agent", "graph", "graph.db") {
 		t.Errorf("graphDBPath = %q", got)
 	}
 }

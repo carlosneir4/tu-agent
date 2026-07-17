@@ -13,7 +13,7 @@ import (
 func TestRelChunkPath(t *testing.T) {
 	const author = "Alice Example <alice@example.com>"
 	got := RelChunkPath(author)
-	want := ".tu-agent/memory/chunks/chunk-" + authorSlug(author) + ".jsonl.gz"
+	want := ".tu-agent/share/memory/chunks/chunk-" + authorSlug(author) + ".jsonl.gz"
 	if got != want {
 		t.Fatalf("RelChunkPath(%q) = %q, want %q", author, got, want)
 	}
