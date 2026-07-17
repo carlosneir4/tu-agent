@@ -96,6 +96,20 @@ func TestResolveTddBase(t *testing.T) {
 	}
 }
 
+// TestProjectConfigPathStaysAtRoot guards that config.yaml stays at the
+// .tu-agent root through the per-subsystem relayout (dir-relayout @s5). Unlike
+// memory/graph/telemetry, the config file is the entry point and must NOT be
+// nested under a subsystem directory. This is expected to already pass — it is
+// a guard against accidental relocation, not part of the RED gate.
+func TestProjectConfigPathStaysAtRoot(t *testing.T) {
+	const root = "/repo"
+	got := projectConfigPath(root)
+	want := filepath.Join(root, ".tu-agent", "config.yaml")
+	if got != want {
+		t.Errorf("projectConfigPath(%q) = %q, want %q", root, got, want)
+	}
+}
+
 func TestPromptRelBase(t *testing.T) {
 	// explicit base wins, ignores ticket/desc
 	if got := PromptRelBase(".tu-agent/tdd/EXPLICIT", "ABC-1", []string{"user", "login"}); got != ".tu-agent/tdd/EXPLICIT" {

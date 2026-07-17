@@ -46,7 +46,7 @@ var tddRunCmd = &cobra.Command{
 		}
 		root := repoRoot()
 
-		tel, err := telemetry.NewLogger(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+		tel, err := telemetry.NewLogger(telemetryPath(root))
 		if err != nil {
 			return fmt.Errorf("telemetry init: %w", err)
 		}

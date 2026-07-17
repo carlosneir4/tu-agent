@@ -9,7 +9,7 @@ import (
 
 func TestStatsInsights_ReportsUnusedToolsAndZeroResultRate(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if err := os.MkdirAll(".tu-agent", 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(".tu-agent", "logs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	lines := `{"timestamp":"2026-01-01T00:00:00Z","event":"mcp_call","tool":"mem_search","duration_ms":100,"result_bytes":50,"zero_result":true}
@@ -17,7 +17,7 @@ func TestStatsInsights_ReportsUnusedToolsAndZeroResultRate(t *testing.T) {
 {"timestamp":"2026-01-01T00:00:02Z","event":"graph_refresh","parsed":5,"unchanged":2,"deleted":1,"failed":0,"ok":true}
 {"timestamp":"2026-01-01T00:00:03Z","event":"hook","tool":"graph update","duration_ms":30,"ok":true}
 `
-	if err := os.WriteFile(filepath.Join(".tu-agent", "telemetry.jsonl"), []byte(lines), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(".tu-agent", "logs", "telemetry.jsonl"), []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

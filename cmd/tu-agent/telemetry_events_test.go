@@ -22,7 +22,7 @@ func withTelemetryLevel(t *testing.T, level string) {
 
 func readTelemetryFile(t *testing.T, root string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	data, err := os.ReadFile(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -72,7 +72,7 @@ func TestRecordGraphRefresh_FullWritesRowWithCounts(t *testing.T) {
 
 	recordGraphRefresh(extract.BuildResult{Parsed: 3, Unchanged: 1, Deleted: 2, Failed: 1}, 10*time.Millisecond)
 
-	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		t.Fatalf("ReadEntries: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestRecordGraphRefresh_FullOKTrueWhenNoFailures(t *testing.T) {
 
 	recordGraphRefresh(extract.BuildResult{Parsed: 3}, time.Millisecond)
 
-	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		t.Fatalf("ReadEntries: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRecordHook_MinimalOnlyRecordsFailures(t *testing.T) {
 	}
 
 	recordHook("graph update", time.Millisecond, errors.New("boom"))
-	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		t.Fatalf("ReadEntries: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestRecordViolation_FullWritesRow(t *testing.T) {
 
 	recordViolation("secret-guard", "Write", "s1")
 
-	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		t.Fatalf("ReadEntries: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestRecordHook_FullRecordsBoth(t *testing.T) {
 	recordHook("memory relink", time.Millisecond, nil)
 	recordHook("memory relink", time.Millisecond, errors.New("boom"))
 
-	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		t.Fatalf("ReadEntries: %v", err)
 	}

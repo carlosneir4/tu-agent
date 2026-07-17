@@ -77,7 +77,7 @@ func sfGoSrc(i int) string {
 // sfLockPath returns the single-flight lock path BuildScoped is expected to
 // take: "<root>/.tu-agent/graph.build.lock".
 func sfLockPath(root string) string {
-	return filepath.Join(root, ".tu-agent", "graph.build.lock")
+	return filepath.Join(root, ".tu-agent", "graph", "graph.build.lock")
 }
 
 // @s3 — first build in a repo creates the lock file and succeeds.
@@ -122,7 +122,7 @@ func TestBuildScoped_SingleFlight_BlocksOnExternalLock(t *testing.T) {
 	}
 	defer st.Close()
 
-	lockDir := filepath.Join(dir, ".tu-agent")
+	lockDir := filepath.Dir(sfLockPath(dir))
 	if err := os.MkdirAll(lockDir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", lockDir, err)
 	}

@@ -13,7 +13,7 @@ import (
 // log so advise's behavioral rules have evidence to evaluate.
 func writeAdviseTelemetry(t *testing.T, root string, outcome string, n int) {
 	t.Helper()
-	lg, err := telemetry.NewLogger(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	lg, err := telemetry.NewLogger(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		t.Fatalf("telemetry.NewLogger: %v", err)
 	}

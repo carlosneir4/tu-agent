@@ -279,7 +279,7 @@ func TestRunLearn_SkipLLM_NoModelCall(t *testing.T) {
 	if err != nil || !strings.Contains(string(md), "tu-agent:knowledge") {
 		t.Fatalf("knowledge block missing: err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(".tu-agent", "graph.db")); err != nil {
+	if _, err := os.Stat(filepath.Join(".tu-agent", "graph", "graph.db")); err != nil {
 		t.Errorf("graph.db missing: %v", err)
 	}
 }

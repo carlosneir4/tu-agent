@@ -47,7 +47,7 @@ func TestApplyHardening_CreatesAndIsIdempotent(t *testing.T) {
 	}
 
 	gi, err := os.ReadFile(".gitignore")
-	if err != nil || !strings.Contains(string(gi), ".tu-agent/graph.db") {
+	if err != nil || !strings.Contains(string(gi), ".tu-agent/*") || !strings.Contains(string(gi), "!.tu-agent/share/") {
 		t.Errorf(".gitignore not updated: %v", err)
 	}
 }

@@ -332,7 +332,7 @@ func runTestGen(ctx context.Context, target string, top int, domain string) erro
 	if err != nil {
 		return err
 	}
-	tel, err := telemetry.NewLogger(filepath.Join(repoRoot(), ".tu-agent", "telemetry.jsonl"))
+	tel, err := telemetry.NewLogger(telemetryPath(repoRoot()))
 	if err != nil {
 		return fmt.Errorf("telemetry init: %w", err)
 	}

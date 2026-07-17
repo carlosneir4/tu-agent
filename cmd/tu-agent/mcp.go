@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -1119,7 +1118,7 @@ func maybeInitMCPTelemetry() {
 	if telemetryLevel() != "full" {
 		return
 	}
-	if lg, err := telemetry.NewLogger(filepath.Join(repoRoot(), ".tu-agent", "telemetry.jsonl")); err == nil {
+	if lg, err := telemetry.NewLogger(telemetryPath(repoRoot())); err == nil {
 		mcpTelemetryLogger = lg
 	}
 }

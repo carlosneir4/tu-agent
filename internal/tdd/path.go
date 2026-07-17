@@ -66,12 +66,50 @@ func SanitizeTicket(ticket string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+// The helpers below are the authoritative definitions of every project-local
+// path this package resolves. internal/tdd cannot import cmd, so the layout it
+// depends on lives here rather than as a ".tu-agent" literal per call site.
+
+// tuAgentDir returns the project-local tu-agent data directory under root.
+func tuAgentDir(root string) string {
+	return filepath.Join(root, ".tu-agent")
+}
+
+// tddDir returns the dev-flow artifact directory under root.
+func tddDir(root string) string {
+	return filepath.Join(tuAgentDir(root), "tdd")
+}
+
+// tddRelDir is the repo-relative, forward-slash dev-flow artifact directory.
+// Built with path.Join (not filepath.Join) because it is embedded in prompts
+// and compared as a slash path regardless of the host separator.
+func tddRelDir() string {
+	return path.Join(".tu-agent", "tdd")
+}
+
+// rulesPath returns the repo-wide user-owned project rules file under root.
+// It sits alongside the per-role files in .tu-agent/rules/ as all.md; "all"
+// collides with no role name.
+func rulesPath(root string) string {
+	return filepath.Join(tuAgentDir(root), "rules", "all.md")
+}
+
+// roleRulesPath returns the optional per-role project rules file under root.
+func roleRulesPath(root, role string) string {
+	return filepath.Join(tuAgentDir(root), "rules", role+".md")
+}
+
+// projectConfigPath returns the project-local tu-agent config file under root.
+func projectConfigPath(root string) string {
+	return filepath.Join(tuAgentDir(root), "config.yaml")
+}
+
 // TddRelBase is the repo-relative per-feature artifact dir.
 func TddRelBase(ticket, slug string) string {
 	if t := SanitizeTicket(ticket); t != "" {
-		return path.Join(".tu-agent", "tdd", t+"-"+slug)
+		return path.Join(tddRelDir(), t+"-"+slug)
 	}
-	return path.Join(".tu-agent", "tdd", slug)
+	return path.Join(tddRelDir(), slug)
 }
 
 // CurrentBranch returns the checked-out branch name, or "" on error.
@@ -99,8 +137,8 @@ func WarnBranch(current, ticket string, w io.Writer) {
 // ticket it prefers a matching subdir; otherwise the newest subdir by mtime;
 // falling back to the legacy flat dir when it holds a state.json.
 func ResolveTddBase(root, ticket string) (string, bool) {
-	tddDir := filepath.Join(root, ".tu-agent", "tdd")
-	entries, err := os.ReadDir(tddDir)
+	dir := tddDir(root)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", false
 	}
@@ -127,15 +165,15 @@ func ResolveTddBase(root, ticket string) (string, bool) {
 		if ierr != nil {
 			continue
 		}
-		subs = append(subs, cand{filepath.Join(tddDir, e.Name()), info.ModTime().UnixNano()})
+		subs = append(subs, cand{filepath.Join(dir, e.Name()), info.ModTime().UnixNano()})
 	}
 	if len(subs) > 0 {
 		sort.Slice(subs, func(i, j int) bool { return subs[i].mod > subs[j].mod })
 		return subs[0].path, true
 	}
 	if sanitized == "" {
-		if _, serr := os.Stat(filepath.Join(tddDir, "state.json")); serr == nil {
-			return tddDir, true
+		if _, serr := os.Stat(filepath.Join(dir, "state.json")); serr == nil {
+			return dir, true
 		}
 	}
 	return "", false
@@ -151,8 +189,8 @@ func ResolveTddBase(root, ticket string) (string, bool) {
 // resolution when no candidate contains that file yet (e.g. the first RED
 // call for this feature, before any dir holds it).
 func ResolveTddBaseForFeature(root, ticket, feature string) (string, bool) {
-	tddDir := filepath.Join(root, ".tu-agent", "tdd")
-	entries, err := os.ReadDir(tddDir)
+	dir := tddDir(root)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ResolveTddBase(root, ticket)
 	}
@@ -167,7 +205,7 @@ func ResolveTddBaseForFeature(root, ticket, feature string) (string, bool) {
 		if sanitized != "" && e.Name() != sanitized && !strings.HasPrefix(e.Name(), sanitized+"-") {
 			continue
 		}
-		cand := filepath.Join(tddDir, e.Name())
+		cand := filepath.Join(dir, e.Name())
 		if _, ferr := os.Stat(filepath.Join(cand, "features", feature+".feature")); ferr == nil {
 			return cand, true
 		}

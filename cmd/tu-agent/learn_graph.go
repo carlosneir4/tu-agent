@@ -118,6 +118,7 @@ func registerKnowledge(root string) error {
 			slog.Warn("registerKnowledge: skipping unnamed concept", "store_name", c.Name)
 			continue
 		}
+		sk.Files = c.Files          // member files from the store's concept->files link
 		skills = append(skills, sk) // Dir == "" → virtual concept:: path
 	}
 	// F7-A: the architecture overview no longer lives as a .claude/skills file;

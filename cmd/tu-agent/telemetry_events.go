@@ -1,7 +1,6 @@
 package main
 
 import (
-	"path/filepath"
 	"time"
 
 	"github.com/carlosneir4/tu-agent/internal/graph/extract"
@@ -21,7 +20,7 @@ func telemetryLevel() string {
 // log. Failures to open the log are swallowed — telemetry must never break a
 // command.
 func logTelemetryEvent(e telemetry.Entry) {
-	lg, err := telemetry.NewLogger(filepath.Join(repoRoot(), ".tu-agent", "telemetry.jsonl"))
+	lg, err := telemetry.NewLogger(telemetryPath(repoRoot()))
 	if err != nil {
 		return
 	}
@@ -68,11 +67,16 @@ func recordHook(name string, dur time.Duration, err error) {
 	if telemetryLevel() != "full" && err == nil {
 		return
 	}
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
 	logTelemetryEvent(telemetry.Entry{
 		Timestamp:  time.Now(),
 		Event:      telemetry.EventHook,
 		Tool:       name,
 		DurationMS: dur.Milliseconds(),
 		OK:         err == nil,
+		Error:      msg,
 	})
 }

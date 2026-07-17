@@ -41,16 +41,16 @@ func writeOverlayGoConfig(t *testing.T, root string) {
 	}
 }
 
-// writeOverlayRules writes .tu-agent/rules.md containing sentinel so the composed
-// prompt carries a locatable project-rules section.
+// writeOverlayRules writes .tu-agent/rules/all.md containing sentinel so the
+// composed prompt carries a locatable project-rules section.
 func writeOverlayRules(t *testing.T, root, sentinel string) {
 	t.Helper()
-	dir := filepath.Join(root, ".tu-agent")
+	dir := filepath.Join(root, ".tu-agent", "rules")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir .tu-agent: %v", err)
+		t.Fatalf("mkdir .tu-agent/rules: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "rules.md"), []byte(sentinel), 0o644); err != nil {
-		t.Fatalf("write rules.md: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "all.md"), []byte(sentinel), 0o644); err != nil {
+		t.Fatalf("write rules/all.md: %v", err)
 	}
 }
 

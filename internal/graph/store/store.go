@@ -16,7 +16,7 @@ import (
 	"github.com/carlosneir4/tu-agent/internal/graph"
 )
 
-const schemaVersion = "6"
+const schemaVersion = "7"
 
 const schema = `
 CREATE TABLE IF NOT EXISTS nodes (
@@ -45,6 +45,15 @@ CREATE TABLE IF NOT EXISTS concepts (
   name        TEXT PRIMARY KEY,
   description TEXT NOT NULL DEFAULT '',
   content     TEXT NOT NULL DEFAULT '');
+-- concept_files links a concept to its member source files. Deliberately no
+-- foreign key onto concepts(name): UpsertConcept writes a definition back with
+-- INSERT OR REPLACE, and under _foreign_keys=on an ON DELETE CASCADE would fire
+-- on the implicit delete and silently drop the concept's links. ReplaceConcepts
+-- clears this table explicitly instead.
+CREATE TABLE IF NOT EXISTS concept_files (
+  concept TEXT NOT NULL,
+  path    TEXT NOT NULL,
+  PRIMARY KEY (concept, path));
 `
 
 // FileRecord mirrors one row of the files table.
@@ -408,9 +417,15 @@ type ConceptRow struct {
 	Name        string
 	Description string
 	Content     string
+	// Files are the concept's member source files, repo-relative and sorted by
+	// path. Only ReplaceConcepts persists them; UpsertConcept ignores this field.
+	Files []string
 }
 
-// ReplaceConcepts wholesale-replaces the concepts table in one transaction.
+// ReplaceConcepts wholesale-replaces the concepts table and each concept's
+// member-file links in one transaction. Clearing concept_files alongside
+// concepts is what keeps a dropped concept from resurrecting its old files if a
+// later run re-adds the same name.
 func (s *Store) ReplaceConcepts(rows []ConceptRow) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -420,10 +435,19 @@ func (s *Store) ReplaceConcepts(rows []ConceptRow) error {
 	if _, err := tx.Exec(`DELETE FROM concepts`); err != nil {
 		return fmt.Errorf("graph.Store.ReplaceConcepts: clearing: %w", err)
 	}
+	if _, err := tx.Exec(`DELETE FROM concept_files`); err != nil {
+		return fmt.Errorf("graph.Store.ReplaceConcepts: clearing files: %w", err)
+	}
 	for _, r := range rows {
 		if _, err := tx.Exec(`INSERT INTO concepts(name,description,content) VALUES(?,?,?)`,
 			r.Name, r.Description, r.Content); err != nil {
 			return fmt.Errorf("graph.Store.ReplaceConcepts: inserting %s: %w", r.Name, err)
+		}
+		for _, f := range r.Files {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO concept_files(concept,path) VALUES(?,?)`,
+				r.Name, f); err != nil {
+				return fmt.Errorf("graph.Store.ReplaceConcepts: linking %s to %s: %w", r.Name, f, err)
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -434,6 +458,11 @@ func (s *Store) ReplaceConcepts(rows []ConceptRow) error {
 
 // UpsertConcept inserts or replaces a single concept row by name. Used to write
 // back a generated definition without disturbing the rest of the table.
+//
+// It writes name/description/content only: r.Files is ignored, and the concept's
+// existing file links are left untouched. Persisting them here would wipe the
+// links of every caller that writes a definition back without member files.
+// ReplaceConcepts owns the concept -> files link.
 func (s *Store) UpsertConcept(r ConceptRow) error {
 	if _, err := s.db.Exec(`INSERT OR REPLACE INTO concepts(name,description,content) VALUES(?,?,?)`,
 		r.Name, r.Description, r.Content); err != nil {
@@ -442,7 +471,8 @@ func (s *Store) UpsertConcept(r ConceptRow) error {
 	return nil
 }
 
-// GetConcept returns the row for name and whether it exists.
+// GetConcept returns the row for name, with its member files, and whether it
+// exists.
 func (s *Store) GetConcept(name string) (ConceptRow, bool, error) {
 	var r ConceptRow
 	err := s.db.QueryRow(`SELECT name,description,content FROM concepts WHERE name = ?`, name).
@@ -453,10 +483,33 @@ func (s *Store) GetConcept(name string) (ConceptRow, bool, error) {
 	if err != nil {
 		return ConceptRow{}, false, fmt.Errorf("graph.Store.GetConcept: %w", err)
 	}
+	files, err := s.conceptFiles(name)
+	if err != nil {
+		return ConceptRow{}, false, fmt.Errorf("graph.Store.GetConcept: %w", err)
+	}
+	r.Files = files
 	return r, true, nil
 }
 
-// ListConcepts returns every concept row, ordered by name.
+// conceptFiles returns the member files linked to name, sorted by path.
+func (s *Store) conceptFiles(name string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT path FROM concept_files WHERE concept = ? ORDER BY path`, name)
+	if err != nil {
+		return nil, fmt.Errorf("reading concept files: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scanning concept file: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ListConcepts returns every concept row with its member files, ordered by name.
 func (s *Store) ListConcepts() ([]ConceptRow, error) {
 	rows, err := s.db.Query(`SELECT name,description,content FROM concepts ORDER BY name`)
 	if err != nil {
@@ -470,6 +523,38 @@ func (s *Store) ListConcepts() ([]ConceptRow, error) {
 			return nil, fmt.Errorf("graph.Store.ListConcepts: scan: %w", err)
 		}
 		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("graph.Store.ListConcepts: %w", err)
+	}
+	// Linking after the scan loop: the single connection (SetMaxOpenConns(1))
+	// is held by rows until it is drained, so querying inside the loop would
+	// deadlock.
+	links, err := s.allConceptFiles()
+	if err != nil {
+		return nil, fmt.Errorf("graph.Store.ListConcepts: %w", err)
+	}
+	for i := range out {
+		out[i].Files = links[out[i].Name]
+	}
+	return out, nil
+}
+
+// allConceptFiles returns every concept's member files keyed by concept name,
+// each sorted by path.
+func (s *Store) allConceptFiles() (map[string][]string, error) {
+	rows, err := s.db.Query(`SELECT concept, path FROM concept_files ORDER BY concept, path`)
+	if err != nil {
+		return nil, fmt.Errorf("reading concept files: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var concept, path string
+		if err := rows.Scan(&concept, &path); err != nil {
+			return nil, fmt.Errorf("scanning concept file: %w", err)
+		}
+		out[concept] = append(out[concept], path)
 	}
 	return out, rows.Err()
 }

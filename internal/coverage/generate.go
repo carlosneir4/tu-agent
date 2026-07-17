@@ -26,11 +26,18 @@ func ExecRunner(repoRoot string, argv []string) (string, error) {
 	return string(out), nil
 }
 
+// coverageDir returns the project-local directory where coverage reports are
+// written under repoRoot. It is the authoritative definition of that path:
+// this package cannot import cmd, so the project layout for it lives here.
+func coverageDir(repoRoot string) string {
+	return filepath.Join(repoRoot, ".tu-agent")
+}
+
 // Generate runs the language's test suite with coverage and parses the result.
 // On any failure (missing tool, failing suite, unreadable report) it returns a
 // wrapped error the caller logs before falling back to the graph proxy.
 func Generate(lang, repoRoot, modulePath string, run Runner) (Profile, error) {
-	dir := filepath.Join(repoRoot, ".tu-agent")
+	dir := coverageDir(repoRoot)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("coverage.Generate: %w", err)
 	}

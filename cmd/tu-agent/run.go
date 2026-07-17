@@ -36,7 +36,7 @@ Designed for scripted benchmarks. Exits after one task completes.`,
 
 		telPath := runTelPath
 		if telPath == "" {
-			telPath = ".tu-agent/telemetry.jsonl"
+			telPath = telemetryPath(".")
 		}
 		tel, err := telemetry.NewLogger(telPath)
 		if err != nil {

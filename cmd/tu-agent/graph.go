@@ -21,13 +21,14 @@ import (
 )
 
 func graphDBPath(root string) string {
-	return filepath.Join(root, ".tu-agent", "graph.db")
+	return filepath.Join(tuAgentDir(root), "graph", "graph.db")
 }
 
 func openGraphStore() (*store.Store, error) {
 	root := repoRoot()
-	if err := os.MkdirAll(filepath.Join(root, ".tu-agent"), 0o755); err != nil {
-		return nil, fmt.Errorf("creating .tu-agent dir: %w", err)
+	// store.Open does NOT create its parent dir, so create the graph/ subdir here.
+	if err := os.MkdirAll(filepath.Dir(graphDBPath(root)), 0o755); err != nil {
+		return nil, fmt.Errorf("creating .tu-agent graph dir: %w", err)
 	}
 	return store.Open(graphDBPath(root), extract.ExtractorVersion)
 }

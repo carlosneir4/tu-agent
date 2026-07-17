@@ -77,7 +77,7 @@ func runLearn(ctx context.Context, opts learnOpts) error {
 		if perr != nil {
 			fmt.Fprintf(os.Stderr, "warning: definitions provider: %v (keeping deterministic descriptions)\n", perr)
 		} else {
-			tel, terr := telemetry.NewLogger(filepath.Join(repoRoot(), ".tu-agent", "telemetry.jsonl"))
+			tel, terr := telemetry.NewLogger(telemetryPath(repoRoot()))
 			if terr != nil {
 				fmt.Fprintf(os.Stderr, "warning: telemetry init: %v\n", terr)
 			}

@@ -23,7 +23,7 @@ func TestMemoryRelinkCmd_HookMode_FullLevelRecordsHookRow(t *testing.T) {
 		t.Fatalf("relink: %v", err)
 	}
 
-	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "logs", "telemetry.jsonl"))
 	if err != nil {
 		t.Fatalf("ReadEntries: %v", err)
 	}

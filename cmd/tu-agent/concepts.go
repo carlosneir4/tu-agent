@@ -110,7 +110,7 @@ func persistConceptCardsTo(st *store.Store, cards []codegen.ConceptCard) error {
 		} else {
 			slog.Debug("concepts: description parse fallback", "name", c.Name, "err", perr)
 		}
-		rows = append(rows, store.ConceptRow{Name: c.Name, Description: desc, Content: content})
+		rows = append(rows, store.ConceptRow{Name: c.Name, Description: desc, Content: content, Files: c.Files})
 	}
 	if err := st.ReplaceConcepts(rows); err != nil {
 		return fmt.Errorf("concepts: persisting: %w", err)

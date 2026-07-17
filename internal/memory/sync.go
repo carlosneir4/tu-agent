@@ -210,12 +210,12 @@ func ChunkPath(dir, author string) string {
 }
 
 // RelChunkPath returns the repo-relative, forward-slash path to the given
-// author's chunk file (e.g. ".tu-agent/memory/chunks/chunk-alice.jsonl.gz"),
+// author's chunk file (e.g. ".tu-agent/share/memory/chunks/chunk-alice.jsonl.gz"),
 // suitable as a git pathspec (`git show HEAD:<path>`) on every platform
 // regardless of the OS path separator convention ChunkPath uses. Built with
 // path.Join (not filepath.Join) so it never picks up a backslash.
 func RelChunkPath(author string) string {
-	return path.Join(".tu-agent", "memory", "chunks", "chunk-"+authorSlug(author)+".jsonl.gz")
+	return path.Join(".tu-agent", "share", "memory", "chunks", "chunk-"+authorSlug(author)+".jsonl.gz")
 }
 
 // WriteChunk writes this author's records to dir/chunk-<slug>.jsonl.gz. It is

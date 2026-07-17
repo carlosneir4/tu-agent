@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -88,7 +87,7 @@ var knownAdviseRules = map[string]bool{
 // under root. A missing telemetry.jsonl (fresh repo, or telemetry disabled)
 // tolerates to empty insights, matching stats.ReadEntries.
 func adviseInputs(root string) (advise.Inputs, error) {
-	entries, err := stats.ReadEntries(filepath.Join(root, ".tu-agent", "telemetry.jsonl"))
+	entries, err := stats.ReadEntries(telemetryPath(root))
 	if err != nil {
 		return advise.Inputs{}, fmt.Errorf("adviseInputs: %w", err)
 	}

@@ -19,14 +19,14 @@ import (
 
 func buildFixtureGraph(t *testing.T) {
 	t.Helper()
-	if err := os.MkdirAll(".tu-agent", 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(".tu-agent", "graph"), 0o755); err != nil {
 		t.Fatalf("buildFixtureGraph: mkdir: %v", err)
 	}
 	src := "package shop\ntype Widget struct{}\nfunc (w *Widget) Price() int { return 1 }\n"
 	if err := os.WriteFile("widget.go", []byte(src), 0o644); err != nil {
 		t.Fatalf("buildFixtureGraph: write widget.go: %v", err)
 	}
-	st, err := store.Open(filepath.Join(".tu-agent", "graph.db"), extract.ExtractorVersion)
+	st, err := store.Open(filepath.Join(".tu-agent", "graph", "graph.db"), extract.ExtractorVersion)
 	if err != nil {
 		t.Fatalf("buildFixtureGraph: store.Open: %v", err)
 	}
@@ -321,10 +321,10 @@ func writeJavaTraitsFixture(t *testing.T) {
 			t.Fatalf("writeJavaTraitsFixture: %s: %v", name, err)
 		}
 	}
-	if err := os.MkdirAll(".tu-agent", 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(".tu-agent", "graph"), 0o755); err != nil {
 		t.Fatalf("writeJavaTraitsFixture: mkdir: %v", err)
 	}
-	st, err := store.Open(filepath.Join(".tu-agent", "graph.db"), extract.ExtractorVersion)
+	st, err := store.Open(filepath.Join(".tu-agent", "graph", "graph.db"), extract.ExtractorVersion)
 	if err != nil {
 		t.Fatalf("writeJavaTraitsFixture: store.Open: %v", err)
 	}
@@ -409,10 +409,10 @@ func (p *IngestPipeline) emit(data string) {}
 	if err := os.WriteFile("ingest.go", []byte(src), 0o644); err != nil {
 		t.Fatalf("writeGoFlowFixture: %v", err)
 	}
-	if err := os.MkdirAll(".tu-agent", 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(".tu-agent", "graph"), 0o755); err != nil {
 		t.Fatalf("writeGoFlowFixture: mkdir: %v", err)
 	}
-	st, err := store.Open(filepath.Join(".tu-agent", "graph.db"), extract.ExtractorVersion)
+	st, err := store.Open(filepath.Join(".tu-agent", "graph", "graph.db"), extract.ExtractorVersion)
 	if err != nil {
 		t.Fatalf("writeGoFlowFixture: store.Open: %v", err)
 	}
@@ -545,10 +545,10 @@ func writeJavaCallFixture(t *testing.T) {
 			t.Fatalf("writeJavaCallFixture: %s: %v", name, err)
 		}
 	}
-	if err := os.MkdirAll(".tu-agent", 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(".tu-agent", "graph"), 0o755); err != nil {
 		t.Fatalf("writeJavaCallFixture: mkdir: %v", err)
 	}
-	st, err := store.Open(filepath.Join(".tu-agent", "graph.db"), extract.ExtractorVersion)
+	st, err := store.Open(filepath.Join(".tu-agent", "graph", "graph.db"), extract.ExtractorVersion)
 	if err != nil {
 		t.Fatalf("writeJavaCallFixture: store.Open: %v", err)
 	}
@@ -600,10 +600,10 @@ func writeGoCycleFixture(t *testing.T) {
 			t.Fatalf("writeGoCycleFixture: %s: %v", name, err)
 		}
 	}
-	if err := os.MkdirAll(".tu-agent", 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(".tu-agent", "graph"), 0o755); err != nil {
 		t.Fatalf("writeGoCycleFixture: mkdir .tu-agent: %v", err)
 	}
-	st, err := store.Open(filepath.Join(".tu-agent", "graph.db"), extract.ExtractorVersion)
+	st, err := store.Open(filepath.Join(".tu-agent", "graph", "graph.db"), extract.ExtractorVersion)
 	if err != nil {
 		t.Fatalf("writeGoCycleFixture: store.Open: %v", err)
 	}
@@ -881,8 +881,8 @@ func TestMCPHasTestMutation(t *testing.T) {
 
 func TestGetConceptFromStore(t *testing.T) {
 	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, ".tu-agent"), 0o755)
-	st, err := store.Open(filepath.Join(dir, ".tu-agent", "graph.db"), extract.ExtractorVersion)
+	_ = os.MkdirAll(filepath.Join(dir, ".tu-agent", "graph"), 0o755)
+	st, err := store.Open(filepath.Join(dir, ".tu-agent", "graph", "graph.db"), extract.ExtractorVersion)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -915,10 +915,10 @@ func TestGetConceptFromStore(t *testing.T) {
 
 func TestGetConceptListCapped(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".tu-agent"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".tu-agent", "graph"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	st, err := store.Open(filepath.Join(dir, ".tu-agent", "graph.db"), extract.ExtractorVersion)
+	st, err := store.Open(filepath.Join(dir, ".tu-agent", "graph", "graph.db"), extract.ExtractorVersion)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

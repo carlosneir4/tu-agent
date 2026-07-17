@@ -14,7 +14,7 @@ func TddStatePath(root, ticket string) string {
 	if base, ok := ResolveTddBase(root, ticket); ok {
 		return filepath.Join(base, "state.json")
 	}
-	return filepath.Join(root, ".tu-agent", "tdd", "state.json")
+	return filepath.Join(tddDir(root), "state.json")
 }
 
 // TddStateFile resolves the state.json for state/status commands: an explicit

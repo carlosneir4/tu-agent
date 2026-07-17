@@ -6,28 +6,13 @@ import (
 	"github.com/carlosneir4/tu-agent/internal/codegen"
 )
 
-func TestParseKeyFiles_BulletsAndStop(t *testing.T) {
-	body := "## Purpose\nstuff\n\n## Key Files\n" +
-		"- core/Widget.java: the widget\n" +
-		"- core/Render.java\n" +
-		"- `core/Cache.java`: cache\n\n" +
-		"## Patterns\n- not a file\n"
-	got := codegen.ParseKeyFiles(body)
-	want := []string{"core/Widget.java", "core/Render.java", "core/Cache.java"}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
+// BuildFileToDomain maps each member file to its owning skill, sourcing the
+// files from Skill.Files (the store's concept->files link), NOT from a
+// "## Key Files" body section. On collision the first skill by sorted Name wins.
 func TestBuildFileToDomain_CollisionFirstSortedWins(t *testing.T) {
 	skills := []codegen.Skill{
-		{Name: "zeta", Body: "## Key Files\n- shared/Util.java\n"},
-		{Name: "alpha", Body: "## Key Files\n- shared/Util.java\n- a/A.java\n"},
+		{Name: "zeta", Files: []string{"shared/Util.java"}},
+		{Name: "alpha", Files: []string{"shared/Util.java", "a/A.java"}},
 	}
 	m := codegen.BuildFileToDomain(skills)
 	if m["shared/Util.java"] != "alpha" {

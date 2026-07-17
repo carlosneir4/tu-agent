@@ -32,7 +32,7 @@ func TestLoadProjectRulesAbsent(t *testing.T) {
 // @s2 — Repo-wide rules.md is included under an authoritative "Project rules" header.
 func TestLoadProjectRulesRepoWideHeader(t *testing.T) {
 	root := t.TempDir()
-	writeRuleFile(t, root, ".tu-agent/rules.md", "REPO-WIDE-RULE")
+	writeRuleFile(t, root, ".tu-agent/rules/all.md", "REPO-WIDE-RULE")
 
 	got := loadProjectRules(root, "developer")
 	if !strings.Contains(got, "Project rules") {
@@ -51,7 +51,7 @@ func TestLoadProjectRulesRepoWideHeader(t *testing.T) {
 // @s3 — Per-role rules file is appended and visible to its own role, after repo-wide.
 func TestLoadProjectRulesPerRoleAppended(t *testing.T) {
 	root := t.TempDir()
-	writeRuleFile(t, root, ".tu-agent/rules.md", "REPO-WIDE-RULE")
+	writeRuleFile(t, root, ".tu-agent/rules/all.md", "REPO-WIDE-RULE")
 	writeRuleFile(t, root, ".tu-agent/rules/developer.md", "DEV-ONLY-RULE")
 
 	got := loadProjectRules(root, "developer")
@@ -82,7 +82,7 @@ func TestLoadProjectRulesScopedOutForOtherRole(t *testing.T) {
 // @s5 — Blank or whitespace-only rules files are ignored with no empty header.
 func TestLoadProjectRulesBlankFilesIgnored(t *testing.T) {
 	root := t.TempDir()
-	writeRuleFile(t, root, ".tu-agent/rules.md", "   \n\t\n")
+	writeRuleFile(t, root, ".tu-agent/rules/all.md", "   \n\t\n")
 	writeRuleFile(t, root, ".tu-agent/rules/developer.md", "\n  \n")
 
 	got := loadProjectRules(root, "developer")
@@ -100,8 +100,8 @@ func TestLoadProjectRulesReadOnlyInvariant(t *testing.T) {
 
 	_ = loadProjectRules(root, "developer")
 
-	if _, err := os.Stat(filepath.Join(root, ".tu-agent", "rules.md")); !os.IsNotExist(err) {
-		t.Errorf(".tu-agent/rules.md must still not exist after loadProjectRules, stat err = %v", err)
+	if _, err := os.Stat(filepath.Join(root, ".tu-agent", "rules", "all.md")); !os.IsNotExist(err) {
+		t.Errorf(".tu-agent/rules/all.md must still not exist after loadProjectRules, stat err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".tu-agent", "rules", "developer.md")); !os.IsNotExist(err) {
 		t.Errorf(".tu-agent/rules/developer.md must still not exist after loadProjectRules, stat err = %v", err)
