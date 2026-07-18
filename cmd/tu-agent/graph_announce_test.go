@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +10,17 @@ import (
 
 	"github.com/carlosneir4/tu-agent/internal/graph/store"
 )
+
+// decodeSessionStartHook parses announceGraph's stdout as the Claude Code
+// SessionStart hook envelope, failing the test if it is not valid hook JSON.
+func decodeSessionStartHook(t *testing.T, out string) sessionStartHook {
+	t.Helper()
+	var h sessionStartHook
+	if err := json.Unmarshal([]byte(out), &h); err != nil {
+		t.Fatalf("announce output is not valid hook JSON: %v\nraw: %s", err, out)
+	}
+	return h
+}
 
 // mustInitGraphFixture creates a .git marker (so repoRoot() anchors at dir)
 // and opens the graph store to create .tu-agent/graph.db, then closes it.
@@ -74,11 +87,12 @@ func TestAnnounceGraph_WarnsWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("announceGraph: %v", err)
 	}
-	if !strings.Contains(out, "EMPTY") || !strings.Contains(out, "tu-agent learn") {
-		t.Errorf("expected loud empty-graph warning; got:\n%s", out)
+	hook := decodeSessionStartHook(t, out)
+	if !strings.Contains(hook.SystemMessage, "EMPTY") || !strings.Contains(hook.SystemMessage, "tu-agent learn") {
+		t.Errorf("expected loud empty-graph warning in systemMessage; got:\n%s", hook.SystemMessage)
 	}
-	if strings.Contains(out, "graph ready") {
-		t.Errorf("empty graph must not report 'graph ready'; got:\n%s", out)
+	if strings.Contains(hook.SystemMessage, "graph ready") {
+		t.Errorf("empty graph must not report 'graph ready'; got:\n%s", hook.SystemMessage)
 	}
 }
 
@@ -91,6 +105,15 @@ func TestAnnounceGraph_PrintsNudgeWithCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("announceGraph: %v", err)
 	}
+	hook := decodeSessionStartHook(t, out)
+	if hook.HookSpecificOutput.HookEventName != "SessionStart" {
+		t.Errorf("hookEventName = %q, want SessionStart", hook.HookSpecificOutput.HookEventName)
+	}
+	// The user sees a concise confirmation line...
+	if !strings.Contains(hook.SystemMessage, "graph ready") {
+		t.Errorf("systemMessage should confirm graph ready; got: %q", hook.SystemMessage)
+	}
+	// ...while the model gets the full PROTOCOL nudge as additionalContext.
 	for _, want := range []string{
 		"graph ready",
 		"get_context",
@@ -99,8 +122,34 @@ func TestAnnounceGraph_PrintsNudgeWithCounts(t *testing.T) {
 		"tu-agent graph context",
 		"mem_recent",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("nudge missing %q; got:\n%s", want, out)
+		if !strings.Contains(hook.HookSpecificOutput.AdditionalContext, want) {
+			t.Errorf("additionalContext missing %q; got:\n%s", want, hook.HookSpecificOutput.AdditionalContext)
 		}
+	}
+}
+
+func TestWriteSessionStartHook_ShapeAndNoHTMLEscape(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeSessionStartHook(&buf, "user line", "model <ctx>"); err != nil {
+		t.Fatalf("writeSessionStartHook: %v", err)
+	}
+	var h sessionStartHook
+	if err := json.Unmarshal(buf.Bytes(), &h); err != nil {
+		t.Fatalf("output is not valid JSON: %v\nraw: %s", err, buf.String())
+	}
+	if h.SystemMessage != "user line" {
+		t.Errorf("systemMessage = %q, want %q", h.SystemMessage, "user line")
+	}
+	if h.HookSpecificOutput.HookEventName != "SessionStart" {
+		t.Errorf("hookEventName = %q, want SessionStart", h.HookSpecificOutput.HookEventName)
+	}
+	if h.HookSpecificOutput.AdditionalContext != "model <ctx>" {
+		t.Errorf("additionalContext = %q, want %q", h.HookSpecificOutput.AdditionalContext, "model <ctx>")
+	}
+	// HTML escaping is disabled: the raw JSON keeps "<" literally. With escaping
+	// on, encoding/json would emit the < escape and no literal "<" at all,
+	// so the literal's presence is what proves SetEscapeHTML(false) took effect.
+	if !strings.Contains(buf.String(), "model <ctx>") {
+		t.Errorf("expected literal \"model <ctx>\" in raw JSON (HTML escaping off); got: %s", buf.String())
 	}
 }

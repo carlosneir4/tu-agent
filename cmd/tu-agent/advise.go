@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -78,6 +79,7 @@ func init() {
 // produce — the only ids `advise dismiss` accepts.
 var knownAdviseRules = map[string]bool{
 	"crystallize-ready":    true,
+	"learn-stale":          true,
 	"edit-without-context": true,
 	"secret-guard":         true,
 	"mem-search-zero":      true,
@@ -95,9 +97,14 @@ func adviseInputs(root string) (advise.Inputs, error) {
 	if err != nil {
 		return advise.Inputs{}, fmt.Errorf("adviseInputs: %w", err)
 	}
+	uncovered, err := uncoveredFileCount(root)
+	if err != nil {
+		return advise.Inputs{}, fmt.Errorf("adviseInputs: %w", err)
+	}
 	return advise.Inputs{
 		Insights:         stats.SummarizeInsights(entries),
 		CrystallizeNeeds: needs,
+		UncoveredFiles:   uncovered,
 	}, nil
 }
 
@@ -182,8 +189,17 @@ func runAdviseNudge(cmd *cobra.Command) error {
 		return err
 	}
 	show, next := advise.Filter(advise.Evaluate(in), st, adviseNudgeBudget)
-	for _, s := range show {
-		fmt.Fprintf(cmd.OutOrStdout(), "tu-agent: %s\n", s.Message)
+	if len(show) > 0 {
+		lines := make([]string, 0, len(show))
+		for _, s := range show {
+			lines = append(lines, "tu-agent: "+s.Message)
+		}
+		// The suggestion is user-facing (an action to run), so it is both the
+		// visible systemMessage and the model's additionalContext.
+		msg := strings.Join(lines, "\n")
+		if err := writeSessionStartHook(cmd.OutOrStdout(), msg, msg); err != nil {
+			return err
+		}
 	}
 	return saveAdviseState(root, next)
 }

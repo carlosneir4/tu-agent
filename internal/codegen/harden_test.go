@@ -81,8 +81,8 @@ func TestHardenedSettings_PermissionsAndScalars(t *testing.T) {
 	if !ok || len(mcp) != 1 || mcp[0] != "tu-agent-graph" {
 		t.Errorf("enabledMcpjsonServers = %v, want [tu-agent-graph]", s["enabledMcpjsonServers"])
 	}
-	if s["includeCoAuthoredBy"] != true {
-		t.Error("includeCoAuthoredBy should be true")
+	if s["includeCoAuthoredBy"] != false {
+		t.Error("includeCoAuthoredBy should be false (no Co-Authored-By trailer)")
 	}
 	if s["cleanupPeriodDays"] != float64(30) {
 		t.Errorf("cleanupPeriodDays = %v, want 30", s["cleanupPeriodDays"])

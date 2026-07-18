@@ -25,9 +25,15 @@ const memSearchMinCalls = 5
 // the mem-search-zero rule to fire, once memSearchMinCalls is met.
 const memSearchZeroRateFloor = 0.5
 
+// learnStaleThreshold is the number of graph files absent from every concept
+// (new code learn has not clustered) at which the learn-stale rule fires. A
+// handful of uncovered files is normal churn; this many means the concept index
+// has meaningfully fallen behind the code and a re-learn is worth it.
+const learnStaleThreshold = 10
+
 // Suggestion is one actionable, evidence-bearing nudge produced by a rule.
 type Suggestion struct {
-	// RuleID is a stable identifier: "crystallize-ready" |
+	// RuleID is a stable identifier: "crystallize-ready" | "learn-stale" |
 	// "edit-without-context" | "secret-guard" | "mem-search-zero".
 	RuleID string
 	// Message is a one-line, evidence-bearing, imperative suggestion.
@@ -45,6 +51,10 @@ type Inputs struct {
 	// CrystallizeNeeds is the count of clusters whose skill status is not
 	// current (crystallize.StatusCurrent).
 	CrystallizeNeeds int
+	// UncoveredFiles is the count of graph files not linked to any concept —
+	// new code the concept index has not clustered yet. Grows as code is added
+	// between learn runs; the learn-stale rule reads it.
+	UncoveredFiles int
 }
 
 // Evaluate runs all rules and returns every suggestion meeting its
@@ -58,6 +68,14 @@ func Evaluate(in Inputs) []Suggestion {
 			RuleID:   "crystallize-ready",
 			Evidence: needs,
 			Message:  fmt.Sprintf("%d note cluster(s) ready to crystallize — run `tu-agent memory crystallize`", needs),
+		})
+	}
+
+	if n := in.UncoveredFiles; n >= learnStaleThreshold {
+		out = append(out, Suggestion{
+			RuleID:   "learn-stale",
+			Evidence: n,
+			Message:  fmt.Sprintf("%d file(s) are not in the concept index — the project knowledge is behind the code; run `/tu-agent:learn` to refresh it", n),
 		})
 	}
 

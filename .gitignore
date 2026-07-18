@@ -37,14 +37,11 @@ scripts/fixtures/**/node_modules/
 scripts/fixtures/**/package-lock.json
 
 # >>> tu-agent >>>
-.tu-agent/graph.db
-.tu-agent/graph.db-wal
-.tu-agent/graph.db-shm
-.tu-agent/telemetry.jsonl
-.tu-agent/memory.db
-.tu-agent/memory.db-wal
-.tu-agent/memory.db-shm
-.tu-agent/graph.build.lock
+# Default-deny: ignore every tu-agent artifact; re-include only the shared
+# subtree. git cannot re-include a path under an excluded directory in one step,
+# so .tu-agent/share/ (holding the team-shared memory chunks) is re-included as a
+# whole; graph.db, memory.db, telemetry and every future artifact stay local.
+.tu-agent/*
+!.tu-agent/share/
 .claude/settings.json.bak
-# .tu-agent/memory/chunks/ is intentionally versioned (shared team memory)
 # <<< tu-agent <<<

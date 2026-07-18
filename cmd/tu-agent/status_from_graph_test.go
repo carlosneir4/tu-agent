@@ -123,6 +123,49 @@ func seedLearnedRepo(t *testing.T, members map[string][]string) string {
 	return root
 }
 
+// Right after learn, every graph file is a member of some concept, so the
+// count is zero; adding files and refreshing the graph (as graph update does,
+// without re-clustering) makes the uncovered count grow — the learn-stale
+// signal the advise nudge reads.
+func TestUncoveredFileCount_GrowsWithUnclusteredFiles(t *testing.T) {
+	root := seedLearnedRepo(t, map[string][]string{
+		"core": {"core/src/main/java/A.java", "core/src/main/java/B.java"},
+	})
+	if n, err := uncoveredFileCount(root); err != nil || n != 0 {
+		t.Fatalf("uncoveredFileCount right after learn = %d (err %v), want 0", n, err)
+	}
+
+	writeFileTree(t, root, "core/src/main/java/New1.java", "package core;\npublic class New1 {}\n")
+	writeFileTree(t, root, "core/src/main/java/New2.java", "package core;\npublic class New2 {}\n")
+	if err := runGraphBuild(""); err != nil {
+		t.Fatalf("graph build: %v", err)
+	}
+
+	if n, err := uncoveredFileCount(root); err != nil || n != 2 {
+		t.Errorf("uncoveredFileCount after adding 2 unclustered files = %d (err %v), want 2", n, err)
+	}
+}
+
+// A repo with no graph, or a graph with files but no concepts, is "never
+// learned", not "drifted" — the count is zero so the learn-stale rule stays
+// silent there.
+func TestUncoveredFileCount_ZeroWithoutGraphOrConcepts(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := uncoveredFileCount(dir); err != nil || n != 0 {
+		t.Errorf("no graph db → %d (err %v), want 0", n, err)
+	}
+
+	mustInitGraphFixture(t, dir)
+	mustSeedFileRow(t) // one file row, zero concepts
+	if n, err := uncoveredFileCount(dir); err != nil || n != 0 {
+		t.Errorf("graph with a file but no concepts → %d (err %v), want 0", n, err)
+	}
+}
+
 // @s1 — Changing a member file makes status report the concept as stale.
 //
 // The graph recorded Widget.java's sha256 at build time; rewriting the file
