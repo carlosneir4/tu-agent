@@ -39,6 +39,39 @@ func TestEvaluate_CrystallizeReady(t *testing.T) {
 	}
 }
 
+func TestEvaluate_LearnStale(t *testing.T) {
+	cases := []struct {
+		name      string
+		uncovered int
+		fires     bool
+	}{
+		{"zero does not fire", 0, false},
+		{"below threshold does not fire", learnStaleThreshold - 1, false},
+		{"at threshold fires", learnStaleThreshold, true},
+		{"well over threshold fires", learnStaleThreshold * 3, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Evaluate(Inputs{UncoveredFiles: tc.uncovered})
+			found := false
+			for _, s := range got {
+				if s.RuleID == "learn-stale" {
+					found = true
+					if s.Evidence != tc.uncovered {
+						t.Errorf("Evidence = %d, want %d", s.Evidence, tc.uncovered)
+					}
+					if !strings.Contains(s.Message, "/tu-agent:learn") {
+						t.Errorf("Message = %q, want it to mention /tu-agent:learn", s.Message)
+					}
+				}
+			}
+			if found != tc.fires {
+				t.Errorf("learn-stale fired = %v, want %v", found, tc.fires)
+			}
+		})
+	}
+}
+
 func TestEvaluate_EditWithoutContext(t *testing.T) {
 	cases := []struct {
 		name  string

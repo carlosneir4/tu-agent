@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/carlosneir4/tu-agent/internal/memory"
@@ -127,6 +129,15 @@ func TestAdviseNudge_DedupsAcrossRunsAndPersists(t *testing.T) {
 	}
 	if !bytes.Contains(buf1.Bytes(), []byte("tu-agent memory crystallize")) {
 		t.Errorf("first nudge run missing crystallize suggestion, got: %q", buf1.String())
+	}
+	// The nudge is emitted as SessionStart hook JSON so the suggestion is both
+	// user-visible (systemMessage) and in the model's context.
+	var h1 sessionStartHook
+	if err := json.Unmarshal(buf1.Bytes(), &h1); err != nil {
+		t.Fatalf("nudge output is not valid hook JSON: %v\nraw: %s", err, buf1.String())
+	}
+	if !strings.Contains(h1.SystemMessage, "crystallize") {
+		t.Errorf("systemMessage should carry the crystallize suggestion, got: %q", h1.SystemMessage)
 	}
 
 	// Second run with unchanged evidence must print nothing (evidence-growth

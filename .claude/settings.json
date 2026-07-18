@@ -70,7 +70,7 @@
       }
     ]
   },
-  "includeCoAuthoredBy": true,
+  "includeCoAuthoredBy": false,
   "permissions": {
     "allow": [
       "Bash(go build *)",
@@ -82,14 +82,6 @@
       "Bash(git diff*)",
       "Bash(git log*)",
       "Bash(git status*)",
-      "Bash(git add*)",
-      "Bash(git commit*)",
-      "Bash(git checkout*)",
-      "Bash(git branch*)",
-      "Bash(git add *)",
-      "Bash(git commit *)",
-      "Bash(git branch *)",
-      "Bash(git checkout *)",
       "WebSearch",
       "Bash(go build*)",
       "Bash(go test*)",
@@ -100,6 +92,10 @@
       "Bash(golangci-lint run*)"
     ],
     "ask": [
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
       "Bash(git push *)",
       "Bash(gh pr *)",
       "Bash(gh release *)",

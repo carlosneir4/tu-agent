@@ -279,6 +279,51 @@ func conceptStates(root string) ([]conceptState, error) {
 	return states, nil
 }
 
+// uncoveredFileCount returns how many files in the graph are linked to no
+// concept — new code the concept index has not clustered yet. graph update adds
+// files to the graph on every session, but only learn clusters them, so this
+// count grows between learn runs and is a stable "the concept index is behind
+// the code" signal (unlike per-file staleness, which graph update keeps
+// clearing). Returns 0 when there is no graph or no concepts yet: a repo that
+// never learned is a different state, not drift.
+func uncoveredFileCount(root string) (int, error) {
+	if _, err := os.Stat(graphDBPath(root)); errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	st, err := openGraphStore()
+	if err != nil {
+		return 0, err
+	}
+	defer st.Close()
+	concepts, err := st.ListConcepts()
+	if err != nil {
+		return 0, fmt.Errorf("uncoveredFileCount: %w", err)
+	}
+	if len(concepts) == 0 {
+		return 0, nil
+	}
+	covered := make(map[string]bool)
+	for _, c := range concepts {
+		if c.Name == "architecture" {
+			continue
+		}
+		for _, f := range c.Files {
+			covered[f] = true
+		}
+	}
+	files, err := st.Files()
+	if err != nil {
+		return 0, fmt.Errorf("uncoveredFileCount: %w", err)
+	}
+	n := 0
+	for path := range files {
+		if !covered[path] {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // conceptStatus reports one concept's freshness: "new" when it has no generated
 // SKILL.md yet, "up-to-date" when every member file still hashes to what the
 // graph recorded, "stale" otherwise.

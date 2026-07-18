@@ -617,7 +617,9 @@ var graphBuildCmd = &cobra.Command{
 // into the agent's context, so the nudge reaches the model every session.
 var graphAnnounce bool
 
-// announceGraph prints the orientation nudge to stdout. Silent no-op when no
+// announceGraph emits the SessionStart orientation nudge as Claude Code hook
+// JSON: a concise systemMessage the USER sees in the terminal plus the full
+// PROTOCOL reminder as additionalContext for the model. Silent no-op when no
 // graph exists (the hook fires in every repo, including ones that never ran
 // tu-agent).
 func announceGraph() error {
@@ -640,16 +642,16 @@ func announceGraph() error {
 		return fmt.Errorf("graph announce: %w", err)
 	}
 	// A graph with file records but zero nodes is broken, not ready: get_context
-	// and find_symbol would silently return nothing. Surface it loudly in the
-	// SessionStart context instead of a reassuring "graph ready (0 nodes)".
+	// and find_symbol would silently return nothing. Surface it loudly to both
+	// the user and the model instead of a reassuring "graph ready (0 nodes)".
 	if w := graphEmptyWarning(n, files); w != "" {
-		fmt.Print(w)
-		return nil
+		msg := strings.TrimSpace(w)
+		return writeSessionStartHook(os.Stdout, msg, msg)
 	}
-	fmt.Printf(`tu-agent: graph ready (%d nodes). Follow the PROTOCOL in CLAUDE.md: query get_context BEFORE editing any file (also get_impact, find_symbol, get_concept), and call mem_recent now to recall prior decisions.
-NOTE: the tu-agent-graph MCP tools may be DEFERRED — absent from your active tool list. If so, load them with your tool-search mechanism (e.g. ToolSearch query "tu-agent-graph") instead of concluding they are unavailable. CLI fallback: tu-agent graph context <file-or-symbol>.
-`, n)
-	return nil
+	userMsg := fmt.Sprintf("tu-agent: graph ready (%d nodes)", n)
+	modelCtx := fmt.Sprintf(`tu-agent: graph ready (%d nodes). Follow the PROTOCOL in CLAUDE.md: query get_context BEFORE editing any file (also get_impact, find_symbol, get_concept), and call mem_recent now to recall prior decisions.
+NOTE: the tu-agent-graph MCP tools may be DEFERRED — absent from your active tool list. If so, load them with your tool-search mechanism (e.g. ToolSearch query "tu-agent-graph") instead of concluding they are unavailable. CLI fallback: tu-agent graph context <file-or-symbol>.`, n)
+	return writeSessionStartHook(os.Stdout, userMsg, modelCtx)
 }
 
 // graphEmptyWarning returns a loud warning when the graph holds file records but

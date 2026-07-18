@@ -16,8 +16,10 @@ func HardenedSettings(lang, buildTool string, pluginPresent bool) map[string]any
 		},
 		"hooks":                 hardenHooks(lang, pluginPresent),
 		"enabledMcpjsonServers": []any{"tu-agent-graph"},
-		"includeCoAuthoredBy":   true,
-		"cleanupPeriodDays":     float64(30),
+		// Product rule: tu-agent-managed repos never emit Co-Authored-By trailers.
+		// The harness omits the trailer when this is false.
+		"includeCoAuthoredBy": false,
+		"cleanupPeriodDays":   float64(30),
 	}
 }
 
