@@ -11,6 +11,14 @@ import (
 const rulesHeader = "## Project rules (.tu-agent/rules/all.md) — user-owned, authoritative\n" +
 	"These rules are binding; a violation is grounds to revise.\n\n"
 
+// groundingHeader marks the mechanical grounding block — architecture
+// excerpt, relevant decisions/gotchas, and blast radius/test gaps — spliced
+// into planning-stage prompts by ComposeStagePromptWithGrounding. tdd owns
+// this outer wrapper (mirroring how loadProjectRules owns rulesHeader); the
+// body text comes from the CMD layer's buildGrounding.
+const groundingHeader = "## Project grounding (mechanical — architecture, decisions, blast radius) — authoritative context\n" +
+	"Grounded from the graph and memory stores at dispatch; treat as current project state.\n\n"
+
 // readRulesFile reads path and returns its trimmed content. An absent file is
 // not an error — rules are optional, so it yields "". Any OTHER read error
 // (e.g. a rules file present but unreadable) also yields "" so the flow never

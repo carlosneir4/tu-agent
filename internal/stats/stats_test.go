@@ -3,6 +3,7 @@ package stats_test
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -280,6 +281,138 @@ func TestPercentile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := stats.Percentile(tt.xs, tt.p); got != tt.want {
 				t.Errorf("Percentile(%v, %v) = %d, want %d", tt.xs, tt.p, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSummarizeFlow_Empty(t *testing.T) {
+	s := stats.SummarizeFlow(nil)
+	if len(s.Features) != 0 {
+		t.Errorf("Features should be empty, got %v", s.Features)
+	}
+	if s.ReviewStage != "" || s.ReviewOutcome != "" {
+		t.Errorf("ReviewStage/ReviewOutcome should be empty, got %q/%q", s.ReviewStage, s.ReviewOutcome)
+	}
+}
+
+func TestSummarizeFlow_TableDriven(t *testing.T) {
+	tests := []struct {
+		name              string
+		entries           []telemetry.Entry
+		wantFeatureNames  []string
+		checkFeature      string
+		wantRed           int
+		wantGreen         int
+		wantFailures      map[string]int
+		wantFinal         string
+		wantReviewStage   string
+		wantReviewOutcome string
+	}{
+		{
+			name: "gate_attempt rows bucket red/green attempts and failures by outcome",
+			entries: []telemetry.Entry{
+				{Event: telemetry.EventGateAttempt, Feature: "login-form", Stage: "red", OK: true},
+				{Event: telemetry.EventGateAttempt, Feature: "login-form", Stage: "red", Outcome: "test_failed", OK: false},
+				{Event: telemetry.EventGateAttempt, Feature: "login-form", Stage: "green", Outcome: "build_failed", OK: false},
+			},
+			wantFeatureNames: []string{"login-form"},
+			checkFeature:     "login-form",
+			wantRed:          2,
+			wantGreen:        1,
+			wantFailures:     map[string]int{"test_failed": 1, "build_failed": 1},
+			wantFinal:        "",
+		},
+		{
+			name: "tdd_stage mark rows are last-row-wins for FinalStatus",
+			entries: []telemetry.Entry{
+				{Event: telemetry.EventTddStage, Feature: "login-form", Stage: "mark", Outcome: "pending"},
+				{Event: telemetry.EventTddStage, Feature: "login-form", Stage: "mark", Outcome: "pass"},
+			},
+			wantFeatureNames: []string{"login-form"},
+			checkFeature:     "login-form",
+			wantFinal:        "pass",
+		},
+		{
+			name: "run-level review rows are last-row-wins across review and branch-review",
+			entries: []telemetry.Entry{
+				{Event: telemetry.EventTddStage, Stage: "review", Outcome: "skipped"},
+				{Event: telemetry.EventTddStage, Stage: "branch-review", Outcome: "critical:0,important:1"},
+			},
+			wantFeatureNames:  nil,
+			wantReviewStage:   "branch-review",
+			wantReviewOutcome: "critical:0,important:1",
+		},
+		{
+			name: "tdd_stage begin rows are recognized and skipped",
+			entries: []telemetry.Entry{
+				{Event: telemetry.EventTddStage, Feature: "login-form", Stage: "begin", Outcome: "n/a"},
+			},
+			wantFeatureNames: nil,
+		},
+		{
+			name: "rows with empty Feature never create a feature bucket",
+			entries: []telemetry.Entry{
+				{Event: telemetry.EventGateAttempt, Feature: "", Stage: "red", OK: true},
+				{Event: telemetry.EventTddStage, Feature: "", Stage: "mark", Outcome: "pass"},
+			},
+			wantFeatureNames: nil,
+		},
+		{
+			name: "non-flow events are ignored",
+			entries: []telemetry.Entry{
+				{Provider: "claude", CostUSD: 0.01},
+				{Event: telemetry.EventLoadSkill, Skill: "login-form", Found: true},
+				{Event: telemetry.EventMCPCall, Tool: "mem_search"},
+			},
+			wantFeatureNames: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stats.SummarizeFlow(tt.entries)
+
+			gotNames := make([]string, 0, len(got.Features))
+			for name := range got.Features {
+				gotNames = append(gotNames, name)
+			}
+			sort.Strings(gotNames)
+			if len(gotNames) != len(tt.wantFeatureNames) {
+				t.Fatalf("Features keys = %v, want %v", gotNames, tt.wantFeatureNames)
+			}
+			for i, name := range tt.wantFeatureNames {
+				if gotNames[i] != name {
+					t.Errorf("Features keys = %v, want %v", gotNames, tt.wantFeatureNames)
+				}
+			}
+
+			if tt.checkFeature != "" {
+				ff := got.Features[tt.checkFeature]
+				if ff == nil {
+					t.Fatalf("expected Features[%q] to be non-nil", tt.checkFeature)
+				}
+				if ff.RedAttempts != tt.wantRed {
+					t.Errorf("RedAttempts = %d, want %d", ff.RedAttempts, tt.wantRed)
+				}
+				if ff.GreenAttempts != tt.wantGreen {
+					t.Errorf("GreenAttempts = %d, want %d", ff.GreenAttempts, tt.wantGreen)
+				}
+				for reason, count := range tt.wantFailures {
+					if ff.Failures[reason] != count {
+						t.Errorf("Failures[%q] = %d, want %d", reason, ff.Failures[reason], count)
+					}
+				}
+				if ff.FinalStatus != tt.wantFinal {
+					t.Errorf("FinalStatus = %q, want %q", ff.FinalStatus, tt.wantFinal)
+				}
+			}
+
+			if got.ReviewStage != tt.wantReviewStage {
+				t.Errorf("ReviewStage = %q, want %q", got.ReviewStage, tt.wantReviewStage)
+			}
+			if got.ReviewOutcome != tt.wantReviewOutcome {
+				t.Errorf("ReviewOutcome = %q, want %q", got.ReviewOutcome, tt.wantReviewOutcome)
 			}
 		})
 	}

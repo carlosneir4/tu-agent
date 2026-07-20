@@ -92,6 +92,14 @@ func runReviewRounds(ctx context.Context, o Options, runner StageRunner, base st
 	if verdict == nil {
 		return false, warnNoVerdict(o)
 	}
+	if hasBlockingFindings(verdict) && !o.AutoFixReview {
+		// AutoFixReview is off (the default): findings reach the human
+		// un-fixed instead of being routed to the fixer loop. Present the
+		// counts and the persisted findings pointer, then resolve the same
+		// way the budget-exhausted path does — pass with pending findings.
+		presentPendingFindings(o, verdict)
+		return true, nil
+	}
 	for round := 0; hasBlockingFindings(verdict) && round < reviewFixerBudget; round++ {
 		green, giveUp, err := runFixerRound(ctx, o, runner, verdict, base)
 		if err != nil {
@@ -118,6 +126,42 @@ func runReviewRounds(ctx context.Context, o Options, runner StageRunner, base st
 		fmt.Fprintln(o.Out, "review complete: no blocking findings.")
 	}
 	return true, nil
+}
+
+// presentPendingFindings prints the per-severity finding counts and the
+// persisted findings pointer when AutoFixReview is off and blocking findings
+// are left unfixed for a human to triage — the run still resolves
+// pass-with-pending, same terminal shape as the fixer-budget-exhausted path.
+func presentPendingFindings(o Options, verdict *Verdict) {
+	fmt.Fprintf(o.Out, "review findings pending human review (%s) — see %s/progress/review.md\n",
+		FindingsCode(verdict.Findings, true), o.RelBase)
+}
+
+// FindingsCode summarizes a verdict's findings into a compact per-severity
+// code shared between human-facing review output and the `tdd state review
+// --findings` grammar: "clean" when there are none, else
+// "critical:N,important:N,minor:N", with a trailing ",pending" when pending is
+// true (blocking findings remain unresolved).
+func FindingsCode(findings []Finding, pending bool) string {
+	var critical, important, minor int
+	for _, f := range findings {
+		switch f.Severity {
+		case "critical":
+			critical++
+		case "important":
+			important++
+		case "minor":
+			minor++
+		}
+	}
+	if critical == 0 && important == 0 && minor == 0 {
+		return "clean"
+	}
+	code := fmt.Sprintf("critical:%d,important:%d,minor:%d", critical, important, minor)
+	if pending {
+		code += ",pending"
+	}
+	return code
 }
 
 // warnNoVerdict handles a review contract that carried no verdict. The per-

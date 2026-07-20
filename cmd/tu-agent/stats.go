@@ -12,6 +12,7 @@ import (
 
 var statsLast int
 var statsInsights bool
+var statsFlow bool
 
 var statsCmd = &cobra.Command{
 	GroupID: "diagnostics",
@@ -25,12 +26,18 @@ token usage, cost, and average latency grouped by provider.`,
 		if err != nil {
 			return fmt.Errorf("reading telemetry: %w", err)
 		}
+		if statsLast > 0 && statsLast < len(entries) {
+			entries = entries[len(entries)-statsLast:]
+		}
+
+		if statsFlow {
+			printFlow(stats.SummarizeFlow(entries))
+			return nil
+		}
+
 		if len(entries) == 0 {
 			fmt.Println("No telemetry data found in .tu-agent/logs/telemetry.jsonl")
 			return nil
-		}
-		if statsLast > 0 && statsLast < len(entries) {
-			entries = entries[len(entries)-statsLast:]
 		}
 
 		if statsInsights {
@@ -63,9 +70,58 @@ token usage, cost, and average latency grouped by provider.`,
 
 func init() {
 	statsCmd.Flags().IntVar(&statsLast, "last", 0,
-		"limit to last N model calls (0 = all)")
+		"limit to last N telemetry rows (0 = all)")
 	statsCmd.Flags().BoolVar(&statsInsights, "insights", false,
 		"print a measurement-observability report (tool usage, staleness, hooks) instead of cost")
+	statsCmd.Flags().BoolVar(&statsFlow, "flow", false,
+		"print the per-feature tdd gate/review funnel instead of cost")
+}
+
+// printFlow renders the deterministic --flow diagnostic report: one line per
+// tdd feature (gate attempts, failure reasons, final status) plus the
+// run-level review outcome. Mirrors printInsights' fmt.Printf table style.
+func printFlow(s stats.FlowSummary) {
+	if len(s.Features) == 0 && s.ReviewStage == "" {
+		fmt.Println("No flow events recorded yet.")
+		return
+	}
+
+	names := make([]string, 0, len(s.Features))
+	for name := range s.Features {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	fmt.Println("Flow funnel:")
+	fmt.Printf("  %-20s %6s %6s %-30s %6s\n", "feature", "red", "green", "failures", "final")
+	for _, name := range names {
+		ff := s.Features[name]
+
+		reasons := make([]string, 0, len(ff.Failures))
+		for reason := range ff.Failures {
+			reasons = append(reasons, reason)
+		}
+		sort.Strings(reasons)
+		failParts := make([]string, 0, len(reasons))
+		for _, reason := range reasons {
+			failParts = append(failParts, fmt.Sprintf("%s:%d", reason, ff.Failures[reason]))
+		}
+		failures := "-"
+		if len(failParts) > 0 {
+			failures = strings.Join(failParts, " ")
+		}
+
+		final := ff.FinalStatus
+		if final == "" {
+			final = "-"
+		}
+
+		fmt.Printf("  %-20s %6d %6d %-30s %6s\n", name, ff.RedAttempts, ff.GreenAttempts, failures, final)
+	}
+
+	if s.ReviewStage != "" {
+		fmt.Printf("Review (%s): %s\n", s.ReviewStage, s.ReviewOutcome)
+	}
 }
 
 // printInsights renders the deterministic --insights diagnostic report: tool

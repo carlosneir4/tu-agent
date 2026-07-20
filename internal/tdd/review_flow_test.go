@@ -287,6 +287,9 @@ func TestReviewCriticalDispatchesFixerThenReReviewPasses(t *testing.T) {
 	}
 	out := &strings.Builder{}
 	opts := reviewOptions(t, d, out, runner, "approved\n", okScope)
+	// This test exercises the auto-fix fixer loop; the default is off since
+	// tdd.auto_fix_review, so opt in explicitly.
+	opts.AutoFixReview = true
 	res, err := Run(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -343,6 +346,9 @@ func TestReviewBrokenSuiteRefeedsFixerBeforeReReview(t *testing.T) {
 	}
 	out := &strings.Builder{}
 	opts := reviewOptions(t, d, out, runner, "approved\n", okScope)
+	// This test exercises the auto-fix fixer loop; the default is off since
+	// tdd.auto_fix_review, so opt in explicitly.
+	opts.AutoFixReview = true
 	res, err := Run(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -393,6 +399,9 @@ func TestReviewBudgetExhaustedPassesWithPendingFindings(t *testing.T) {
 	})
 	out := &strings.Builder{}
 	opts := reviewOptions(t, d, out, green, "approved\n", okScope)
+	// This test exercises the auto-fix fixer loop; the default is off since
+	// tdd.auto_fix_review, so opt in explicitly.
+	opts.AutoFixReview = true
 	res, err := Run(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -498,6 +507,9 @@ func TestReviewRefeedExhaustionLeavesSuiteRedVisibly(t *testing.T) {
 	}
 	out := &strings.Builder{}
 	opts := reviewOptions(t, d, out, runner, "approved\n", okScope)
+	// This test exercises the auto-fix fixer loop; the default is off since
+	// tdd.auto_fix_review, so opt in explicitly.
+	opts.AutoFixReview = true
 	res, err := Run(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("run: %v", err)

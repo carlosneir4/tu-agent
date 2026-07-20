@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS observations (
   updated_at  TEXT NOT NULL,
   author      TEXT NOT NULL DEFAULT '',
   sync_id     TEXT NOT NULL DEFAULT '',
+  imported    INTEGER NOT NULL DEFAULT 0,
   deleted_at  TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_obs_upsert
   ON observations(topic_key, scope, project)
@@ -86,16 +87,22 @@ CREATE INDEX IF NOT EXISTS idx_sessions_active
 
 // Observation is one persisted memory entry.
 type Observation struct {
-	ID        string
-	TopicKey  string
-	Scope     string
-	Project   string
-	Title     string
-	Content   string
-	Type      string
-	Source    string
-	Author    string
-	SyncID    string
+	ID       string
+	TopicKey string
+	Scope    string
+	Project  string
+	Title    string
+	Content  string
+	Type     string
+	Source   string
+	Author   string
+	SyncID   string
+	// Imported is true only for a record materialized by ImportRecords (a
+	// chunk import), never for a local Add/Upsert. It travels only in the
+	// local database, never in ChunkRecord, so it cannot be spoofed by a
+	// crafted chunk: the marker records this machine's own act of importing,
+	// not anything the remote side claims about itself.
+	Imported  bool
 	Revision  int
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -173,6 +180,19 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("memory.Open: creating sync_id index: %w", err)
 	}
+	// Idempotent ALTER TABLE to add the imported column to existing databases.
+	// Default 0 (local): a pre-existing database has no record of which rows
+	// arrived via a past ImportRecords call, so every prior import is treated
+	// as local exactly once, on upgrade. This is acceptable — it matches
+	// today's (pre-fix) behavior for those rows — and self-heals, because any
+	// later re-import (a higher revision) sets the flag correctly going
+	// forward.
+	if _, err := db.Exec(`ALTER TABLE observations ADD COLUMN imported INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("memory.Open: adding imported column: %w", err)
+		}
+	}
 	// Serialize all writes through a single connection; SQLite does not support
 	// concurrent writers and WAL mode does not change that constraint.
 	db.SetMaxOpenConns(1)
@@ -219,11 +239,11 @@ func (s *Store) Close() error {
 // store (false when the binary was built without -tags sqlite_fts5).
 func (s *Store) FTSEnabled() bool { return s.fts }
 
-const obsColumns = `id, topic_key, scope, project, title, content, type, source, revision, created_at, updated_at, author, sync_id`
+const obsColumns = `id, topic_key, scope, project, title, content, type, source, revision, created_at, updated_at, author, sync_id, imported`
 
 const insertObsSQL = `INSERT INTO observations
-  (id, topic_key, scope, project, title, content, type, source, revision, created_at, updated_at, author, sync_id)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  (id, topic_key, scope, project, title, content, type, source, revision, created_at, updated_at, author, sync_id, imported)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 // Add appends an observation without an upsert key and persists immediately.
 func (s *Store) Add(topic, content, source string) (Observation, error) {
@@ -441,7 +461,7 @@ func (s *Store) insert(o Observation) error {
 func insertTx(db execer, o Observation, fts bool) error {
 	if _, err := db.Exec(insertObsSQL,
 		o.ID, o.TopicKey, o.Scope, o.Project, o.Title, o.Content, o.Type, o.Source,
-		o.Revision, o.CreatedAt.Format(timeFormat), o.UpdatedAt.Format(timeFormat), o.Author, o.SyncID); err != nil {
+		o.Revision, o.CreatedAt.Format(timeFormat), o.UpdatedAt.Format(timeFormat), o.Author, o.SyncID, o.Imported); err != nil {
 		return fmt.Errorf("memory.Store.insert: %w", err)
 	}
 	return ftsInsert(db, fts, o)
@@ -499,7 +519,7 @@ func scanObservation(row rowScanner) (Observation, error) {
 	var o Observation
 	var created, updated string
 	if err := row.Scan(&o.ID, &o.TopicKey, &o.Scope, &o.Project, &o.Title,
-		&o.Content, &o.Type, &o.Source, &o.Revision, &created, &updated, &o.Author, &o.SyncID); err != nil {
+		&o.Content, &o.Type, &o.Source, &o.Revision, &created, &updated, &o.Author, &o.SyncID, &o.Imported); err != nil {
 		return Observation{}, err
 	}
 	var err error

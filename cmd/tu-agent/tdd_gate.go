@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,10 +23,13 @@ var tddGateCmd = &cobra.Command{
 	Use:   "gate",
 	Short: "Run the deterministic gate (green tests + @s coverage) and print JSON",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		start := time.Now()
 		res, err := tdd.RunGate(cmd.Context(), cfg, repoRoot(), tddGateTicket, tddGateFeature, tddGateCovered, tddGateExpect, tddGateNewTests, tddGateBase, tdd.ResolveTestRunner)
 		if err != nil {
+			recordGateAttempt(tddGateFeature, tddGateExpect, tdd.GateResult{Reason: "runner_error"}, time.Since(start))
 			return fmt.Errorf("tdd gate: %w", err)
 		}
+		recordGateAttempt(tddGateFeature, tddGateExpect, res, time.Since(start))
 		out, err := json.Marshal(res)
 		if err != nil {
 			return fmt.Errorf("tdd gate: marshal: %w", err)

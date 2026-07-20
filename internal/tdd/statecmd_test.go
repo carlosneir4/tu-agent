@@ -36,7 +36,7 @@ func TestTddStatusJSON(t *testing.T) {
 // would later infinite-loop NextPending/Mark on resume.
 func TestTddStateBeginRejectsDuplicateFeatures(t *testing.T) {
 	var buf bytes.Buffer
-	err := RunStateBegin(t.TempDir(), "", "", "t", "b", []string{"x", "x"}, &buf)
+	err := RunStateBegin(t.TempDir(), "", "", "t", "b", []string{"x", "x"}, "trivial", &buf)
 	if err == nil {
 		t.Fatalf("expected duplicate-feature error, got nil")
 	}
@@ -188,7 +188,7 @@ func TestTddStateBeginGuard_S1_AbortsOnResumablePendingFeature(t *testing.T) {
 	before := mustReadFile(t, statePath)
 
 	var buf bytes.Buffer
-	err := RunStateBegin(root, "", "", "fresh-task", "fresh-branch", []string{"fresh-feature"}, &buf)
+	err := RunStateBegin(root, "", "", "fresh-task", "fresh-branch", []string{"fresh-feature"}, "trivial", &buf)
 	if err == nil {
 		t.Fatalf("expected an abort error for an implicit begin over a resumable (pending-feature) run, got nil")
 	}
@@ -221,7 +221,7 @@ func TestTddStateBeginGuard_S2_AbortsOnResumableReviewPending(t *testing.T) {
 	before := mustReadFile(t, statePath)
 
 	var buf bytes.Buffer
-	err := RunStateBegin(root, "", "", "fresh-task", "fresh-branch", []string{"fresh-feature"}, &buf)
+	err := RunStateBegin(root, "", "", "fresh-task", "fresh-branch", []string{"fresh-feature"}, "trivial", &buf)
 	if err == nil {
 		t.Fatalf("expected an abort error for an implicit begin over a resumable (review-pending) run, got nil")
 	}
@@ -253,7 +253,7 @@ func TestTddStateBeginGuard_S3_ExplicitBaseOverwritesResumableRun(t *testing.T) 
 
 	var buf bytes.Buffer
 	baseFlag := filepath.Join(".tu-agent", "tdd", "EXP-1-inprogress")
-	if err := RunStateBegin(root, baseFlag, "", "fresh-task-explicit", "fresh-branch", []string{"fresh-feature-explicit"}, &buf); err != nil {
+	if err := RunStateBegin(root, baseFlag, "", "fresh-task-explicit", "fresh-branch", []string{"fresh-feature-explicit"}, "trivial", &buf); err != nil {
 		t.Fatalf("explicit --base begin over a resumable run should overwrite, got error: %v", err)
 	}
 
@@ -287,7 +287,7 @@ func TestTddStateBeginGuard_S4_ImplicitOverwritesWhenFullyDone(t *testing.T) {
 	statePath := filepath.Join(resolvedDir, "state.json")
 
 	var buf bytes.Buffer
-	if err := RunStateBegin(root, "", "", "fresh-task", "fresh-branch", []string{"fresh-feature"}, &buf); err != nil {
+	if err := RunStateBegin(root, "", "", "fresh-task", "fresh-branch", []string{"fresh-feature"}, "trivial", &buf); err != nil {
 		t.Fatalf("implicit begin over a fully-done state should overwrite, got error: %v", err)
 	}
 

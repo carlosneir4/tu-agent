@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/carlosneir4/tu-agent/internal/graph/extract"
+	"github.com/carlosneir4/tu-agent/internal/tdd"
 	"github.com/carlosneir4/tu-agent/internal/telemetry"
 )
 
@@ -78,5 +79,38 @@ func recordHook(name string, dur time.Duration, err error) {
 		DurationMS: dur.Milliseconds(),
 		OK:         err == nil,
 		Error:      msg,
+	})
+}
+
+// recordGateAttempt records a gate_attempt row for one `tdd gate` invocation.
+// Flow events record at every telemetry level — there is no disabled level
+// today, so unlike the level-gated recorders above this has no
+// telemetryLevel() check.
+func recordGateAttempt(feature, expect string, res tdd.GateResult, dur time.Duration) {
+	stage := "green"
+	if expect == "red" {
+		stage = "red"
+	}
+	logTelemetryEvent(telemetry.Entry{
+		Timestamp:  time.Now(),
+		Event:      telemetry.EventGateAttempt,
+		Stage:      stage,
+		Feature:    feature,
+		Outcome:    res.Reason,
+		OK:         res.OK,
+		DurationMS: dur.Milliseconds(),
+	})
+}
+
+// recordTddStage records a tdd_stage row for one tdd-state RunE (begin,
+// mark, review). Flow events record at every telemetry level (see
+// recordGateAttempt).
+func recordTddStage(stage, feature, outcome string) {
+	logTelemetryEvent(telemetry.Entry{
+		Timestamp: time.Now(),
+		Event:     telemetry.EventTddStage,
+		Stage:     stage,
+		Feature:   feature,
+		Outcome:   outcome,
 	})
 }

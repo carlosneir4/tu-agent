@@ -60,6 +60,10 @@ Switch from interrogator to advisor:
 State the plan + reasoning + recommendation, and wait for sign-off before
 building. For a SUBSTANTIAL feature, do not improvise it here — hand off to the
 `tdd` dev-flow (interrogation → signable Gherkin → strict TDD with a gate).
+If the feature or subsystem is being designed FROM ZERO — no clear shape yet —
+hand off to `/tu-agent:design` first; its architecture guild produces the
+design doc that seeds `tdd`'s interrogation. Go straight to `tdd` only when the
+shape is already clear.
 
 ## 4. Build incrementally
 

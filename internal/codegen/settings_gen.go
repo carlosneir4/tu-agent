@@ -72,6 +72,7 @@ func hardenDeny() []any {
 func hardenAsk() []any {
 	return strSlice(
 		"Bash(git add *)", "Bash(git commit *)", "Bash(git branch *)", "Bash(git checkout *)",
+		"Bash(git merge *)", "Bash(git rebase *)",
 		"Bash(git push *)", "Bash(gh pr *)", "Bash(gh release *)",
 		"Bash(docker push *)", "Bash(kubectl *)", "Bash(terraform apply*)",
 		"WebFetch",

@@ -47,6 +47,8 @@ type Entry struct {
 	Unchanged int `json:"unchanged,omitempty"`
 	Deleted   int `json:"deleted,omitempty"`
 	Failed    int `json:"failed,omitempty"`
+	// Feature is the tdd feature slug, for gate_attempt/tdd_stage events.
+	Feature string `json:"feature,omitempty"`
 }
 
 // Event values identify non-model telemetry rows.
@@ -59,4 +61,6 @@ const (
 	EventViolation    = "violation"
 	EventMutation     = "mutation"
 	EventPrompt       = "prompt"
+	EventGateAttempt  = "gate_attempt"
+	EventSkillInvoked = "skill_invoked"
 )

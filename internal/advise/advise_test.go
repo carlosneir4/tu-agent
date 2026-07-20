@@ -72,6 +72,41 @@ func TestEvaluate_LearnStale(t *testing.T) {
 	}
 }
 
+func TestEvaluate_SkillPending(t *testing.T) {
+	cases := []struct {
+		name    string
+		pending int
+		fires   bool
+	}{
+		{"zero does not fire", 0, false},
+		{"one fires", 1, true},
+		{"several fires", 4, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Evaluate(Inputs{PendingForeignSkills: tc.pending})
+			found := false
+			for _, s := range got {
+				if s.RuleID == "skill-pending" {
+					found = true
+					if s.Evidence != tc.pending {
+						t.Errorf("Evidence = %d, want %d", s.Evidence, tc.pending)
+					}
+					if !strings.Contains(s.Message, "tu-agent memory pending") {
+						t.Errorf("Message = %q, want it to mention `tu-agent memory pending`", s.Message)
+					}
+					if !strings.Contains(s.Message, "tu-agent memory approve-skill") {
+						t.Errorf("Message = %q, want it to mention `tu-agent memory approve-skill`", s.Message)
+					}
+				}
+			}
+			if found != tc.fires {
+				t.Errorf("skill-pending fired = %v, want %v", found, tc.fires)
+			}
+		})
+	}
+}
+
 func TestEvaluate_EditWithoutContext(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -208,6 +243,49 @@ func TestEvaluate_Ordering(t *testing.T) {
 		if prev.Evidence == cur.Evidence && prev.RuleID > cur.RuleID {
 			t.Errorf("tiebreak not by RuleID asc: %+v before %+v", prev, cur)
 		}
+	}
+}
+
+func TestEvaluate_GateFriction(t *testing.T) {
+	cases := []struct {
+		name     string
+		failures map[string]int
+		fires    bool
+		reason   string
+		evidence int
+		wantTip  string
+	}{
+		{"empty does not fire", map[string]int{}, false, "", 0, ""},
+		{"below threshold does not fire", map[string]int{"build_failed": evidenceThreshold - 1}, false, "", 0, ""},
+		{"at threshold fires", map[string]int{"build_failed": evidenceThreshold}, true, "build_failed", evidenceThreshold, "tdd.build_tags"},
+		{"mixed reasons individually below threshold does not fire", map[string]int{"build_failed": 2, "test_failed": 2}, false, "", 0, ""},
+		{"dominant reason picked over lesser reason", map[string]int{"build_failed": evidenceThreshold, "test_failed": 1}, true, "build_failed", evidenceThreshold, "tdd.build_tags"},
+		{"tie breaks lexicographically first reason", map[string]int{"test_failed": evidenceThreshold, "build_failed": evidenceThreshold}, true, "build_failed", evidenceThreshold, "tdd.build_tags"},
+		{"non-build_failed reason gets the generic tip", map[string]int{"test_failed": evidenceThreshold}, true, "test_failed", evidenceThreshold, "tu-agent stats --flow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := Inputs{Insights: stats.InsightsSummary{GateFailures: tc.failures}}
+			got := Evaluate(in)
+			found := false
+			for _, s := range got {
+				if s.RuleID == "gate-friction" {
+					found = true
+					if s.Evidence != tc.evidence {
+						t.Errorf("Evidence = %d, want %d", s.Evidence, tc.evidence)
+					}
+					if !strings.Contains(s.Message, tc.reason) {
+						t.Errorf("Message = %q, want it to mention reason %q", s.Message, tc.reason)
+					}
+					if !strings.Contains(s.Message, tc.wantTip) {
+						t.Errorf("Message = %q, want it to mention tip %q", s.Message, tc.wantTip)
+					}
+				}
+			}
+			if found != tc.fires {
+				t.Errorf("gate-friction fired = %v, want %v", found, tc.fires)
+			}
+		})
 	}
 }
 

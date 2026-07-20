@@ -110,6 +110,16 @@ coverage is thin. CLASSIFY the task complexity from that blast-radius and set th
   "features" with one entry per sub-feature. A sub-feature that is a pure refactor (no new
   behavior/tests) may be emitted with "kind":"refactor" in its features entry; it still gets a
   .feature file (which may have no @s scenarios).
+For standard and complex tasks (never trivial), ALSO write __TDDDIR__/plan.md in ENGLISH,
+ticket-ready, with these sections: Summary (3 sentences), Goal (one testable sentence),
+Non-goals, Context (the graph area + blast radius consulted), Design (the chosen approach and
+the rejected alternatives, lifted from spec.md's ## Design), Features & scenarios (plain prose,
+ONE LINE per scenario — the .feature files remain the machine contract), Test & verification
+plan, Risks, and an empty "## Sign-off" section (pending — the human gate fills it in at
+approval time). Write every Gherkin scenario by these readability rules: one behavior per scenario;
+at most five steps; concrete values over abstractions; plain-language scenario titles; no
+And-chains; scenario prose may follow the session language (Spanish keywords are valid
+Gherkin; gates only read @s tags).
 Keep slugs unique. When you coin a name or use a domain term in the design doc or a scenario
 (e.g. a class name like SurplusReport), gloss it in plain language on first use so a reader who
 does not share the domain vocabulary can follow.` + contractInstruction
@@ -220,6 +230,26 @@ nits the judge already covered. Record a findings list: each finding has a sever
 to __TDDDIR__/progress/review.md and set contract.verdict to {result: pass|revise, feedback,
 findings:[{severity,location,summary}]} — verdict is pass or revise only (no fail). Be concrete:
 every finding cites file:line.` + contractInstruction
+
+// SpecJudgePrompt is the pre-code scope-skeptic overlay: before the human
+// gate, it checks the plan against the spec's Goal and Non-goals. Unlike
+// JudgePrompt/ReviewPrompt it does NOT append contractInstruction — the
+// verdict is verbatim text shown straight to the human, never a fenced JSON
+// contract.
+const SpecJudgePrompt = `tu-agent TDD task — spec-judge stage. Ignore any default output format,
+process steps, verification commands, and definition-of-done from your role definition — this
+stage's contract below replaces them; the role definition contributes only project context and
+conventions. You are the pre-code scope skeptic: BEFORE any code is written, read
+__TDDDIR__/spec.md, __TDDDIR__/plan.md, and the __TDDDIR__/features/*.feature files, and check
+the plan against the spec. Read ONLY those plan artifacts — do not read source code. Every
+scenario in every .feature file must trace to the Goal in
+spec.md — flag any scenario that does not. Check for a Non-goals violation: flag anything the
+plan or its scenarios do that spec.md's Non-goals section rules out. Flag anything speculative,
+gold-plated, or beyond what the Goal requires — config/flags nothing reads, abstractions with a
+single caller, scenarios nobody asked for. Produce a 2-4 line verdict in plain text: no preamble,
+no JSON, no fenced code block. Your verdict is shown verbatim to the human at the human gate —
+the judge informs, the human decides. Your verdict never blocks approval, even when you find a
+real problem; that call belongs to the human, not you.`
 
 // ReviewFixerPrompt is the overlay that resolves whole-branch review findings:
 // like the implementer it never touches test files, and the whole suite must

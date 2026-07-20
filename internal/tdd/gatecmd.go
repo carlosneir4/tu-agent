@@ -18,11 +18,15 @@ import (
 	"github.com/carlosneir4/tu-agent/internal/testresult"
 )
 
-// GateResult is the JSON the gate prints for the plugin skill to read.
+// GateResult is the JSON the gate prints for the plugin skill to read. Reason is
+// a machine-readable, enum-by-convention classification of the outcome: ok |
+// not_red | build_failed | baseline_mutated | coverage_missing | suite_failing
+// (runner_error is emitted by the cmd layer when RunGate itself errors).
 type GateResult struct {
 	OK       bool   `json:"ok"`
 	Feedback string `json:"feedback,omitempty"`
 	Warning  string `json:"warning,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // redBaseline is the durable anti-cheat record the RED gate writes and the
@@ -121,7 +125,7 @@ func splitTags(s string) []string {
 // evalRed adapts NewTestsRed into the gate result shape.
 func evalRed(overallPassed bool, rep testresult.Report, newTests []string) GateResult {
 	r := NewTestsRed(overallPassed, rep, newTests)
-	return GateResult{OK: r.OK, Feedback: r.Feedback}
+	return GateResult{OK: r.OK, Feedback: r.Feedback, Reason: r.Reason}
 }
 
 // goTestFuncRe matches top-level Go test function declarations.
@@ -133,21 +137,32 @@ var goTestFuncRe = regexp.MustCompile(`(?m)^func (Test\w+)\s*\(`)
 // violation feedback. A genuine test FAILURE at runtime counts as red; a
 // BUILD/COMPILE failure of the scoped package does not — it is not a
 // legitimately-failing test.
+func goNewTestsRed(ctx context.Context, root string, goFiles []string, buildTags []string) string {
+	fb, _ := goNewTestsRedReason(ctx, root, goFiles, buildTags)
+	return fb
+}
+
+// goNewTestsRedReason is goNewTestsRed plus a Reason classification: build_failed
+// for every detection that means the new test could not legitimately run
+// (unreadable file, no Test funcs, matched-no-tests, excluded by build
+// constraints, or a real build/setup failure), not_red for the two "passes"
+// detections (the file compiles and runs but is green, so it is simply not red
+// yet).
 //
 // buildTags carries config's tdd.build_tags. This scoped run is a second way to
 // compile the project, next to TestCommand, so it must be told how the project
 // builds: without the tags it produces a DIFFERENT program, and code that only
 // exists under a tag cannot fail there. The verdict then inverts — a genuinely
 // red test reads as green.
-func goNewTestsRed(ctx context.Context, root string, goFiles []string, buildTags []string) string {
+func goNewTestsRedReason(ctx context.Context, root string, goFiles []string, buildTags []string) (feedback, reason string) {
 	for _, rel := range goFiles {
 		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
-			return fmt.Sprintf("cannot read new test file %s: %v", rel, err)
+			return fmt.Sprintf("cannot read new test file %s: %v", rel, err), "build_failed"
 		}
 		m := goTestFuncRe.FindAllStringSubmatch(string(src), -1)
 		if len(m) == 0 {
-			return fmt.Sprintf("new test file %s declares no Test functions", rel)
+			return fmt.Sprintf("new test file %s declares no Test functions", rel), "build_failed"
 		}
 		names := make([]string, 0, len(m))
 		for _, g := range m {
@@ -164,26 +179,26 @@ func goNewTestsRed(ctx context.Context, root string, goFiles []string, buildTags
 		out, err := c.CombinedOutput()
 		if err == nil {
 			if strings.Contains(string(out), "no tests to run") {
-				return fmt.Sprintf("new test file %s matched no tests — scoped run must fail, not report zero matches", rel)
+				return fmt.Sprintf("new test file %s matched no tests — scoped run must fail, not report zero matches", rel), "build_failed"
 			}
 			// With no tags configured we cannot tell a test that is genuinely
 			// green from one that is red only under the project's real build, so
 			// name both rather than assert the first.
 			if len(buildTags) == 0 {
 				return fmt.Sprintf("new test file %s passes — either it needs a failing assertion first, "+
-					"or this repo builds with tags that tdd.build_tags in .tu-agent/config.yaml does not declare", rel)
+					"or this repo builds with tags that tdd.build_tags in .tu-agent/config.yaml does not declare", rel), "not_red"
 			}
 			return fmt.Sprintf("new test file %s passes (built with -tags %s) — tests must fail before implementation "+
-				"(write a failing assertion first)", rel, strings.Join(buildTags, ","))
+				"(write a failing assertion first)", rel, strings.Join(buildTags, ",")), "not_red"
 		}
 		if strings.Contains(string(out), "build constraints exclude all Go files") || strings.Contains(string(out), "no Go files in") {
-			return fmt.Sprintf("new test file %s is excluded by build constraints — tests must compile and fail, not be skipped", rel)
+			return fmt.Sprintf("new test file %s is excluded by build constraints — tests must compile and fail, not be skipped", rel), "build_failed"
 		}
 		if strings.Contains(string(out), "[build failed]") || strings.Contains(string(out), "[setup failed]") {
-			return fmt.Sprintf("new test file %s fails to build — it must compile and fail at runtime, not fail to build:\n%s", rel, strings.TrimSpace(string(out)))
+			return fmt.Sprintf("new test file %s fails to build — it must compile and fail at runtime, not fail to build:\n%s", rel, strings.TrimSpace(string(out))), "build_failed"
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // RunGate reads the feature's required @s tags, runs the deterministic gate
@@ -243,8 +258,8 @@ func RunGate(ctx context.Context, cfg config.Config, root, ticket, feature, cove
 				}
 			}
 			if len(goFiles) > 0 {
-				if fb := goNewTestsRed(ctx, root, goFiles, cfg.Tdd.BuildTags); fb != "" {
-					return GateResult{OK: false, Feedback: fb}, nil
+				if fb, reason := goNewTestsRedReason(ctx, root, goFiles, cfg.Tdd.BuildTags); fb != "" {
+					return GateResult{OK: false, Feedback: fb, Reason: reason}, nil
 				}
 				goScopedConfirmed = true
 				allNewTestsAreGo = len(goFiles) == len(newTests)
@@ -261,7 +276,7 @@ func RunGate(ctx context.Context, cfg config.Config, root, ticket, feature, cove
 		// baselined just because a sibling Go test was red.
 		var res GateResult
 		if goScopedConfirmed && allNewTestsAreGo {
-			res = GateResult{OK: true}
+			res = GateResult{OK: true, Reason: "ok"}
 		} else {
 			res = evalRed(passed, rep, newTests)
 		}
@@ -270,6 +285,7 @@ func RunGate(ctx context.Context, cfg config.Config, root, ticket, feature, cove
 				return GateResult{}, fmt.Errorf("runGate: %w", err)
 			}
 		}
+		res.Warning = designApprovalWarning(base)
 		return res, nil
 	}
 	// expect green: read feature file from the per-feature dir
@@ -279,7 +295,7 @@ func RunGate(ctx context.Context, cfg config.Config, root, ticket, feature, cove
 		return GateResult{}, fmt.Errorf("reading feature: %w", err)
 	}
 	if fb := checkRedBaseline(base, feature, root); fb != "" {
-		return GateResult{OK: false, Feedback: fb}, nil
+		return GateResult{OK: false, Feedback: fb, Reason: "baseline_mutated"}, nil
 	}
 	runner, err := resolveRunner(cfg, root)
 	if err != nil {
@@ -287,5 +303,5 @@ func RunGate(ctx context.Context, cfg config.Config, root, ticket, feature, cove
 	}
 	required := ScenarioTags(string(data))
 	det := DeterministicJudge(ctx, runner, required, splitTags(coveredRaw))
-	return GateResult{OK: det.OK, Feedback: det.Feedback}, nil
+	return GateResult{OK: det.OK, Feedback: det.Feedback, Reason: det.Reason}, nil
 }

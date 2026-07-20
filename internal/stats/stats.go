@@ -115,6 +115,9 @@ type InsightsSummary struct {
 	// PromptSessions counts distinct SessionID among prompt rows — a proxy
 	// for how many sessions generated friction signals.
 	PromptSessions int
+	// GateFailures buckets gate_attempt rows with OK=false by Outcome reason
+	// (e.g. "build_failed", "suite_failing", "runner_error").
+	GateFailures map[string]int
 }
 
 // SummarizeInsights aggregates a slice of telemetry entries into an
@@ -122,7 +125,7 @@ type InsightsSummary struct {
 // model-cost rows only) — see the event rows this covers: mcp_call,
 // graph_refresh, hook. Other rows (model calls, load_skill, ...) are ignored.
 func SummarizeInsights(entries []telemetry.Entry) InsightsSummary {
-	s := InsightsSummary{Tools: make(map[string]*ToolInsight), Violations: make(map[string]int)}
+	s := InsightsSummary{Tools: make(map[string]*ToolInsight), Violations: make(map[string]int), GateFailures: make(map[string]int)}
 	promptSessions := make(map[string]bool)
 	for _, e := range entries {
 		switch e.Event {
@@ -151,6 +154,10 @@ func SummarizeInsights(entries []telemetry.Entry) InsightsSummary {
 			}
 		case telemetry.EventViolation:
 			s.Violations[e.Outcome]++
+		case telemetry.EventGateAttempt:
+			if !e.OK {
+				s.GateFailures[e.Outcome]++
+			}
 		case telemetry.EventPrompt:
 			s.Prompts++
 			// A prompt row with no session_id (an omitted payload field) must
@@ -165,6 +172,72 @@ func SummarizeInsights(entries []telemetry.Entry) InsightsSummary {
 		}
 	}
 	s.PromptSessions = len(promptSessions)
+	return s
+}
+
+// FeatureFlow is one tdd feature's funnel: gate attempts, failures, final mark.
+type FeatureFlow struct {
+	RedAttempts   int            // gate_attempt rows with Stage "red"
+	GreenAttempts int            // gate_attempt rows with Stage "green"
+	Failures      map[string]int // gate_attempt rows with OK=false, by Outcome reason
+	FinalStatus   string         // Outcome of the LAST tdd_stage "mark" row; "" = none
+}
+
+// FlowSummary is the per-feature tdd funnel plus run-level review outcome.
+type FlowSummary struct {
+	Features      map[string]*FeatureFlow // keyed by Entry.Feature (non-empty only)
+	ReviewStage   string                  // Stage of the last run-level review row: "review" | "branch-review" | ""
+	ReviewOutcome string                  // Outcome of that row ("pass", "skipped", "critical:0,important:1", ...)
+}
+
+// SummarizeFlow aggregates a slice of telemetry entries into a FlowSummary.
+// It is a third aggregator alongside Summarize and SummarizeInsights and does
+// not modify their behavior. Only gate_attempt and tdd_stage rows are read;
+// everything else (model rows, load_skill, mcp_call, prompt, ...) is ignored.
+func SummarizeFlow(entries []telemetry.Entry) FlowSummary {
+	s := FlowSummary{Features: make(map[string]*FeatureFlow)}
+	for _, e := range entries {
+		switch e.Event {
+		case telemetry.EventGateAttempt:
+			if e.Feature == "" {
+				continue // defensive; the emitter always sets it
+			}
+			ff, ok := s.Features[e.Feature]
+			if !ok {
+				ff = &FeatureFlow{Failures: make(map[string]int)}
+				s.Features[e.Feature] = ff
+			}
+			switch e.Stage {
+			case "red":
+				ff.RedAttempts++
+			case "green":
+				ff.GreenAttempts++
+			}
+			if !e.OK {
+				ff.Failures[e.Outcome]++
+			}
+		case telemetry.EventTddStage:
+			switch e.Stage {
+			case "mark":
+				if e.Feature == "" {
+					continue
+				}
+				ff, ok := s.Features[e.Feature]
+				if !ok {
+					ff = &FeatureFlow{Failures: make(map[string]int)}
+					s.Features[e.Feature] = ff
+				}
+				ff.FinalStatus = e.Outcome
+			case "review", "branch-review":
+				s.ReviewStage = e.Stage
+				s.ReviewOutcome = e.Outcome
+			default:
+				// "begin" and other stages are recognized-and-skipped.
+			}
+		default:
+			// non-flow events are not funnel data.
+		}
+	}
 	return s
 }
 

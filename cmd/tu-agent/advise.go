@@ -83,6 +83,8 @@ var knownAdviseRules = map[string]bool{
 	"edit-without-context": true,
 	"secret-guard":         true,
 	"mem-search-zero":      true,
+	"skill-pending":        true,
+	"gate-friction":        true,
 }
 
 // adviseInputs gathers advise.Inputs from telemetry and crystallize state
@@ -101,11 +103,38 @@ func adviseInputs(root string) (advise.Inputs, error) {
 	if err != nil {
 		return advise.Inputs{}, fmt.Errorf("adviseInputs: %w", err)
 	}
+	pending, err := pendingForeignSkillCount(root)
+	if err != nil {
+		return advise.Inputs{}, fmt.Errorf("adviseInputs: %w", err)
+	}
 	return advise.Inputs{
-		Insights:         stats.SummarizeInsights(entries),
-		CrystallizeNeeds: needs,
-		UncoveredFiles:   uncovered,
+		Insights:             stats.SummarizeInsights(entries),
+		CrystallizeNeeds:     needs,
+		UncoveredFiles:       uncovered,
+		PendingForeignSkills: pending,
 	}, nil
+}
+
+// pendingForeignSkillCount opens the memory store at root and counts
+// unapproved foreign type=skill records — the skill-pending rule's evidence.
+func pendingForeignSkillCount(root string) (int, error) {
+	count := 0
+	err := withMemStore(root, func(s *memory.Store) error {
+		obs, err := s.List()
+		if err != nil {
+			return fmt.Errorf("pendingForeignSkillCount: %w", err)
+		}
+		approvals, err := loadSkillApprovals(s)
+		if err != nil {
+			return fmt.Errorf("pendingForeignSkillCount: %w", err)
+		}
+		count = len(pendingForeignSkills(obs, approvals, gitAuthor()))
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pendingForeignSkillCount: %w", err)
+	}
+	return count, nil
 }
 
 // loadAdviseState reads and parses the persisted advise state from the

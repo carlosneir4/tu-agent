@@ -62,6 +62,19 @@ Derive from the diff what user-visible behavior changed, and exercise *that*:
 "The server boots" is not verification of a handler change. Boot it, then
 hit the handler.
 
+**Browser path (web frontends).** Check whether Playwright MCP tools are
+available: `ToolSearch "playwright"` (they may be deferred — absent from the
+active tool list until loaded; load them before concluding they are
+unavailable). If available, drive the changed flow in the real browser and
+treat screenshots and DOM (Document Object Model — the live page structure)
+assertions as evidence. If not available, the existing CLI/curl recipe path
+is unchanged — fallback intact.
+
+Before driving anything in the browser, gate on a single per-flow human approval: present the planned flow as numbered steps, e.g. "open /login, fill the form with test data, assert the redirect — ok?". The human approves ONCE; the approved steps then run without re-asking. Anything outside the approved flow — a new origin, a destructive action (deleting data), or real credentials — requires a FRESH gate before it runs.
+
+Every browser action is an MCP tool call recorded by telemetry — this is
+the audit trail. Cite it alongside the screenshots/DOM evidence in step 4.
+
 ## 4. Judge with evidence
 
 Compare observed vs expected, and report with the receipts:

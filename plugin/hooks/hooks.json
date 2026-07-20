@@ -22,6 +22,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent graph update --post-bash || exit 0"
           }
         ]
+      },
+      {
+        "matcher": "mcp__playwright",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent hook mcp-action || exit 0"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -30,6 +39,16 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent hook prompt-submit || exit 0"
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent hook prompt-expansion || exit 0"
           }
         ]
       }

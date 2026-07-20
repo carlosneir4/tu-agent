@@ -35,6 +35,12 @@ type Options struct {
 	// batching a sub-feature's scenarios. Default false.
 	Strict bool
 
+	// AutoFixReview opts the post-loop review into auto-dispatching the
+	// review-fixer for blocking findings. Default false: findings reach a
+	// human gate unfixed (runReviewRounds presents them and resolves
+	// pass-with-pending instead of running the fixer loop).
+	AutoFixReview bool
+
 	// DesignDoc, when set, is a design doc or superpowers plan the analyst seeds
 	// the spec from (confirm-by-exception) instead of interrogating from zero.
 	DesignDoc string

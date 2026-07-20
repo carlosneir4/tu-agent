@@ -24,6 +24,7 @@ func NewTestsRed(overallPassed bool, rep testresult.Report, newTestFiles []strin
 	if overallPassed {
 		return RedResult{DetResult: DetResult{
 			Feedback: "suite is green — no failing test drove the change",
+			Reason:   "not_red",
 		}}
 	}
 	var green []string
@@ -45,11 +46,14 @@ func NewTestsRed(overallPassed bool, rep testresult.Report, newTestFiles []strin
 	}
 	if len(green) > 0 {
 		return RedResult{
-			DetResult:  DetResult{Feedback: "tests green without production: " + strings.Join(green, ", ")},
+			DetResult: DetResult{
+				Feedback: "tests green without production: " + strings.Join(green, ", "),
+				Reason:   "not_red",
+			},
 			GreenFiles: green,
 		}
 	}
-	return RedResult{DetResult: DetResult{OK: true}}
+	return RedResult{DetResult: DetResult{OK: true, Reason: "ok"}}
 }
 
 // casesForFile returns the report cases whose class maps into file. A class
