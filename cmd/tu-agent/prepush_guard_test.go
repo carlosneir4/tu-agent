@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,20 @@ import (
 	"strings"
 	"testing"
 )
+
+// repoScriptOrSkip resolves a repo-local scripts/<name> and skips the test
+// when it is absent. The pre-push guard is repo-local tooling deliberately
+// excluded from the published tree (scripts/public-sync.sh EXCLUDE), so in a
+// public checkout these scripts do not exist and the test must skip rather
+// than fail on a missing file.
+func repoScriptOrSkip(t *testing.T, name string) string {
+	t.Helper()
+	p := filepath.Join(repoRoot(), "scripts", name)
+	if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
+		t.Skipf("repo-local script scripts/%s absent (excluded from this tree); skipping guard test", name)
+	}
+	return p
+}
 
 // setupPrePushFixture builds a temp work repo with an initial commit on
 // branch "main", a temp bare repo added as remote "origin" (the default
@@ -39,7 +54,7 @@ func setupPrePushFixture(t *testing.T) string {
 
 	runGitIn(t, workDir, "remote", "add", "origin", bareDir)
 
-	guardSrc := filepath.Join(repoRoot(), "scripts", "pre-push-guard.sh")
+	guardSrc := repoScriptOrSkip(t, "pre-push-guard.sh")
 	guardBody, err := os.ReadFile(guardSrc)
 	if err != nil {
 		t.Fatalf("read pre-push-guard.sh source (%s): %v", guardSrc, err)
@@ -140,7 +155,7 @@ func TestPrePushGuardInstaller(t *testing.T) {
 	dir := t.TempDir()
 	runGitIn(t, dir, "init")
 
-	installerSrc := filepath.Join(repoRoot(), "scripts", "install-pre-push.sh")
+	installerSrc := repoScriptOrSkip(t, "install-pre-push.sh")
 	cmd := exec.Command(installerSrc)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -163,7 +178,7 @@ func TestPrePushGuardInstaller(t *testing.T) {
 // neither one — which carries or references the DENY machinery — is ever
 // staged into the published tree.
 func TestPublicSyncExcludesGuardScripts(t *testing.T) {
-	path := filepath.Join(repoRoot(), "scripts", "public-sync.sh")
+	path := repoScriptOrSkip(t, "public-sync.sh")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read public-sync.sh: %v", err)
