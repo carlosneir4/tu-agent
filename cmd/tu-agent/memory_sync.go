@@ -111,10 +111,15 @@ var memoryPendingCmd = &cobra.Command{
 // surface, not swallow.
 var errChunkAbsentAtHead = errors.New("chunk not present at HEAD")
 
-// runMemoryPending is the testable body of memoryPendingCmd: it diffs the
-// working-tree chunk file (what `memory export` just wrote) against the
-// version already committed at git HEAD, and lists the notes that would
-// newly land on the team the next time this chunk is committed.
+// runMemoryPending is the testable body of memoryPendingCmd. It has two
+// independent sections, printed to out in order: (1) the original chunk-diff
+// review — the working-tree chunk file (what `memory export` just wrote)
+// against the version already committed at git HEAD, listing the notes that
+// would newly land on the team the next time this chunk is committed; (2)
+// unapproved foreign type=skill records, via printPendingForeignSkills. The
+// skill section prints nothing when there are none, so it never disturbs
+// section (1)'s output (several tests pin its exact "nothing pending"/
+// "not committed yet" substrings on the no-skills path).
 func runMemoryPending(out io.Writer, root, author string) error {
 	chunkPath := memory.ChunkPath(memoryChunksDir(root), author)
 	working, err := memory.ReadChunkFile(chunkPath)
@@ -122,28 +127,28 @@ func runMemoryPending(out io.Writer, root, author string) error {
 		return fmt.Errorf("memory pending: read working chunk: %w", err)
 	}
 	headRecs, err := headChunkRecords(root, memory.RelChunkPath(author))
-	if err != nil {
-		if errors.Is(err, errChunkAbsentAtHead) {
-			fmt.Fprintf(out, "chunk not committed yet — showing all %d notes\n", len(working))
-			printPendingRecords(out, working, nil)
-			return nil
-		}
+	switch {
+	case err != nil && errors.Is(err, errChunkAbsentAtHead):
+		fmt.Fprintf(out, "chunk not committed yet — showing all %d notes\n", len(working))
+		printPendingRecords(out, working, nil)
+	case err != nil:
 		return fmt.Errorf("memory pending: %w", err)
+	default:
+		pending, edited := diffChunkRecords(working, headRecs)
+		removed := removedChunkRecords(working, headRecs)
+		if len(pending) == 0 && len(removed) == 0 {
+			fmt.Fprintln(out, "nothing pending — team chunk is committed")
+		} else {
+			if len(pending) > 0 {
+				printPendingRecords(out, pending, edited)
+			}
+			if len(removed) > 0 {
+				fmt.Fprintf(out, "\nwould REMOVE from the team chunk (%d) — these are committed but absent from your working chunk:\n", len(removed))
+				printPendingRecords(out, removed, nil)
+			}
+		}
 	}
-	pending, edited := diffChunkRecords(working, headRecs)
-	removed := removedChunkRecords(working, headRecs)
-	if len(pending) == 0 && len(removed) == 0 {
-		fmt.Fprintln(out, "nothing pending — team chunk is committed")
-		return nil
-	}
-	if len(pending) > 0 {
-		printPendingRecords(out, pending, edited)
-	}
-	if len(removed) > 0 {
-		fmt.Fprintf(out, "\nwould REMOVE from the team chunk (%d) — these are committed but absent from your working chunk:\n", len(removed))
-		printPendingRecords(out, removed, nil)
-	}
-	return nil
+	return printPendingForeignSkills(out, root, author)
 }
 
 // removedChunkRecords returns records present in old (git HEAD) but absent from

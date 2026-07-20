@@ -763,7 +763,7 @@ func TestSearch_ProbeDetectsPreBranchNonFTS5CountDrift(t *testing.T) {
 	now := time.Now().UTC().Format(timeFormat)
 	if _, err := s1.db.Exec(insertObsSQL,
 		"pre-branch-id", "auth", "project", "", "auth", "JWT tokens expire hourly",
-		"", "legacy-writer", 1, now, now, "", "obs-pre-branch"); err != nil {
+		"", "legacy-writer", 1, now, now, "", "obs-pre-branch", false); err != nil {
 		t.Fatalf("raw insert (simulating a pre-branch non-FTS5 writer): %v", err)
 	}
 	var ftsRows int
@@ -876,7 +876,7 @@ func TestSetupFTS_FlagsDirtyWhenIndexTableExistsButEmpty(t *testing.T) {
 	now := time.Now().UTC().Format(timeFormat)
 	if _, err := seed.db.Exec(insertObsSQL,
 		"seed-id", "auth", "project", "", "auth", "JWT tokens expire hourly",
-		"", "test", 1, now, now, "", "obs-seed"); err != nil {
+		"", "test", 1, now, now, "", "obs-seed", false); err != nil {
 		seed.Close()
 		ftsDisabled = false
 		t.Fatalf("raw insert: %v", err)

@@ -103,6 +103,7 @@ In a session opened on your repo:
 | `/tu-agent:synthesize` | Regenerate the architecture overview from the concept index in the graph store |
 | `/tu-agent:status` | Progress, card staleness, and graph health |
 | `/tu-agent:groundwork` | Anchor-before-build protocol: graph + memory recall, gap questions, confirmed approach |
+| `/tu-agent:design` | Architecture guild for a new feature/subsystem from zero: proportionality-gated lens critique, human picks what enters the design |
 | `/tu-agent:tdd` | End-to-end TDD dev-flow (interrogation → spec → deterministic RED/GREEN gates → review) |
 | `/tu-agent:test-gen` | Generate a verified unit test for a function, or for the riskiest untested code |
 | `/tu-agent:crystallize` | Consolidate a dense cluster of memory notes into a reusable skill |

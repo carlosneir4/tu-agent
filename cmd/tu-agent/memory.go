@@ -73,6 +73,7 @@ func init() {
 	memoryCmd.AddCommand(memoryExportCmd)
 	memoryExportCmd.Flags().BoolVar(&memExportQuiet, "quiet", false, "suppress output (for hooks)")
 	memoryCmd.AddCommand(memoryPendingCmd)
+	memoryCmd.AddCommand(memoryApproveSkillCmd)
 	memoryImportCmd.Flags().BoolVar(&memImportQuiet, "quiet", false, "suppress the summary line (for hooks)")
 	memoryCmd.AddCommand(memoryImportCmd)
 	memoryCmd.AddCommand(memoryChunksCmd)

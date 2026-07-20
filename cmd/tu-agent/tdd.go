@@ -149,6 +149,7 @@ var tddRunCmd = &cobra.Command{
 			MutationThreshold: threshold,
 			Archive:           archive,
 			Strict:            cfg.Tdd.Strict,
+			AutoFixReview:     cfg.Tdd.AutoFixReview,
 			DesignDoc:         tddDesign,
 			Snapshot:          func(ctx context.Context) (string, error) { return tdd.Snapshot(ctx, root) },
 			Diff: func(ctx context.Context, from, to string) ([]string, error) {

@@ -102,6 +102,11 @@ func (s *Store) ImportRecords(records []ChunkRecord) (ImportResult, error) {
 			ID: id, TopicKey: r.TopicKey, Scope: r.Scope, Project: r.Project,
 			Title: r.Title, Content: r.Content, Type: r.Type, Source: r.Source,
 			Author: r.Author, SyncID: r.SyncID, Revision: r.Revision,
+			// Imported is always true for a record ImportRecords writes: it never
+			// travels in ChunkRecord (a spoofed chunk cannot flip it), so it marks
+			// this machine's own act of importing rather than anything the chunk
+			// claims about itself.
+			Imported:  true,
 			CreatedAt: created, UpdatedAt: updated,
 		}
 		existing, found, err := findBySyncIDTx(tx, r.SyncID)
@@ -121,11 +126,11 @@ func (s *Store) ImportRecords(records []ChunkRecord) (ImportResult, error) {
 		}
 		incoming.ID = existing.ID
 		if _, err := tx.Exec(`UPDATE observations
-			SET topic_key=?, scope=?, project=?, title=?, content=?, type=?, source=?, author=?, revision=?, created_at=?, updated_at=?
+			SET topic_key=?, scope=?, project=?, title=?, content=?, type=?, source=?, author=?, revision=?, created_at=?, updated_at=?, imported=?
 			WHERE id=?`,
 			incoming.TopicKey, incoming.Scope, incoming.Project, incoming.Title, incoming.Content,
 			incoming.Type, incoming.Source, incoming.Author, incoming.Revision,
-			incoming.CreatedAt.Format(timeFormat), incoming.UpdatedAt.Format(timeFormat),
+			incoming.CreatedAt.Format(timeFormat), incoming.UpdatedAt.Format(timeFormat), incoming.Imported,
 			incoming.ID); err != nil {
 			return res, fmt.Errorf("memory.Store.ImportRecords: update: %w", err)
 		}

@@ -29,15 +29,21 @@ done/pending features and ask **resume or restart**. On **resume**, read the
 `base` field from the same `tdd status` JSON you already parsed for
 `resumable` and set `$BASE` to it — the resumed run's artifacts live there.
 (The ticket is already encoded in `$BASE`; you do not need `$TICKET`/
-`$FEATURE_DESC` on resume.) Then skip Steps 1–3 and 3.5 and jump straight to
-Step 5's feature loop at the first `pending` feature — **unless** `tdd status`
-shows every feature already `pass` and `review: "pending"`, in which case skip
-Step 5 entirely and resume directly at Step 6's post-loop review. On
-**restart**, proceed normally (a fresh `tdd state begin` later overwrites it;
-`$BASE` is instead resolved fresh in Step 1).
+`$FEATURE_DESC` on resume.) Before jumping into the feature loop, re-present
+the REMAINING plan: read the pending features from `$BASE/plan.md` when it
+exists (its Features & scenarios prose), else from the `tdd status` listing,
+and ask the user one question — "still valid?" — so a stale plan is caught
+before more work is sunk into it. Then skip Steps 1–3 and 3.5 and jump
+straight to Step 5's feature loop at the first `pending` feature — **unless**
+`tdd status` shows every feature already `pass` and `review: "pending"`, in
+which case skip Step 5 entirely and resume directly at Step 6's post-loop
+review. On **restart**, proceed normally (a fresh `tdd state begin` later
+overwrites it; `$BASE` is instead resolved fresh in Step 1).
 
 Read `.tu-agent/config.yaml` if present and note `tdd.mutation` (default off),
-`tdd.archive` (default on), and `tdd.test_command`.
+`tdd.archive` (default on), `tdd.auto_fix_review` (default off — gates Step 6's
+fixer dispatch on human approval instead of auto-fixing), and
+`tdd.test_command`.
 
 ## Stage dispatch model — read this carefully
 
@@ -134,21 +140,46 @@ backward compatibility, normalized into a single feature.)
 
 ## Step 3: Human gate (with design loop-back)
 
-Show the user **all** features and their scenarios (iterate the `features` array).
-Ask them to **approve**, **abort**, or **describe what to change**. Then:
+When `$BASE/plan.md` exists, BEFORE presenting it, run the spec-judge stage
+(dispatch `general-purpose` with `"$TU" tdd prompt spec-judge --base "$BASE"`)
+— the pre-code scope skeptic that checks the plan and its scenarios trace to
+spec.md's Goal and do not violate its Non-goals. It returns a 2-4 line verdict
+as plain text (not a JSON contract) — show that verdict TOGETHER WITH
+`plan.md`'s prose. State explicitly that the human decides: the spec-judge
+verdict only informs, it never auto-blocks approval — even a critical
+finding is the user's call. On a design loop-back round (see "describe a
+change" below), re-run the spec-judge on the revised plan and show its
+updated verdict alongside the delta.
 
-- approve → continue to Step 3.5.
+Present the design for approval. When `$BASE/plan.md` exists, show ITS PROSE —
+never raw Gherkin — the reader is a human deciding whether to sign off, not a
+test runner. Fall back to the current feature/scenario listing (iterate the
+`features` array) only when `plan.md` does not exist. Ask the user to
+**approve**, **abort**, or **describe what to change**. Then:
+
+- approve →
+  1. run `"$TU" tdd state approve-design --base "$BASE" --rounds <n>` where
+     `<n>` is the number of design rounds consumed so far (1 if approved on
+     the first showing) — this stamps the `## Sign-off` section into
+     `plan.md` and writes the durable approval token later steps depend on.
+  2. `mem_save` a `decision/<slug>-design` note recording the chosen approach
+     and the rejected alternatives AT PLAN TIME — do not defer this to the
+     post-loop scribe, the design reasoning is freshest now.
+  3. only then continue to Step 3.5.
 - abort → STOP.
 - describe a change → re-dispatch the architect (`general-purpose` with
   `"$TU" tdd prompt architect --base "$BASE"`) with the user's feedback prepended ("The user
-  rejected the previous design: <feedback>. Revise accordingly."), then show the
-  revised features and ask again. Allow up to **3 design rounds**; if still not
-  approved, STOP.
+  rejected the previous design: <feedback>. Revise accordingly."), re-run the
+  spec-judge on the revised plan, then present only the DELTA of the revised
+  design — what changed and why — plus the updated spec-judge verdict, not a
+  reprint of the whole plan.md/feature listing, and ask again. Allow up to
+  **3 design rounds**; if still not approved, STOP.
 
 If the architect returned `complexity: trivial`, there are no features to
 list — show the architect's one-line summary of the intended change (its
 `handoff`) and ask the user to **approve or abort** before Step 4. Never
-start the trivial path without that approval.
+start the trivial path without that approval. (The trivial path has no
+plan.md and never calls `approve-design` — it never has a design to approve.)
 
 ## Step 3.5: Branch and ticket
 
@@ -184,8 +215,12 @@ against. The trivial path writes no run state.
 
 **Record the run first (fresh runs only).** If you are NOT resuming, run
 `"$TU" tdd state begin --base "$BASE"` with one `--feature <slug>` per approved
-feature (from the architect's `features` array), plus `--branch <name>` and
-`--task "<short description>"`. On resume the state already exists — skip this.
+feature (from the architect's `features` array), plus `--branch <name>`,
+`--task "<short description>"`, and `--complexity <complexity from the
+architect contract>` (`standard` or `complex` — Step 5 is never reached on the
+trivial path). Standard/complex begins are refused by the binary unless Step 3
+already ran `approve-design` for this base, so the flag also documents which
+design was signed off on. On resume the state already exists — skip this.
 
 Then obtain the pending features from `"$TU" tdd status --base "$BASE"` (the
 features whose `status` is `"pending"` in the `features` array). For
@@ -316,7 +351,23 @@ case). Mirrors the CLI conductor's `internal/tdd/review.go`.
    changed files), same as any other stage — plus the instruction to read
    `${CLAUDE_PLUGIN_ROOT}/references/adversarial-verification.md` and run its
    refutation pass on each finding before reporting it.
-4. Route the verdict's findings:
+4. Route the verdict's findings, branching FIRST on `tdd.auto_fix_review`
+   (read in Step 0):
+   - **`tdd.auto_fix_review` off (default):** STOP here — do not dispatch the
+     review-fixer yet. Present the findings to the user grouped by severity
+     (critical/important/minor) with `file:line` for each, at a **human**
+     gate, and ask which findings to fix. On **approval**, dispatch the
+     review-fixer (`"$TU" tdd prompt review-fixer --base "$BASE"`) for the
+     **approved subset** of findings only — never the ones the user did not
+     approve — then continue with the same test-immutability enforcement and
+     re-review loop described below for that subset. On **reject** or
+     **defer**, do not dispatch the fixer at all: the findings stay recorded
+     as-is in `$BASE/progress/review.md` (untouched), and step 7 records the
+     outcome as `pass-with-pending` (`"$TU" tdd state review pass --base
+     "$BASE" --findings <code>`, same terminal shape as the budget-exhausted
+     path below; see step 7 for the `<code>` grammar).
+   - **`tdd.auto_fix_review` on:** skip the human gate — auto-fix the same as
+     today, per the routing below.
    - `critical` or `important` findings: dispatch the review-fixer
      (`"$TU" tdd prompt review-fixer --base "$BASE"`) with the findings.
      Outer-round budget: **2**. After each fixer dispatch, FIRST enforce test
@@ -348,10 +399,15 @@ case). Mirrors the CLI conductor's `internal/tdd/review.go`.
    still ends `pass`, with the pending findings reported to the user.
 6. The dispatched review stage writes its findings to
    `$BASE/progress/review.md`, not the conductor.
-7. Record the outcome with `"$TU" tdd state review pass --base "$BASE"` (no
-   blocking findings, the budget exhausted with pending findings reported, or
-   a fixer round gave up with the suite left red) or
-   `"$TU" tdd state review skipped --base "$BASE"` (step 2 above).
+7. Record the outcome with `"$TU" tdd state review pass --base "$BASE"
+   --findings <code>` (no blocking findings, the budget exhausted with
+   pending findings reported, or a fixer round gave up with the suite left
+   red) — `<code>` is `clean` when the final verdict carried no findings at
+   all, else `critical:N,important:N,minor:N` from its counts, appending
+   `,pending` when blocking (critical/important) findings were left unfixed
+   (flag off and rejected/deferred, or the round budget exhausted) — or
+   `"$TU" tdd state review skipped --base "$BASE"` (step 2 above; a skipped
+   review has no findings, so omit `--findings`).
 
 ## Notes
 

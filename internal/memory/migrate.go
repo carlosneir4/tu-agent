@@ -43,9 +43,9 @@ func (s *Store) migrateFromJSON(dbPath string) error {
 			return fmt.Errorf("memory.migrateFromJSON: %w", err)
 		}
 		ts := l.Timestamp.UTC().Format(timeFormat)
-		// insertObsSQL columns end with author, sync_id
+		// insertObsSQL columns end with author, sync_id, imported
 		if _, err := tx.Exec(insertObsSQL,
-			id, "", "project", "", l.Topic, l.Content, "", l.Source, 1, ts, ts, "", syncID); err != nil {
+			id, "", "project", "", l.Topic, l.Content, "", l.Source, 1, ts, ts, "", syncID, false); err != nil {
 			return fmt.Errorf("memory.migrateFromJSON: importing %s: %w", id, err)
 		}
 	}

@@ -160,7 +160,13 @@ func BuildScoped(root, scope string, exts []string, st *store.Store) (BuildResul
 		result.Parsed++
 	}
 
-	// 5. Resolve project-wide.
+	// 5. Resolve project-wide, but only when something changed. A no-op build
+	// (nothing parsed or deleted) runs on every SessionStart/PostToolUse hook,
+	// so skipping resolve here avoids an O(graph) rewrite of the resolved edge
+	// table when the graph did not move.
+	if result.Parsed == 0 && result.Deleted == 0 {
+		return result, nil
+	}
 	return result, resolveFromStore(st, goModulePath(root))
 }
 

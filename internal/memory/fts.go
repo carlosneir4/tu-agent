@@ -325,7 +325,7 @@ func (s *Store) searchFTS(query, typeFilter string, limit int) ([]Observation, i
 		JOIN observations o ON o.id = observations_fts.id
 		WHERE observations_fts MATCH ? AND o.deleted_at IS NULL`
 	sql := `SELECT o.id, o.topic_key, o.scope, o.project, o.title, o.content,
-			o.type, o.source, o.revision, o.created_at, o.updated_at, o.author, o.sync_id
+			o.type, o.source, o.revision, o.created_at, o.updated_at, o.author, o.sync_id, o.imported
 		FROM observations_fts
 		JOIN observations o ON o.id = observations_fts.id
 		WHERE observations_fts MATCH ? AND o.deleted_at IS NULL`

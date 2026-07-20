@@ -35,6 +35,8 @@ func StageOverlay(stage string) (string, bool) {
 		return ImplementerPrompt, true
 	case "refactor":
 		return RefactorPrompt, true
+	case "spec-judge":
+		return SpecJudgePrompt, true
 	default:
 		return "", false
 	}
@@ -47,7 +49,26 @@ func StageOverlay(stage string) (string, bool) {
 // agent registration. It intentionally diverges from the frozen TddStageDefs
 // (body + overlay only): the language overlay and rules injection are live-path
 // features that the deprecated `tdd run` harness does not carry.
+//
+// It delegates to ComposeStagePromptWithGrounding with an empty grounding
+// string, so every existing caller and test is unaffected by the grounding
+// splice.
 func ComposeStagePrompt(root, stage, relBase string) (string, error) {
+	return ComposeStagePromptWithGrounding(root, stage, relBase, "")
+}
+
+// ComposeStagePromptWithGrounding is ComposeStagePrompt plus an optional
+// mechanical grounding block (architecture excerpt, relevant decisions, blast
+// radius/test gaps) supplied by the caller. internal/tdd never queries the
+// graph or memory stores itself — the CMD layer computes grounding text and
+// passes it in here; this function only splices it.
+//
+// The grounding section is inserted between the project rules and the stage
+// overlay, and ONLY when both stage is a planning stage (analyst or
+// architect) and grounding is non-empty. The scoping guard lives here (not
+// only in the caller) so it holds structurally even if a future caller passes
+// grounding text for a non-planning stage.
+func ComposeStagePromptWithGrounding(root, stage, relBase, grounding string) (string, error) {
 	for _, st := range tddStages() {
 		if st.stage == stage {
 			body, err := LoadAgentBody(root, st.role)
@@ -61,6 +82,9 @@ func ComposeStagePrompt(root, stage, relBase string) (string, error) {
 			}
 			if rules := loadProjectRules(root, st.role); rules != "" {
 				parts = append(parts, rules)
+			}
+			if (stage == "analyst" || stage == "architect") && grounding != "" {
+				parts = append(parts, groundingHeader+grounding)
 			}
 			parts = append(parts, overlay)
 			return strings.Join(parts, "\n\n"), nil
@@ -103,6 +127,10 @@ func tddStages() []tddStage {
 		// the plugin conductor can fetch its composed prompt via `tu-agent tdd
 		// prompt refactor` for architect-emitted kind:"refactor" features.
 		{"refactor", "developer", RefactorPrompt, writeGrant},
+		// spec-judge is the pre-code scope skeptic the plugin conductor dispatches
+		// before the human gate; it only reads plan artifacts and emits a verbatim
+		// verdict, so it gets the read-only defaultGrant (like scribe), not write.
+		{"spec-judge", "pr-reviewer", SpecJudgePrompt, defaultGrant},
 	}
 }
 

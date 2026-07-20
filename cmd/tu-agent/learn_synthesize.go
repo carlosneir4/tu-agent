@@ -324,19 +324,14 @@ func uncoveredFileCount(root string) (int, error) {
 	return n, nil
 }
 
-// conceptStatus reports one concept's freshness: "new" when it has no generated
-// SKILL.md yet, "up-to-date" when every member file still hashes to what the
-// graph recorded, "stale" otherwise.
+// conceptStatus reports one concept's freshness: "new" when it has no member
+// files linked yet, "up-to-date" when every member file still hashes to what
+// the graph recorded, "stale" otherwise.
 func conceptStatus(root string, c store.ConceptRow, recorded map[string]store.FileRecord) string {
-	if _, err := os.Stat(filepath.Join(generatedSkillsDir(root), c.Name, "SKILL.md")); err != nil {
-		return "new"
-	}
 	if len(c.Files) == 0 {
-		// No member files linked, so there is no evidence the skill still
-		// matches the code. Report "stale" rather than claim freshness we
-		// cannot verify — a concept learned before the link existed then
-		// prompts a re-learn instead of lying.
-		return "stale"
+		// No member files linked yet, so there is no code to compare against —
+		// this is an unlearned concept, not a stale one.
+		return "new"
 	}
 	for _, rel := range c.Files {
 		if recorded[rel].SHA256 != liveSHA256(root, rel) {
@@ -377,9 +372,9 @@ func runStatusTo(w io.Writer, root string) error {
 		}
 	}
 	if needRefresh > 0 {
-		fmt.Fprintf(w, "\n%d skill(s) need refresh — re-run 'tu-agent learn <path>' for the changed area, then 'tu-agent learn synthesize'.\n", needRefresh)
+		fmt.Fprintf(w, "\n%d concept(s) need refresh — re-run 'tu-agent learn <path>' for the changed area, then 'tu-agent learn synthesize'.\n", needRefresh)
 	} else {
-		fmt.Fprintln(w, "\nAll skills up to date.")
+		fmt.Fprintln(w, "\nAll concepts up to date.")
 	}
 	if orphans, err := codegen.ListEmptySkillDirs(generatedSkillsDir(root)); err == nil && len(orphans) > 0 {
 		fmt.Fprintf(w, "\n%d empty skill dir(s) with no SKILL.md: %v\n", len(orphans), orphans)

@@ -23,7 +23,9 @@ var tddPromptCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		relBase := tdd.PromptRelBase(tddPromptBase, tddPromptTicket, args[1:])
-		out, err := tdd.ComposeStagePrompt(repoRoot(), args[0], relBase)
+		root := repoRoot()
+		grounding := buildGrounding(root, args[0], relBase)
+		out, err := tdd.ComposeStagePromptWithGrounding(root, args[0], relBase, grounding)
 		if err != nil {
 			return err
 		}

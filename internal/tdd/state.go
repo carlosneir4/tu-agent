@@ -36,6 +36,10 @@ type State struct {
 	// review) | "pending" | "pass" | "skipped". Empty on files written by
 	// older binaries so they never gain review semantics retroactively.
 	Review string `json:"review,omitempty"`
+	// Complexity is the architect-assigned run complexity ("" | "trivial" |
+	// "standard" | "complex"), set by RunStateBegin's --complexity. Empty on
+	// files written by older binaries or on a begin with the flag omitted.
+	Complexity string `json:"complexity,omitempty"`
 }
 
 // BeginRun builds a fresh State with every feature pending. It rejects

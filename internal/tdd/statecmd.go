@@ -64,8 +64,36 @@ func RunStatus(root, baseFlag, ticket string, out io.Writer) error {
 	return nil
 }
 
-// RunStateBegin starts a fresh run state with the given features all pending.
-func RunStateBegin(root, baseFlag, ticket, task, branch string, features []string, out io.Writer) error {
+// oldConductorWarning is printed on a begin whose --complexity flag was
+// omitted entirely: a conductor predating the flag never sends it, so an
+// unset flag is treated as that legacy caller rather than as "standard"
+// fail-closed — it proceeds without a token, but loudly, so a plugin still on
+// the old flow gets told to update.
+const oldConductorWarning = "warning: no --complexity given — old conductor flow detected; design-approval enforcement skipped. Update the tu-agent plugin for the new conductor flow."
+
+// RunStateBegin starts a fresh run state with the given features all
+// pending. complexity gates the begin per the fail-closed matrix: "trivial"
+// never requires a prior approval token; "standard"/"complex" require one
+// under base, refusing before anything is written; "" (the flag entirely
+// omitted) is the old-conductor compat path — it proceeds without a token but
+// prints oldConductorWarning; any other value is rejected outright. A
+// non-empty complexity is recorded on the returned state; "" leaves it
+// omitted.
+func RunStateBegin(root, baseFlag, ticket, task, branch string, features []string, complexity string, out io.Writer) error {
+	targetPath := TddStateFile(root, baseFlag, ticket)
+	oldConductorCompat := false
+	switch complexity {
+	case "trivial":
+		// No plan to approve — never requires a token.
+	case "standard", "complex":
+		if !designApproved(filepath.Dir(targetPath)) {
+			return fmt.Errorf("tdd state begin: design not approved — run `tdd state approve-design` first")
+		}
+	case "":
+		oldConductorCompat = true
+	default:
+		return fmt.Errorf("tdd state begin: complexity must be trivial|standard|complex, got %q", complexity)
+	}
 	if len(features) == 0 {
 		return fmt.Errorf("tdd state begin: at least one --feature is required")
 	}
@@ -77,7 +105,9 @@ func RunStateBegin(root, baseFlag, ticket, task, branch string, features []strin
 	if err != nil {
 		return fmt.Errorf("tdd state begin: %w", err)
 	}
-	targetPath := TddStateFile(root, baseFlag, ticket)
+	if complexity != "" {
+		st.Complexity = complexity
+	}
 	if baseFlag == "" && ticket == "" {
 		if existing, loadErr := LoadState(targetPath); loadErr == nil && existing.Resumable() {
 			dir := TddStateBaseRel(root, targetPath)
@@ -89,6 +119,9 @@ func RunStateBegin(root, baseFlag, ticket, task, branch string, features []strin
 	}
 	if err := SaveState(targetPath, st); err != nil {
 		return fmt.Errorf("tdd state begin: %w", err)
+	}
+	if oldConductorCompat {
+		fmt.Fprintln(out, oldConductorWarning)
 	}
 	fmt.Fprintf(out, "began run with %d feature(s)\n", len(features))
 	return nil

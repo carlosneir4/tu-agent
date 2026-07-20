@@ -194,12 +194,66 @@ var memoryMaterializeCmd = &cobra.Command{
 	},
 }
 
+// invalidSkillName reports whether name is unsafe to use as a skill
+// directory segment: empty, ".", "..", or containing a path separator
+// (forward or backslash, matching reconcile.ApplyPlanWithOptions's guard).
+// Shared so materialize and approve-skill cannot drift on the check.
+func invalidSkillName(name string) bool {
+	return name == "" || name == "." || name == ".." ||
+		strings.ContainsAny(name, "/\\") || strings.ContainsRune(name, filepath.Separator)
+}
+
+// isLocalAuthor reports whether a skill record materializes under the
+// local-authorship gate. A record is local when it never passed through
+// Store.ImportRecords (o.Imported is false — the provenance marker, set only
+// by import and never carried in a chunk, so it cannot be spoofed) AND its
+// author is either empty (only local saves produce one) or matches the local
+// git identity. localIdentity empty means no git identity is configured, so
+// no non-empty author can match -- fail closed rather than treat everything
+// as local. Checking both o.Imported and the author string is belt and
+// suspenders: the marker alone stops a crafted chunk from forging local
+// status, and the author check alone stops a record that was locally
+// Upserted with a foreign author string. A foreign record can still
+// materialize via the skill_approvals gate at the call site (approvals[name]
+// == record.Revision).
+func isLocalAuthor(o memory.Observation, localIdentity string) bool {
+	return !o.Imported && (o.Author == "" || (localIdentity != "" && o.Author == localIdentity))
+}
+
+// materializeSkillFile writes content to <base>/<name>/SKILL.md, honoring
+// crystallize.MaterializeDecision so a hand-edited file is never clobbered.
+// Returns whether it wrote (false when an existing hand-edited file was
+// preserved instead). Shared by the materialize loop and approve-skill's
+// immediate materialization so both write skill files identically.
+func materializeSkillFile(base, name, content string) (bool, error) {
+	path := filepath.Join(base, name, "SKILL.md")
+	existing, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return false, fmt.Errorf("read %s: %w", path, readErr)
+	}
+	if !crystallize.MaterializeDecision(existing) {
+		return false, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return false, fmt.Errorf("write %s: %w", path, err)
+	}
+	return true, nil
+}
+
 func runMemoryMaterialize(cmd *cobra.Command) error {
 	return withMemStore(repoRoot(), func(s *memory.Store) error {
 		obs, err := s.List()
 		if err != nil {
 			return err
 		}
+		approvals, err := loadSkillApprovals(s)
+		if err != nil {
+			return fmt.Errorf("memory materialize: %w", err)
+		}
+		localIdentity := gitAuthor()
 		written := 0
 		base := generatedSkillsDir(repoRoot())
 		for _, o := range obs {
@@ -207,24 +261,19 @@ func runMemoryMaterialize(cmd *cobra.Command) error {
 				continue
 			}
 			name := strings.TrimPrefix(o.TopicKey, "skill/")
-			if name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
+			if !isLocalAuthor(o, localIdentity) && approvals[name] != o.Revision {
+				continue // foreign record; unapproved (or approved at a stale revision)
+			}
+			if invalidSkillName(name) {
 				continue // defensive: skill names are a single path segment
 			}
-			path := filepath.Join(base, name, "SKILL.md")
-			existing, readErr := os.ReadFile(path)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				return fmt.Errorf("memory materialize: read %s: %w", path, readErr)
-			}
-			if !crystallize.MaterializeDecision(existing) {
-				continue
-			}
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			ok, err := materializeSkillFile(base, name, o.Content)
+			if err != nil {
 				return fmt.Errorf("memory materialize: %w", err)
 			}
-			if err := os.WriteFile(path, []byte(o.Content), 0o644); err != nil {
-				return fmt.Errorf("memory materialize: %w", err)
+			if ok {
+				written++
 			}
-			written++
 		}
 		if !memMaterializeQuiet {
 			fmt.Fprintf(cmd.OutOrStdout(), "materialized %d skill(s)\n", written)

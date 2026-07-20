@@ -34,7 +34,8 @@ const learnStaleThreshold = 10
 // Suggestion is one actionable, evidence-bearing nudge produced by a rule.
 type Suggestion struct {
 	// RuleID is a stable identifier: "crystallize-ready" | "learn-stale" |
-	// "edit-without-context" | "secret-guard" | "mem-search-zero".
+	// "edit-without-context" | "secret-guard" | "mem-search-zero" |
+	// "skill-pending" | "gate-friction".
 	RuleID string
 	// Message is a one-line, evidence-bearing, imperative suggestion.
 	Message string
@@ -55,6 +56,11 @@ type Inputs struct {
 	// new code the concept index has not clustered yet. Grows as code is added
 	// between learn runs; the learn-stale rule reads it.
 	UncoveredFiles int
+	// PendingForeignSkills is the count of imported type=skill records
+	// authored by someone else and not yet approved at their current
+	// revision (cmd/tu-agent's skillApprovalsKey) — the skill-pending rule
+	// reads it.
+	PendingForeignSkills int
 }
 
 // Evaluate runs all rules and returns every suggestion meeting its
@@ -79,6 +85,14 @@ func Evaluate(in Inputs) []Suggestion {
 		})
 	}
 
+	if n := in.PendingForeignSkills; n >= 1 {
+		out = append(out, Suggestion{
+			RuleID:   "skill-pending",
+			Evidence: n,
+			Message:  fmt.Sprintf("%d unapproved foreign skill record(s) — review with `tu-agent memory pending`, approve with `tu-agent memory approve-skill <name>`", n),
+		})
+	}
+
 	if n := in.Insights.Violations["edit-without-context"]; n >= evidenceThreshold {
 		out = append(out, Suggestion{
 			RuleID:   "edit-without-context",
@@ -92,6 +106,18 @@ func Evaluate(in Inputs) []Suggestion {
 			RuleID:   "secret-guard",
 			Evidence: n,
 			Message:  fmt.Sprintf("the secret-guard blocked %d attempt(s) to read/modify secret files", n),
+		})
+	}
+
+	if reason, count := dominantGateFailure(in.Insights.GateFailures); count >= evidenceThreshold {
+		tip := "inspect `tu-agent stats --flow`"
+		if reason == "build_failed" {
+			tip = "check tdd.build_tags in .tu-agent/config.yaml"
+		}
+		out = append(out, Suggestion{
+			RuleID:   "gate-friction",
+			Evidence: count,
+			Message:  fmt.Sprintf("tdd gate failed with %s %d time(s) — %s", reason, count, tip),
 		})
 	}
 
@@ -114,6 +140,24 @@ func Evaluate(in Inputs) []Suggestion {
 		return out[i].RuleID < out[j].RuleID
 	})
 	return out
+}
+
+// dominantGateFailure picks the gate-friction rule's evidence: the
+// single reason with the highest failure count, breaking ties
+// lexicographically by reason so the message is deterministic. Returns ""
+// and 0 for an empty map.
+func dominantGateFailure(byReason map[string]int) (reason string, count int) {
+	reasons := make([]string, 0, len(byReason))
+	for r := range byReason {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	for _, r := range reasons {
+		if byReason[r] > count {
+			reason, count = r, byReason[r]
+		}
+	}
+	return reason, count
 }
 
 // RuleState tracks one rule's dedup/dismiss state across advise --nudge runs.

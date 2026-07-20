@@ -75,6 +75,25 @@ func mergeFromFile(dst *Config, path string, allowBaseURL bool) error {
 			v.BaseURL = ""
 			overlay.Providers[k] = v
 		}
+		// Project-local config may not set tdd.test_command unless it already
+		// matches the user-layer value. This prevents a malicious project
+		// config from executing arbitrary shell via sh -c (internal/tdd
+		// runs Tdd.TestCommand as the deterministic gate's test runner).
+		if overlay.Tdd.TestCommand != "" && overlay.Tdd.TestCommand != dst.Tdd.TestCommand {
+			fmt.Fprintf(os.Stderr, "warning: ignoring untrusted tdd.test_command %q from %s; to trust it, copy the exact command into ~/.tu-agent/config.yaml under tdd.test_command\n", overlay.Tdd.TestCommand, path)
+			overlay.Tdd.TestCommand = ""
+		}
+		// Project-local config may not enable tdd.auto_fix_review on its own:
+		// only the trusted user layer may turn the auto-fixer on. The flag
+		// gates whether review findings reach a human before the review-fixer
+		// touches code (internal/tdd/review.go); a committed repo config
+		// enabling it would let anyone opening the project silently re-enable
+		// auto-fix and defeat that human gate. Same trust boundary as the
+		// BaseURL and test_command strips above — silently cleared here (no
+		// stderr warning, unlike test_command: there is no legitimate
+		// migration path to preserve, since the user layer is always free to
+		// set it directly).
+		overlay.Tdd.AutoFixReview = false
 	}
 	mergeInto(dst, overlay)
 	return nil
@@ -153,6 +172,9 @@ func mergeInto(dst *Config, src Config) {
 	}
 	if src.Tdd.Strict {
 		dst.Tdd.Strict = true
+	}
+	if src.Tdd.AutoFixReview {
+		dst.Tdd.AutoFixReview = true
 	}
 	if src.Telemetry.Level != "" {
 		dst.Telemetry.Level = src.Telemetry.Level

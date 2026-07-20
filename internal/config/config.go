@@ -69,6 +69,10 @@ type TddConfig struct {
 	// reaching the opposite verdict on any code guarded by a tag. Empty means the
 	// bare build is the project's build, which is true for most repos.
 	BuildTags []string `yaml:"build_tags"`
+	// AutoFixReview opts the post-loop review into auto-dispatching the
+	// review-fixer for blocking findings. Default false: findings reach a
+	// human gate unfixed instead of being auto-fixed.
+	AutoFixReview bool `yaml:"auto_fix_review"`
 }
 
 // TelemetryConfig selects how much telemetry the binary records locally.

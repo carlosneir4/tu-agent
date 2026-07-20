@@ -73,6 +73,7 @@ starts.
 | `finishing-a-development-branch` | Integrate finished work — preflight (verification, review, memory export), then merge/PR/keep/discard as the user chooses; never integrates on its own. |
 | `refine` | Behavior-preserving quality pass over the diff — reuse over duplication, right altitude, dead weight removed. Bugs found are reported, never drive-by fixed. |
 | `performance-investigation` | Measure-first optimization — baseline, profile the dominant cost, one change per measurement, re-measure the delta, keep the benchmark. |
+| `sensei` | Explain any area of the codebase at junior level — anchored in the graph and memory (the *why* the code cannot show), plain prose, concrete `file:line` examples. Read-only; teaching that uncovers an undocumented why feeds it back to memory. |
 
 ## Dev-flow agents
 
