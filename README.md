@@ -87,7 +87,7 @@ binary at `~/.tu-agent/bin/tu-agent`, or point the shim at your own fork via
 In a session opened on your repo:
 
 1. **Build the knowledge index** — run `/tu-agent:prepare` to set up the repo
-   (dev-flow agents, `CLAUDE.md`, a hardened `settings.json`) and build the
+   (a `CLAUDE.md` knowledge block and a hardened `settings.json`) and build the
    index, or `/tu-agent:learn` for just the index. Generation runs in-session on
    your subscription — no API key.
 2. **Ask structural questions** — the agent calls the `tu-agent-graph` MCP tools
@@ -98,7 +98,7 @@ In a session opened on your repo:
 
 | Skill | What it does |
 |-------|--------------|
-| `/tu-agent:prepare` | Set up a repo: dev-flow agents, `CLAUDE.md`, hardened `settings.json`, enriched agents |
+| `/tu-agent:prepare` | Set up a repo: `CLAUDE.md` knowledge block, hardened `settings.json`, seeded `.tu-agent/` config; builds the index if empty |
 | `/tu-agent:learn` | Build the graph + per-domain concept index + architecture overview |
 | `/tu-agent:synthesize` | Regenerate the architecture overview from the concept index in the graph store |
 | `/tu-agent:status` | Progress, card staleness, and graph health |
@@ -111,8 +111,8 @@ In a session opened on your repo:
 **MCP tools the agent calls automatically:** `get_impact`, `get_context`,
 `find_symbol`, `get_flow`, `get_traits`, `get_concept`, `get_bridges`, the
 `mem_*` memory tools, and `test_gaps` / `test_scaffold`. They read
-`./.tu-agent/graph.db` and `./.tu-agent/memory.db`; the server rebuilds on hash
-drift at session start.
+`./.tu-agent/graph/graph.db` and `./.tu-agent/memory/memory.db`; the server
+rebuilds on hash drift at session start.
 
 ---
 
@@ -136,13 +136,13 @@ Full guide for your team, in [`docs/`](docs/) — start with the
 ## Standalone CLI (optional)
 
 Everything deterministic is also a `tu-agent` subcommand, handy for scripts and
-CI. Get the binary (download the release asset for your platform, or `make build`
-from a clone), put it on your PATH, then:
+CI — no API key, no model calls. Get the binary (download the release asset for
+your platform, or `make build` from a clone), put it on your PATH, then:
 
 ```bash
 tu-agent learn --skip-llm           # build graph + concept index, zero model calls
-tu-agent graph context <symbol>     # blast radius + relevant skills + tests
-tu-agent graph impact|flow|bridges  # structure queries (no model calls)
+tu-agent graph context <symbol>     # blast radius + relevant concept + tests
+tu-agent graph impact|flow|bridges  # structure queries
 tu-agent memory save|search         # durable, topic-keyed facts
 tu-agent test gaps                  # rank untested code by risk (fan-in × blast radius)
 ```
@@ -150,71 +150,20 @@ tu-agent test gaps                  # rank untested code by risk (fan-in × blas
 | Group | Commands |
 |-------|----------|
 | Knowledge | `learn`, `concepts`, `map` |
-| Graph | `graph build \| status \| context \| impact \| find \| flow \| traits \| bridges \| cycles` |
+| Graph | `graph build \| status \| context \| impact \| find \| flow \| traits \| bridges \| cycles \| architecture` |
 | Memory | `memory save \| search \| list \| link \| links \| relink \| rescope \| delete \| crystallize \| materialize` |
 | Team memory | `memory export \| import \| pending \| chunks` — share curated notes through git-committed chunks; `pending` is the human pre-commit review gate |
 | TDD dev-flow | `tdd run \| status \| state \| gate \| verify \| prompt \| path \| check` |
 | Sessions | `session start \| end \| list` |
 | Tests | `test gaps \| gen \| mutation` |
-| Setup / misc | `prepare` (alias `init`), `setup`, `scan`, `skill`, `mcp`, `stats`, `bench`, `version` |
+| Setup / misc | `prepare` (alias `init`), `scan`, `skill`, `mcp`, `version` |
 
-Run `tu-agent <command> --help` for flags. The deterministic commands need no API
-key. Generative subcommands (`learn` without `--skip-llm`, `test gen`, `chat`)
-call a configured provider and need a key — `ANTHROPIC_API_KEY` for `claude`, or
-`LOCAL_API_KEY` for a self-hosted OpenAI-compatible endpoint; the plugin path
-needs neither. `sqlite3` and `jq` on PATH are used by the Java-readiness check
-(`scripts/java_ready_check.sh`). The `sqlite_fts5` build tag compiles SQLite's
-FTS5 module so ranked `memory search` works; without it, search degrades to
-substring matching.
-
----
-
-## Configuration
-
-The plugin needs no configuration. The CLI / generative path merges config from
-three layers (later wins):
-
-| Layer | Path | Purpose |
-|-------|------|---------|
-| Global Claude Code | `~/.claude/` | Read-only compatibility layer |
-| User config | `~/.tu-agent/config.yaml` | Personal provider defaults (`tu-agent setup`) |
-| Project config | `./.tu-agent/config.yaml` | Per-repo routing and model overrides |
-
-**Example `.tu-agent/config.yaml`:**
-
-```yaml
-routing:
-  default: claude          # used when no task-specific route matches
-  tasks:
-    chat: claude
-  sub_agents:
-    codebase-explorer: local   # route exploration to the cheaper local model
-
-providers:
-  claude:
-    model: claude-sonnet-4-6   # empty → provider default
-  local:
-    base_url: http://localhost:1234   # required; your OpenAI-compatible endpoint
-    model: ""                  # empty → server uses the loaded model
-    context_size: 16384        # must match the n_ctx loaded by the server
-    max_output_tokens: 2048    # 0 = let the server decide
-    request_timeout_seconds: 600
-```
-
-> **`context_size` must match the model loaded in your local server.** Too low and
-> tu-agent underuses the context; too high and you get `n_keep > n_ctx` HTTP 400s.
-
-Setting `routing: { disabled: true }` in the project config hard-blocks every
-provider/API call the binary would make, regardless of environment keys — a
-developer with `ANTHROPIC_API_KEY` exported still cannot reach an external
-model. The same effect is available per-invocation via the `TU_AGENT_NO_PROVIDER`
-environment variable. Deterministic commands (`graph`, `memory`, `stats`, ...)
-are unaffected either way. The audit trail is `.tu-agent/telemetry.jsonl`,
-which logs every provider call, so an empty log after enabling the switch is
-verifiable evidence no call was made.
-
-API keys are never stored in config — set them as environment variables
-(`ANTHROPIC_API_KEY`, `LOCAL_API_KEY`).
+Run `tu-agent <command> --help` for flags. Full knowledge generation — the
+one-line concept definitions and the architecture overview — runs in the plugin
+inside Claude Code, not the CLI. `sqlite3` and `jq` on PATH are used by the
+Java-readiness check (`scripts/java_ready_check.sh`). The `sqlite_fts5` build tag
+compiles SQLite's FTS5 module so ranked `memory search` works; without it, search
+degrades to substring matching.
 
 ---
 
@@ -222,42 +171,26 @@ API keys are never stored in config — set them as environment variables
 
 ```
 .tu-agent/
-├── graph.db                 ← code graph + concept index (derived; safe to delete + rebuild)
-├── memory.db                ← durable observations + relations + sessions (NOT derived — never delete; gitignored)
-├── memory/chunks/           ← per-author exported note chunks (committed — this is how teams share memory)
-└── telemetry.jsonl          ← one row per model call (gitignored; CLI only)
-.claude/skills/architecture/SKILL.md   ← the synthesized architecture overview (carries a generated marker)
-CLAUDE.md                    ← includes a tu-agent:knowledge pointer block
+├── graph/graph.db          ← code graph + concept index + architecture overview (derived; safe to delete + rebuild)
+├── memory/memory.db        ← durable observations + relations + sessions (NOT derived — never delete; gitignored)
+└── share/memory/chunks/    ← per-author exported note chunks (committed — this is how teams share memory)
+CLAUDE.md                   ← includes a tu-agent:knowledge pointer block
 ```
 
 **Team memory** flows through git: `memory export` writes your curated notes to a
-per-author chunk under `.tu-agent/memory/chunks/` (and tells you on stderr when
-new or updated notes landed there), you review what's about to be shared with
+per-author chunk under `.tu-agent/share/memory/chunks/` (and tells you on stderr
+when new or updated notes landed there), you review what's about to be shared with
 `memory pending`, commit the chunk, and teammates absorb it with
 `memory import` (the plugin runs export/import automatically at session
 boundaries). `memory.db` itself is never shared — the committed chunks are the
 transport.
 
 **Concept cards** are rows in `graph.db` (the `concepts` table), read with
-`get_concept` and rebuilt by `learn` — they are not files. The only generated
-on-disk skill is the **architecture overview** (`.claude/skills/architecture/SKILL.md`);
-commit it to share the synthesized overview with your team. Because `graph.db` is
-derived (and gitignored), teammates rebuild the graph + concept index by running
-`learn` rather than pulling card files.
-
----
-
-## Telemetry and cost (CLI only)
-
-This applies only to the standalone CLI. When the **binary** calls a provider it
-logs each model call to `.tu-agent/telemetry.jsonl` (gitignored): `tu-agent stats`
-summarizes token usage, cost, and latency by provider, and
-`tu-agent bench --baseline a.jsonl --compare b.jsonl` compares two runs to measure
-routing savings. Deterministic commands (`--skip-llm`, all graph/memory queries)
-log **zero** model-call rows.
-
-The **plugin path** does its generation inside Claude Code, on your subscription —
-those calls are not logged here; cost shows up in your Claude Code usage instead.
+`get_concept` and rebuilt by `learn` — they are not files. The **architecture
+overview** is likewise stored in `graph.db` (metadata), read with
+`get_architecture` — also not a file. Because `graph.db` is derived (and
+gitignored), teammates rebuild the graph, concept index, and overview by running
+`/tu-agent:learn` rather than pulling files.
 
 ---
 

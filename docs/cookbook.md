@@ -189,7 +189,7 @@ You usually don't have to do anything — when you `mem_save` a decision, the
 `Stop`/`SessionEnd` hook exports it to your chunk automatically. Then:
 
 ```bash
-git add .tu-agent/memory/chunks/
+git add .tu-agent/share/memory/chunks/
 git commit -m "chore(memory): capture idempotent-charge decision"
 git push
 ```
