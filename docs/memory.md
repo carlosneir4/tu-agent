@@ -73,7 +73,7 @@ This is what makes memory a *team* asset, not a personal notebook.
 
 - The `memory.db` database is **gitignored** — it's a local cache.
 - The source of truth is **per-author chunks** under
-  `.tu-agent/memory/chunks/*.jsonl.gz`, which **are committed**.
+  `.tu-agent/share/memory/chunks/*.jsonl.gz`, which **are committed**.
 - Each author writes their own chunk (no merge conflicts on a shared DB).
 
 The lifecycle is automatic via hooks:

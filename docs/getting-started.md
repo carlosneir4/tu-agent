@@ -107,9 +107,9 @@ stale — run `/tu-agent:learn` to rebuild, then re-query.
 
 | Path | What it is | Commit it? |
 |------|-----------|-----------|
-| `.tu-agent/graph.db` | The dependency graph + concept index (SQLite) | No (rebuildable) |
-| `.tu-agent/memory.db` | Local memory database | No (gitignored) |
-| `.tu-agent/memory/chunks/*.jsonl.gz` | Per-author memory chunks (team sync) | **Yes** |
+| `.tu-agent/graph/graph.db` | The dependency graph + concept index (SQLite) | No (rebuildable) |
+| `.tu-agent/memory/memory.db` | Local memory database | No (gitignored) |
+| `.tu-agent/share/memory/chunks/*.jsonl.gz` | Per-author memory chunks (team sync) | **Yes** |
 | `.tu-agent/rules.md` | Your repo-specific dev-flow rules | **Yes** |
 | `.claude/settings.json` | Hardened permissions + hooks | **Yes** |
 | `CLAUDE.md` | Knowledge block + protocol (managed section) + your own rules | **Yes** |

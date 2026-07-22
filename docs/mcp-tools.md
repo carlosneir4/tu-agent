@@ -10,9 +10,10 @@ memory.
 before non-trivial work. This page exists so you understand what it's doing — and
 so you can ask for a specific query when you want one.
 
-The tools read `./.tu-agent/graph.db` and `./.tu-agent/memory.db`. The server
-refreshes the graph from the working tree each time it starts, so results track
-your current code. If a graph is missing, build it with `/tu-agent:learn`.
+The tools read `./.tu-agent/graph/graph.db` and `./.tu-agent/memory/memory.db`.
+The server refreshes the graph from the working tree each time it starts, so
+results track your current code. If a graph is missing, build it with
+`/tu-agent:learn`.
 
 > The examples below use a fictional Go service `github.com/acme/orders`.
 > Output is illustrative — shapes are real, values are made up.
