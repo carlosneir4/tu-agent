@@ -116,6 +116,23 @@ drift at session start.
 
 ---
 
+## Documentation
+
+Full guide for your team, in [`docs/`](docs/) — start with the
+[documentation home](docs/README.md):
+
+| Page | You'll learn |
+|------|--------------|
+| [Getting started](docs/getting-started.md) | Install, prepare a repo, first query — end to end. |
+| [Mental model](docs/mental-model.md) | The three organs — graph, concept index, memory — and which question goes where. |
+| [Skills reference](docs/skills-reference.md) | Every `/tu-agent:*` command and skill, grouped, with a when-to-use. |
+| [MCP tools](docs/mcp-tools.md) | The `tu-agent-graph` tools the agent calls for you, each with an example. |
+| [Dev-flow](docs/dev-flow.md) | The `groundwork → design → tdd` chain, the agents, and project rules. |
+| [Memory](docs/memory.md) | Note types, the capture protocol, and team sync through committed chunks. |
+| [Cookbook](docs/cookbook.md) | End-to-end recipes for common tasks. |
+
+---
+
 ## Standalone CLI (optional)
 
 Everything deterministic is also a `tu-agent` subcommand, handy for scripts and
