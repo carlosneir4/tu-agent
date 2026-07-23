@@ -67,21 +67,12 @@ fails — which declared force from Step 2 a smaller shape cannot satisfy. If
 you cannot name that force, the smaller shape is the right answer, not the
 one you first reached for.
 
-Example (generic, fictional): a Go HTTP service that validates incoming
-webhooks needs no `package-with-interface` if there is exactly one webhook
-source today — a single `func ValidateWebhook(...)` in the caller's package
-satisfies every declared force. An interface earns its keep only once a
-second, concrete implementation is a declared force, not a guess.
-
 ## Step 4 — Pattern budget
 
 Every pattern in the design (interface, adapter, queue, cache, abstraction
 layer, event bus, …) must name the concrete force from Step 2 that demands it
 **today**. A pattern with no named force is deleted from the design — not
 deferred, not simplified, deleted.
-
-This is the same discipline as Step 3 applied per-pattern instead of to the
-whole shape: no force, no pattern.
 
 ## Step 5 — Convene the guild
 
@@ -95,12 +86,7 @@ the declared forces select WHICH lenses convene:
 | production service | full roster | full critique |
 
 Show the user the roster you selected and WHY (the tier that produced it),
-then let them add or remove lenses before dispatch — the table is a default,
-not a mandate. For example:
-
-> Tier = internal tool → roster: **Security, Quality**. (Operations,
-> Reliability & performance, Data & privacy, Contracts held back — no
-> declared force yet.) Add or remove any lens before I dispatch.
+then let them add or remove lenses before dispatch — the table is a default, not a mandate.
 
 **Dispatch mechanism.** Named agents like `security-reviewer` or `qa` are not
 dispatchable from inside a skill session (in-session agent names do not
@@ -213,9 +199,6 @@ component and every pattern still in the design, ask this question:
 
 If nothing breaks, it comes out — no exceptions for patterns that merely feel
 prudent.
-
-This is the same force discipline as Steps 3-4, run once more against the
-guild's own additions:
 
 > the guild adds; the detector prunes; the human arbitrates both.
 

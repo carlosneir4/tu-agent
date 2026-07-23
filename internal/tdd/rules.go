@@ -58,3 +58,9 @@ func loadProjectRules(root, role string) string {
 	}
 	return rulesHeader + strings.Join(parts, "\n\n")
 }
+
+// SessionRules returns the repo-wide user-owned rules (all.md only, no per-role
+// files) for injection into an interactive session, or "" when none exist.
+func SessionRules(root string) string {
+	return loadProjectRules(root, "")
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/carlosneir4/tu-agent/internal/codegen"
 	"github.com/carlosneir4/tu-agent/internal/crystallize"
+	"github.com/carlosneir4/tu-agent/internal/frontmatter"
 	"github.com/carlosneir4/tu-agent/internal/memory"
 	"github.com/carlosneir4/tu-agent/internal/telemetry"
 )
@@ -319,27 +320,61 @@ func saveCrystallizedSkill(label, body string, min int) (string, error) {
 	if members == nil {
 		return "", fmt.Errorf("saveCrystallizedSkill: no current cluster labeled %q", label)
 	}
-	content := crystallize.ProvenanceLine(label, members) + "\n" + body
-	if _, err := s.Upsert(crystallize.SkillTopic(label), content, memory.UpsertOpts{Type: "skill"}); err != nil {
-		return "", fmt.Errorf("saveCrystallizedSkill: %w", err)
-	}
+
 	name := crystallize.SkillName(label)
 	path := filepath.Join(generatedSkillsDir(repoRoot()), name, "SKILL.md")
 	existing, rerr := os.ReadFile(path)
 	if rerr != nil && !os.IsNotExist(rerr) {
 		return "", fmt.Errorf("saveCrystallizedSkill: read %s: %w", path, rerr)
 	}
-	if crystallize.MaterializeDecision(existing) {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return "", fmt.Errorf("saveCrystallizedSkill: %w", err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			return "", fmt.Errorf("saveCrystallizedSkill: %w", err)
-		}
-	} else {
-		slog.Warn("crystallize: preserved existing hand-written skill file; record updated but file not overwritten", "path", path)
+	if !crystallize.MaterializeDecision(existing) {
+		return "", fmt.Errorf("saveCrystallizedSkill: %q collides with a hand-written skill at %s; rename the cluster or the skill", label, path)
+	}
+
+	content := assembleSkillContent(label, body, members)
+	if _, err := s.Upsert(crystallize.SkillTopic(label), content, memory.UpsertOpts{Type: "skill"}); err != nil {
+		return "", fmt.Errorf("saveCrystallizedSkill: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("saveCrystallizedSkill: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("saveCrystallizedSkill: %w", err)
 	}
 	return path, nil
+}
+
+// assembleSkillContent builds the SKILL.md content persisted by
+// saveCrystallizedSkill: the provenance marker placed after the leading
+// frontmatter block (rather than above it), because Claude Code requires the
+// frontmatter delimiter on line 1 to parse the skill's description. When body
+// opens with a well-formed frontmatter block, its "name:" field is rewritten
+// to label so the record, the directory, and the frontmatter identity always
+// agree. A body with no leading frontmatter falls back to prepending the
+// marker directly, matching the pre-fix behavior.
+func assembleSkillContent(label, body string, members []memory.Observation) string {
+	provenance := crystallize.ProvenanceLine(label, members)
+	fm, rest, ok := frontmatter.Split(body)
+	if !ok {
+		return provenance + "\n" + body
+	}
+	fm = rewriteFrontmatterName(fm, label)
+	return "---\n" + fm + "\n---\n" + provenance + "\n" + rest
+}
+
+// rewriteFrontmatterName replaces an existing "name:" line within fm (the
+// frontmatter content only, without the surrounding "---" delimiters) with
+// "name: <label>", or prepends one if fm has no "name:" line.
+func rewriteFrontmatterName(fm, label string) string {
+	nameLine := "name: " + label
+	lines := strings.Split(fm, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "name:") {
+			lines[i] = nameLine
+			return strings.Join(lines, "\n")
+		}
+	}
+	return nameLine + "\n" + fm
 }
 
 // formatConflicts renders conflicts_with edges, one per line, resolving each

@@ -138,6 +138,52 @@ func TestConceptsFromDomains(t *testing.T) {
 	}
 }
 
+// A Java repo with no workspace roots takes the domain-map fallback, whose names
+// come from kebabPackage(pkg) — which lowercases and maps '.' and '/' to '-', so
+// it is NOT injective: a dotted package and a hyphenated module dir can slug to
+// the same name (e.g. "acme.a.b" and "acme.a-b" both → "acme-a-b"). concepts.name
+// is the store PRIMARY KEY, so two concepts sharing a Name trip a UNIQUE
+// constraint in ReplaceConcepts and abort learn. ConceptsFromDomains must return
+// unique names.
+func TestConceptsFromDomains_uniqueNamesOnCollision(t *testing.T) {
+	domains := []Domain{
+		{Name: "acme-a-b", Package: "acme.a.b", Files: []string{"a1"}},
+		{Name: "acme-a-b", Package: "acme.a-b", Files: []string{"a2"}},
+	}
+	got := ConceptsFromDomains(domains)
+	if len(got) != 2 {
+		t.Fatalf("both colliding domains must survive as distinct concepts, got %d: %+v", len(got), got)
+	}
+	seen := map[string]bool{}
+	for _, c := range got {
+		if seen[c.Name] {
+			t.Fatalf("duplicate concept name %q would violate concepts.name UNIQUE: %+v", c.Name, got)
+		}
+		seen[c.Name] = true
+	}
+}
+
+// Safety net: when the leaf names AND the full-package slugs both collide (here
+// packages "a.b" and "a-b" both slug to "a-b"), qualification cannot rely on the
+// package slug alone — a stable numeric suffix must still make the names unique.
+func TestConceptsFromDomains_uniqueNamesOnDoubleCollision(t *testing.T) {
+	domains := []Domain{
+		{Name: "x", Package: "a.b", Files: []string{"f1"}},
+		{Name: "x", Package: "a-b", Files: []string{"f2"}},
+	}
+	got := ConceptsFromDomains(domains)
+	if len(got) != 2 {
+		t.Fatalf("both domains must survive, got %d: %+v", len(got), got)
+	}
+	seen := map[string]bool{}
+	for _, c := range got {
+		if seen[c.Name] {
+			t.Fatalf("duplicate concept name %q survived double collision: %+v", c.Name, got)
+		}
+		seen[c.Name] = true
+	}
+}
+
 func conceptGraphFixture() ([]graph.Node, []graph.Edge) {
 	nodes := []graph.Node{
 		{ID: "c:Product", Kind: graph.KindClass, Name: "Product", Path: "src/c/Product.java", Exported: true},

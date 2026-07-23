@@ -76,6 +76,7 @@ func TestUpsertMarkedBlock_InsertThenReplace(t *testing.T) {
 	}
 }
 
+// @s3 @s4
 func TestKnowledgeBody_DocumentsBrainArtifacts(t *testing.T) {
 	for _, want := range []string{
 		"get_architecture",
@@ -85,7 +86,7 @@ func TestKnowledgeBody_DocumentsBrainArtifacts(t *testing.T) {
 		"get_impact",
 		"find_symbol",
 		"tu-agent graph context",
-		"The graph MCP tools are often DEFERRED",
+		"Graph tools are often DEFERRED",
 	} {
 		if !strings.Contains(knowledgeBody, want) {
 			t.Errorf("knowledgeBody missing %q", want)
@@ -103,6 +104,7 @@ func TestKnowledgeBlockMentionsGetConceptNotDomainSkill(t *testing.T) {
 	}
 }
 
+// @s5 @s6
 func TestKnowledgeBodyHasMemoryAndVerify(t *testing.T) {
 	for _, want := range []string{
 		"## MEMORY",
@@ -110,13 +112,12 @@ func TestKnowledgeBodyHasMemoryAndVerify(t *testing.T) {
 		"mem_save",
 		"tu-agent memory import",
 		"## VERIFY before claiming done",
-		"## If the graph looks wrong",
 		"tu-agent learn",
 		"OUTSIDE the tu-agent:knowledge markers",
-		"type `gotcha`",
+		"type: gotcha",
 		"memory search --type gotcha",
 		"## Communication — explain plainly",
-		"Gloss every acronym, jargon term, or coined name on first use",
+		"Gloss every acronym/jargon/coined name on first use",
 	} {
 		if !strings.Contains(knowledgeBody, want) {
 			t.Errorf("knowledgeBody missing %q", want)
@@ -124,10 +125,11 @@ func TestKnowledgeBodyHasMemoryAndVerify(t *testing.T) {
 	}
 }
 
+// @s5
 func TestKnowledgeBody_DocumentsContentConvention(t *testing.T) {
 	for _, want := range []string{
-		"Symptom/trigger", "Root cause", "Prevention",
-		"name the code symbols",
+		"Symptom", "Root cause", "Prevention",
+		"Name code symbols",
 	} {
 		if !strings.Contains(knowledgeBody, want) {
 			t.Errorf("knowledgeBody missing content-convention guidance %q", want)
@@ -183,15 +185,34 @@ func TestUpsertMarkedBlockLiteralDollar(t *testing.T) {
 	}
 }
 
+// @s7
 func TestKnowledgeBody_HasGroundworkDirective(t *testing.T) {
 	for _, want := range []string{
 		"## GROUNDWORK",
 		"`groundwork` skill",
-		"anchor",
+		"Non-trivial change",
 		"`tdd` dev-flow",
 	} {
 		if !strings.Contains(knowledgeBody, want) {
 			t.Errorf("knowledgeBody missing groundwork directive substring %q", want)
 		}
+	}
+}
+
+// @s1 @s2 @s8 — anti-regrowth shape lock: dropped sections stay dropped and the
+// rendered block (marker to marker) stays within a line ceiling. See also @s9,
+// covered by the unchanged TestKnowledgeBlockMatchesSynthesizer above, which
+// keeps this const and the embedded copy in
+// plugin/agents/architecture-synthesizer.md byte-identical.
+func TestKnowledgeBody_ShapeLock(t *testing.T) {
+	if strings.Contains(knowledgeBody, "This repo has tu-agent knowledge") {
+		t.Errorf("knowledgeBody still has the dropped intro paragraph")
+	}
+	if strings.Contains(knowledgeBody, "## If the graph looks wrong") {
+		t.Errorf("knowledgeBody still has the folded-away section header")
+	}
+	lines := strings.Split(knowledgeBody, "\n")
+	if got, max := len(lines), 55; got > max {
+		t.Errorf("knowledgeBody has %d lines, want at most %d (shape-lock ceiling)", got, max)
 	}
 }
