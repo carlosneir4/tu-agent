@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/carlosneir4/tu-agent/internal/tdd"
 	"github.com/carlosneir4/tu-agent/internal/telemetry"
 )
 
@@ -134,8 +135,27 @@ func mcpActionDecision(r io.Reader) error {
 	return nil
 }
 
+// sessionRulesCmd is the SessionStart hook target that injects a repo's
+// .tu-agent/rules/all.md as additionalContext into every interactive session.
+// Silent by design: no systemMessage banner, and no output at all when there
+// are no rules (a true no-op, not an empty-context JSON).
+var sessionRulesCmd = &cobra.Command{
+	Use:    "session-rules",
+	Short:  "SessionStart hook: inject .tu-agent/rules/all.md as additionalContext",
+	Hidden: true,
+	Args:   cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		rules := tdd.SessionRules(repoRoot())
+		if rules == "" {
+			return nil
+		}
+		return writeSessionStartHook(cmd.OutOrStdout(), "", rules)
+	},
+}
+
 func init() {
 	hookCmd.AddCommand(promptSubmitCmd)
 	hookCmd.AddCommand(promptExpansionHookCmd)
 	hookCmd.AddCommand(mcpActionCmd)
+	hookCmd.AddCommand(sessionRulesCmd)
 }

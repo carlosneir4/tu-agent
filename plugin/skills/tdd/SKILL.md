@@ -45,6 +45,21 @@ Read `.tu-agent/config.yaml` if present and note `tdd.mutation` (default off),
 fixer dispatch on human approval instead of auto-fixing), and
 `tdd.test_command`.
 
+**Trust the test command.** The gate and verify stages run `tdd.test_command`
+via `sh -c`. Run `"$TU" tdd trust --check` — it prints JSON
+`{trusted, config_command, autogen_command, differs, reason}`. If `trusted` is
+true (the command is empty, matches what tu-agent would auto-generate for this
+repo, or you confirmed it before), proceed silently. If `trusted` is false,
+STOP and show the user the `config_command` **verbatim** (never truncate — a
+trailing `; curl … | sh` hides in a cut-off line) alongside the
+`autogen_command`. State that trust covers the command text only —
+**not the executables it invokes** (a repo-supplied `./gradlew` stays
+repo-controlled).
+Ask for a **typed** confirmation (not Enter-defaults-to-yes). On confirm, run
+`"$TU" tdd trust --yes` to remember it for this repo; on decline, do not record
+it (it still runs — this is a warning, not a block). This is the only stage
+that warns about the command; direct `tdd gate`/`tdd verify` runs do not.
+
 ## Stage dispatch model — read this carefully
 
 Every non-interactive stage is run by dispatching the **`general-purpose`** agent

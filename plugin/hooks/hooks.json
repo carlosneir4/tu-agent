@@ -75,6 +75,10 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent advise --nudge || exit 0"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/tu-agent hook session-rules || exit 0"
           }
         ]
       }

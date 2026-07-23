@@ -52,26 +52,57 @@ func DiscoverConcepts(units []SourceUnit, roots []string) []Concept {
 		segs := strings.Split(p, ".")
 		out = append(out, Concept{Name: strings.ToLower(segs[len(segs)-1]), Package: p, Files: sorted})
 	}
-	// Collision qualification: concepts.name is the store PRIMARY KEY, so a leaf
-	// name shared by more than one concept (e.g. packages/app and
-	// native-packages/app both leaf "app") would clobber. Rename ALL colliders to
-	// the unique kebab slug of their full package; unique leaves stay bare.
-	leafCount := map[string]int{}
-	for _, c := range out {
-		leafCount[c.Name]++
+	// concepts.name is the store PRIMARY KEY, so a leaf name shared by more than
+	// one concept (e.g. packages/app and native-packages/app both leaf "app")
+	// would clobber. qualifyConceptNames makes every name unique.
+	return qualifyConceptNames(out)
+}
+
+// qualifyConceptNames guarantees every concept has a unique Name, deterministically.
+// concepts.name is the store PRIMARY KEY, so two concepts sharing a Name would trip
+// a UNIQUE constraint in ReplaceConcepts and abort learn. This bites the domain-map
+// fallback in particular, where names come from kebabPackage(pkg) — which lowercases
+// and maps '.' and '/' to '-', so it is not injective and two distinct packages can
+// slug to the same name.
+//
+// Tier 1: a name shared by more than one concept is re-qualified to the kebab slug of
+// its full package (unique leaves stay bare). Tier 2: if that still collides (the full
+// package slugs are themselves identical), a stable numeric suffix is appended. Mutates
+// concepts and returns it sorted by (Name, Package).
+func qualifyConceptNames(concepts []Concept) []Concept {
+	count := map[string]int{}
+	for _, c := range concepts {
+		count[c.Name]++
 	}
-	for i := range out {
-		if leafCount[out[i].Name] > 1 {
-			out[i].Name = kebabPackage(out[i].Package, "")
+	for i := range concepts {
+		if count[concepts[i].Name] > 1 {
+			concepts[i].Name = kebabPackage(concepts[i].Package, "")
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
+	// Order first so any residual disambiguation is deterministic.
+	sort.Slice(concepts, func(i, j int) bool {
+		if concepts[i].Name != concepts[j].Name {
+			return concepts[i].Name < concepts[j].Name
 		}
-		return out[i].Package < out[j].Package
+		return concepts[i].Package < concepts[j].Package
 	})
-	return out
+	seen := map[string]bool{}
+	for i := range concepts {
+		name := concepts[i].Name
+		if !seen[name] {
+			seen[name] = true
+			continue
+		}
+		for n := 2; ; n++ {
+			cand := fmt.Sprintf("%s-%d", name, n)
+			if !seen[cand] {
+				concepts[i].Name = cand
+				seen[cand] = true
+				break
+			}
+		}
+	}
+	return concepts
 }
 
 // Landmark is a high-fan-in symbol that anchors a concept.
@@ -314,11 +345,5 @@ func ConceptsFromDomains(domains []Domain) []Concept {
 		sort.Strings(files)
 		out = append(out, Concept{Name: d.Name, Package: d.Package, Files: files})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
-		return out[i].Package < out[j].Package
-	})
-	return out
+	return qualifyConceptNames(out)
 }

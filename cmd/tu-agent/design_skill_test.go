@@ -290,3 +290,22 @@ func TestDesignSkillParityTestStructure(t *testing.T) {
 		}
 	}
 }
+
+// TestDesignSkillNoDidacticFiller pins the terse-refactor: the didactic
+// examples and meta-restatements cut from the flow steps must stay out, so the
+// skill cannot creep back to prose. Each string is a removed example or a
+// redundant "this is the same discipline as…" framing; the load-bearing steps,
+// tables, and oracles are guarded by the other tests in this file.
+func TestDesignSkillNoDidacticFiller(t *testing.T) {
+	s := readDesignSkillMD(t)
+	for _, gone := range []string{
+		"func ValidateWebhook", // Step 3 didactic webhook example
+		"This is the same discipline as Step 3 applied per-pattern", // Step 4 meta-restatement
+		"Tier = internal tool → roster:",                            // Step 5 didactic roster example
+		"This is the same force discipline as Steps 3-4",            // Step 7 meta-restatement
+	} {
+		if strings.Contains(s, gone) {
+			t.Errorf("design SKILL.md still carries cut didactic/meta filler %q", gone)
+		}
+	}
+}
